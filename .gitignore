@@ -1,0 +1,64 @@
+# Build outputs
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.so
+*.dylib
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# IDE and Editor files
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# User-specific settings
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ReSharper
+.resharper*
+*.DotSettings.user
+
+# Local environment/system files
+node_modules/
+dist/
+.env
+.env.local
+
+# OS-specific files
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+*.rar
+*.zip
+
+# Generated files (excluding source)
+*.class
+*.cache
+bin-int/

@@ -1,0 +1,103 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CrossPlatformPatcher</AssemblyName>
+    <RootNamespace>CrossPlatformPatcher</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Optimize>true</Optimize>
+    <!-- Publish for all supported platforms.
+         Build with: dotnet publish -r RID -self-contained true -p:PublishSingleFile=true -->
+    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IL-level assembly manipulation -->
+    <PackageReference Include="dnlib" Version="4.4.0" />
+    <!-- Roslyn for compiling injected code to IL at patch-time -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.9.2" />
+    <!-- .NET Framework 4.8 reference assemblies bundled as a NuGet package -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48"
+                      Version="1.0.3"
+                      GeneratePathProperty="true"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Embed the required .NET Framework 4.8 reference dlls for cross-platform compilation -->
+  <ItemGroup>
+    <EmbeddedResource
+      Include="$(PKGMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\mscorlib.dll"
+      LogicalName="netfx48.mscorlib.dll" />
+    <EmbeddedResource
+      Include="$(PKGMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.dll"
+      LogicalName="netfx48.System.dll" />
+    <EmbeddedResource
+      Include="$(PKGMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Core.dll"
+      LogicalName="netfx48.System.Core.dll" />
+    <EmbeddedResource
+      Include="$(PKGMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Windows.Forms.dll"
+      LogicalName="netfx48.System.Windows.Forms.dll" />
+    <EmbeddedResource
+      Include="$(PKGMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Drawing.dll"
+      LogicalName="netfx48.System.Drawing.dll" />
+    <EmbeddedResource
+      Include="$(PKGMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Net.Http.dll"
+      LogicalName="netfx48.System.Net.Http.dll" />
+  </ItemGroup>
+
+  <!-- Vosk native libraries (platform-specific speech recognition engine) -->
+  <ItemGroup>
+    <EmbeddedResource
+      Include="Core\NativeLibraries\vosk-win-x64.dll"
+      LogicalName="vosk.native.win-x64.dll"
+      Condition="Exists('Core\NativeLibraries\vosk-win-x64.dll')" />
+    <EmbeddedResource
+      Include="Core\NativeLibraries\vosk-win-gcc.dll"
+      LogicalName="vosk.native.win-gcc.dll"
+      Condition="Exists('Core\NativeLibraries\vosk-win-gcc.dll')" />
+    <EmbeddedResource
+      Include="Core\NativeLibraries\vosk-win-stdc.dll"
+      LogicalName="vosk.native.win-stdc.dll"
+      Condition="Exists('Core\NativeLibraries\vosk-win-stdc.dll')" />
+    <EmbeddedResource
+      Include="Core\NativeLibraries\vosk-win-pthread.dll"
+      LogicalName="vosk.native.win-pthread.dll"
+      Condition="Exists('Core\NativeLibraries\vosk-win-pthread.dll')" />
+    <EmbeddedResource
+      Include="Core\NativeLibraries\libvosk-linux-x64.so"
+      LogicalName="vosk.native.linux-x64.so"
+      Condition="Exists('Core\NativeLibraries\libvosk-linux-x64.so')" />
+    <EmbeddedResource
+      Include="Core\NativeLibraries\libvosk-linux-arm64.so"
+      LogicalName="vosk.native.linux-arm64.so"
+      Condition="Exists('Core\NativeLibraries\libvosk-linux-arm64.so')" />
+    <EmbeddedResource
+      Include="Core\NativeLibraries\libvosk-osx-universal.dylib"
+      LogicalName="vosk.native.osx.dylib"
+      Condition="Exists('Core\NativeLibraries\libvosk-osx-universal.dylib')" />
+  </ItemGroup>
+
+  <!-- Vosk managed wrapper + NAudio (for microphone capture) -->
+  <ItemGroup>
+    <EmbeddedResource
+      Include="Core\ManagedLibraries\Vosk.dll"
+      LogicalName="vosk.managed.dll"
+      Condition="Exists('Core\ManagedLibraries\Vosk.dll')" />
+    <EmbeddedResource
+      Include="Core\ManagedLibraries\NAudio.Core.dll"
+      LogicalName="naudio.core.dll"
+      Condition="Exists('Core\ManagedLibraries\NAudio.Core.dll')" />
+    <EmbeddedResource
+      Include="Core\ManagedLibraries\NAudio.WinMM.dll"
+      LogicalName="naudio.winmm.dll"
+      Condition="Exists('Core\ManagedLibraries\NAudio.WinMM.dll')" />
+    <EmbeddedResource
+      Include="Core\ManagedLibraries\Newtonsoft.Json.dll"
+      LogicalName="newtonsoft.json.dll"
+      Condition="Exists('Core\ManagedLibraries\Newtonsoft.Json.dll')" />
+  </ItemGroup>
+
+</Project>
