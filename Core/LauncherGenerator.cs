@@ -173,11 +173,57 @@ public static class LauncherGenerator
 
             PAIcom is a Windows application. Use **Wine** (or a Wine wrapper) to run it.
 
+            ## ⚠️ Security Warning — Unsigned Application
+
+            **CrossPlatformPatcher and the generated launchers are distributed without an
+            Apple Developer ID signature.** This is intentional. macOS may display one or
+            more of the following security prompts before first run:
+
+            - *"CrossPlatformPatcher cannot be opened because it is from an unidentified developer."*
+            - *"macOS cannot verify the developer of this app."*
+            - A Gatekeeper dialog blocking launch.
+
+            **These warnings are expected for unsigned apps and do not indicate malicious
+            behaviour.** Only run files you trust and obtained from the official source.
+
+            ### Resolution A — "Open Anyway" via System Settings (recommended)
+
+            1. Attempt to open the file (double-click `launch.command` or run `./CrossPlatformPatcher`).
+            2. macOS blocks the launch and shows a dialog — click **OK** to dismiss it.
+            3. Open **System Settings → Privacy & Security**.
+            4. Scroll to the **Security** section. You will see:
+               *"CrossPlatformPatcher was blocked from use because it is not from an identified developer."*
+            5. Click **Open Anyway**.
+            6. Authenticate with your password or Touch ID when prompted.
+            7. Re-run the app — macOS will show one final confirmation dialog; click **Open**.
+
+            ### Resolution B — Remove the quarantine attribute (Terminal)
+
+            If you downloaded the release archive, macOS attaches a `com.apple.quarantine`
+            extended attribute to every file in the archive. Remove it with:
+
+            ```sh
+            # Remove quarantine from the entire extracted folder (replace the path as needed):
+            xattr -cr /path/to/CrossPlatformPatcher-osx-arm64
+
+            # Or target individual files:
+            xattr -d com.apple.quarantine /path/to/CrossPlatformPatcher
+            xattr -d com.apple.quarantine /path/to/launch.command
+            xattr -d com.apple.quarantine /path/to/run.sh
+            ```
+
+            After removing the quarantine attribute, launch as normal.
+
             ## Quick Start
 
             Double-click `launch.command`, or open Terminal and run:
             ```sh
             sh run.sh
+            ```
+
+            If execute permission was lost during extraction:
+            ```sh
+            chmod +x launch.command run.sh
             ```
 
             ## Installing Wine
