@@ -24,6 +24,12 @@ class Program
             return 0;
         }
 
+        if (args[0] is "-V" or "--version")
+        {
+            Console.WriteLine($"CrossPlatformPatcher ({BuildFlavor}) v1.0");
+            return 0;
+        }
+
         var inputPath  = args[0];
         string? outPath = null;
         bool dryRun    = false;
@@ -137,13 +143,15 @@ class Program
     {
         Console.WriteLine("""
         Usage:
-            PAIcomPatcher.exe <path-to-PAIcom.exe> [options]
+            CrossPlatformPatcher <path-to-PAIcom.exe> [options]
 
         Options:
             --out <file>    Output path  (default: <input>.patched.exe)
             --dry-run       Find patch points without writing output
             --backup        Write <input>.bak before patching
             --verbose       Detailed IL scan output
+            --analyze       Analyze assembly and print method report (no patch)
+            -V, --version   Print version and exit
 
         Description:
             Replaces Windows-only System.Speech with cross-platform Vosk
