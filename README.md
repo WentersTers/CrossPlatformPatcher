@@ -4,6 +4,11 @@ This is an **isolated, standalone build** of the cross-platform PAIcom patch inj
 
 The patcher itself runs on **Windows, Linux, macOS** (Intel and Apple Silicon) and outputs a patched PAIcom.exe that also runs on all those platforms via Wine/Mono.
 
+> **macOS users:** This tool is distributed without an Apple Developer ID signature.
+> macOS may show a security or "unidentified developer" warning on first run — this is
+> expected. See [macOS: Gatekeeper / "unidentified developer" warning](#macos-gatekeeper--unidentified-developer-warning)
+> in the Troubleshooting section for exact resolution steps.
+
 ## Quick Start
 
 ### Build the Patcher (All Platforms)
@@ -39,6 +44,9 @@ publish-all.bat
 ```sh
 sh publish-all.sh
 ```
+
+> **Note:** `publish-all.sh` / `publish-all.bat` publish `CrossPlatformPatcher.csproj` for
+> all four RIDs (`win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`) into `publish/CrossPlatformPatcher/<RID>/`.
 
 ### Use the Patcher
 
@@ -200,6 +208,39 @@ Wine audio backend needs configuration. See `SETUP_LINUX.md` generated after fir
 ### macOS: "wine not found"
 
 Install Whisky (free) or CrossOver. Whisky provides a `wine` command automatically.
+
+### macOS: Gatekeeper / "unidentified developer" warning
+
+CrossPlatformPatcher is distributed **without an Apple Developer ID signature** by choice
+(no notarization, no ad-hoc signing). macOS may block first launch with a dialog such as:
+
+> *"CrossPlatformPatcher cannot be opened because it is from an unidentified developer."*
+
+**This is expected and does not indicate malicious behaviour.** To run anyway:
+
+**Option A — Open Anyway (System Settings)**
+1. Try to open the blocked file — click **OK** to dismiss the initial dialog.
+2. Open **System Settings → Privacy & Security**.
+3. In the **Security** section, click **Open Anyway** next to the blocked app.
+4. Authenticate and click **Open** in the confirmation dialog.
+
+**Option B — Remove quarantine attribute (Terminal)**
+
+If you downloaded a release archive, every extracted file carries a
+`com.apple.quarantine` extended attribute. Remove it with:
+
+```sh
+# Recursively clear the entire extracted folder:
+xattr -cr /path/to/CrossPlatformPatcher-osx-arm64
+
+# Or remove from individual files:
+xattr -d com.apple.quarantine /path/to/CrossPlatformPatcher
+xattr -d com.apple.quarantine /path/to/launch.command
+xattr -d com.apple.quarantine /path/to/run.sh
+```
+
+After clearing quarantine, launch as normal. Refer to the generated `SETUP_MAC.md` for
+the full step-by-step walkthrough.
 
 ## License
 
