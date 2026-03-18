@@ -62,12 +62,15 @@ sh publish-all.sh
 3. The patcher generates:
    - `PAIcom_patched.exe` — the patched game
    - `run.sh` / `run.bat` / `launch.command` — OS-specific launchers
+   - `setup-wizard.sh` / `setup.command` — guided smart setup wizard (Linux/macOS)
    - `SETUP_LINUX.md` / `SETUP_MAC.md` — setup instructions
 
 4. To run the patched game:
    - **Windows:** Double-click `PAIcom_patched.exe` or `run.bat`
-   - **Linux:** `sh run.sh` (requires Wine)
-   - **macOS:** Double-click `launch.command` (requires Wine via Whisky or CrossOver)
+   - **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
+   - **macOS:** Double-click `setup.command` once, then `launch.command`
+
+On macOS, the setup wizard can download/install Homebrew when missing, then install Whisky.
 
 ## What's Inside
 

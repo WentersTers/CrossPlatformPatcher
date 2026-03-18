@@ -60,17 +60,29 @@ public class AssemblyPatcher
         {
             Log($"Writing patched assembly to {outputPath} …");
 
-            // Use the managed writer - NativeModuleWriter requires all existing
-            // RIDs to be preserved which conflicts with newly added types.
-            var writerOptions = new ModuleWriterOptions(module)
+            // If no IL patching happened, preserve the original bytes exactly.
+            // This avoids resource mapping regressions in heavily obfuscated builds.
+            if (result.PatchPointsApplied == 0)
             {
-                WritePdb = false,
-            };
+                File.WriteAllBytes(outputPath, peBytes);
+                Log("Compat build: wrote byte-for-byte copy (no IL/resource rewrite).");
+            }
+            else
+            {
+                // Use the managed writer - NativeModuleWriter requires all existing
+                // RIDs to be preserved which conflicts with newly added types.
+                var writerOptions = new ModuleWriterOptions(module)
+                {
+                    WritePdb = false,
+                };
 
-            module.Write(outputPath, writerOptions);
+                module.Write(outputPath, writerOptions);
+            }
 
             // Generate OS launcher scripts alongside the patched exe
-            var outputDir = Path.GetDirectoryName(outputPath) ?? ".";
+            var outputDir = Path.GetDirectoryName(outputPath) ?? "";
+            if (string.IsNullOrEmpty(outputDir))
+                outputDir = ".";
             LauncherGenerator.WriteAll(outputDir, Path.GetFileName(outputPath));
         }
 
