@@ -46,7 +46,11 @@ sh publish-all.sh
 ```
 
 > **Note:** `publish-all.sh` / `publish-all.bat` publish `CrossPlatformPatcher.csproj` for
-> all four RIDs (`win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`) into `publish/CrossPlatformPatcher/<RID>/`.
+> all four runtime identifiers into `publish/CrossPlatformPatcher/<RID>/` with the following naming scheme:
+> - Windows x64: `CrossPlatformPatcher-W-x64.exe`
+> - Linux x64: `CrossPlatformPatcher-L-x64`
+> - macOS x64: `CrossPlatformPatcher-M-x64`
+> - macOS ARM64: `CrossPlatformPatcher-M-Arm`
 
 ### Use the Patcher
 
@@ -82,7 +86,7 @@ sh publish-all.sh
 
 ### Bundled Dependencies
 
-All dependencies are **embedded** in the final `CrossPlatformPatcher.exe` / binary:
+All dependencies are **embedded** in the final binary (e.g., `CrossPlatformPatcher-W-x64.exe`, `CrossPlatformPatcher-L-x64`, or `CrossPlatformPatcher-M-Arm`):
 
 - **Vosk 0.3.38** (cross-platform speech recognition)
   - Native libs for Windows x64, Linux x64/ARM64, macOS universal
@@ -231,7 +235,7 @@ If you downloaded a release archive, every extracted file carries a
 
 ```sh
 # Recursively clear the entire extracted folder:
-xattr -cr /path/to/CrossPlatformPatcher-osx-arm64
+xattr -cr /path/to/CrossPlatformPatcher-M-Arm
 
 # Or remove from individual files:
 xattr -d com.apple.quarantine /path/to/CrossPlatformPatcher

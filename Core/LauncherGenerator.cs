@@ -188,7 +188,7 @@ public static class LauncherGenerator
 
             ### Resolution A — "Open Anyway" via System Settings (recommended)
 
-            1. Attempt to open the file (double-click `launch.command` or run `./CrossPlatformPatcher`).
+            1. Attempt to open the file (double-click `launch.command` or run `./CrossPlatformPatcher-M-Arm`).
             2. macOS blocks the launch and shows a dialog — click **OK** to dismiss it.
             3. Open **System Settings → Privacy & Security**.
             4. Scroll to the **Security** section. You will see:
@@ -204,7 +204,7 @@ public static class LauncherGenerator
 
             ```sh
             # Remove quarantine from the entire extracted folder (replace the path as needed):
-            xattr -cr /path/to/CrossPlatformPatcher-osx-arm64
+            xattr -cr /path/to/CrossPlatformPatcher-M-Arm
 
             # Or target individual files:
             xattr -d com.apple.quarantine /path/to/CrossPlatformPatcher
