@@ -7,18 +7,20 @@ set -e
 
 OUT="publish"
 PROJECT="CrossPlatformPatcher.csproj"
-RIDS="win-x64 linux-x64 osx-x64 osx-arm64"
+declare -A RIDS=("win-x64:W-x64" "linux-x64:L-x64" "osx-x64:M-x64" "osx-arm64:M-Arm")
 COMMON="-c Release --self-contained true -p:PublishSingleFile=true"
 
-for RID in $RIDS; do
+for RID in "${!RIDS[@]}"; do
+    SUFFIX="${RIDS[$RID]}"
     echo ""
-    echo "==> Publishing CrossPlatformPatcher for $RID ..."
-    dotnet publish "$PROJECT" $COMMON -r "$RID" -o "$OUT/CrossPlatformPatcher/$RID"
-    echo "    Done: $OUT/CrossPlatformPatcher/$RID"
+    echo "==> Publishing CrossPlatformPatcher for $RID (CrossPlatformPatcher-$SUFFIX) ..."
+    dotnet publish "$PROJECT" $COMMON -r "$RID" -p:AssemblyName="CrossPlatformPatcher-$SUFFIX" -o "$OUT/CrossPlatformPatcher/$RID"
+    echo "    Done: $OUT/CrossPlatformPatcher/$RID/CrossPlatformPatcher-$SUFFIX"
 done
 
 echo ""
 echo "All builds complete:"
-for RID in $RIDS; do
-    echo "  $OUT/CrossPlatformPatcher/$RID"
-done
+echo "  $OUT/CrossPlatformPatcher/win-x64/CrossPlatformPatcher-W-x64"
+echo "  $OUT/CrossPlatformPatcher/linux-x64/CrossPlatformPatcher-L-x64"
+echo "  $OUT/CrossPlatformPatcher/osx-x64/CrossPlatformPatcher-M-x64"
+echo "  $OUT/CrossPlatformPatcher/osx-arm64/CrossPlatformPatcher-M-Arm"

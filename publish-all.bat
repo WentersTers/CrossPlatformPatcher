@@ -9,24 +9,24 @@ set PROJECT=CrossPlatformPatcher.csproj
 set COMMON=-c Release --self-contained true -p:PublishSingleFile=true
 
 echo.
-echo =^> Publishing CrossPlatformPatcher for win-x64 ...
-dotnet publish "%PROJECT%" %COMMON% -r win-x64 -o "%OUT%\CrossPlatformPatcher\win-x64"
+echo =^> Publishing CrossPlatformPatcher for Windows x64 ...
+dotnet publish "%PROJECT%" %COMMON% -r win-x64 -p:AssemblyName=CrossPlatformPatcher-W-x64 -o "%OUT%\CrossPlatformPatcher\win-x64"
 
 echo.
-echo =^> Publishing CrossPlatformPatcher for linux-x64 ...
-dotnet publish "%PROJECT%" %COMMON% -r linux-x64 -o "%OUT%\CrossPlatformPatcher\linux-x64"
+echo =^> Publishing CrossPlatformPatcher for Linux x64 ...
+dotnet publish "%PROJECT%" %COMMON% -r linux-x64 -p:AssemblyName=CrossPlatformPatcher-L-x64 -o "%OUT%\CrossPlatformPatcher\linux-x64"
 
 echo.
-echo =^> Publishing CrossPlatformPatcher for osx-x64 ...
-dotnet publish "%PROJECT%" %COMMON% -r osx-x64 -o "%OUT%\CrossPlatformPatcher\osx-x64"
+echo =^> Publishing CrossPlatformPatcher for macOS x64 ...
+dotnet publish "%PROJECT%" %COMMON% -r osx-x64 -p:AssemblyName=CrossPlatformPatcher-M-x64 -o "%OUT%\CrossPlatformPatcher\osx-x64"
 
 echo.
-echo =^> Publishing CrossPlatformPatcher for osx-arm64 ...
-dotnet publish "%PROJECT%" %COMMON% -r osx-arm64 -o "%OUT%\CrossPlatformPatcher\osx-arm64"
+echo =^> Publishing CrossPlatformPatcher for macOS ARM64 ...
+dotnet publish "%PROJECT%" %COMMON% -r osx-arm64 -p:AssemblyName=CrossPlatformPatcher-M-Arm -o "%OUT%\CrossPlatformPatcher\osx-arm64"
 
 echo.
 echo All builds complete:
-echo   %OUT%\CrossPlatformPatcher\win-x64
-echo   %OUT%\CrossPlatformPatcher\linux-x64
-echo   %OUT%\CrossPlatformPatcher\osx-x64
-echo   %OUT%\CrossPlatformPatcher\osx-arm64
+echo   %OUT%\CrossPlatformPatcher\win-x64\CrossPlatformPatcher-W-x64.exe
+echo   %OUT%\CrossPlatformPatcher\linux-x64\CrossPlatformPatcher-L-x64
+echo   %OUT%\CrossPlatformPatcher\osx-x64\CrossPlatformPatcher-M-x64
+echo   %OUT%\CrossPlatformPatcher\osx-arm64\CrossPlatformPatcher-M-Arm
