@@ -42,13 +42,21 @@ public class AssemblyPatcher
         result.MethodsScanned = allMethods.Count;
         Log($"Scanned {allMethods.Count} methods.");
 
-        // ── Compat mode: no command handler patching ─────────────────────
-        Log("Compat build: skipping command handler detection and hotswap injection.");
+        // ── Compat mode patch: neutralize fragile Process.Start(string) ───
+        Log("Compat build: rewriting fragile Process.Start(string) calls.");
+        var rewrites = ProcessStartCompatibilityPatcher.Patch(module, Log);
+        result.PatchPointsFound = rewrites;
+        result.PatchPointsApplied = rewrites;
+
+        Log("Compat build: wrapping System.Speech call paths.");
+        var speechWraps = SpeechCompatibilityPatcher.Patch(module, Log);
+        result.PatchPointsFound += speechWraps;
+        result.PatchPointsApplied += speechWraps;
 
         // ── 4. Apply patches ──────────────────────────────────────────────
         if (!dryRun && result.Errors.Count == 0)
         {
-            Log("Compat build: no IL injection required.");
+            Log("Compat build: IL compatibility patch complete.");
         }
         else if (dryRun)
         {
