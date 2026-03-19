@@ -23,10 +23,6 @@
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="4.5.3" GeneratePathProperty="true" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="PAIcom.OWW\PAIcom.OWW.csproj" ReferenceOutputAssembly="true" />
-  </ItemGroup>
-
   <Target Name="BuildOWW" BeforeTargets="BeforeBuild">
     <Exec Command="dotnet build PAIcom.OWW/PAIcom.OWW.csproj -c Release" />
   </Target>
@@ -77,6 +73,10 @@
     <EmbeddedResource Remove="CrossPlatformPatcher.Tests\**\*" />
     <None Remove="CrossPlatformPatcher.Tests\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
+    <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
+    <Compile Include="PAIcom.OWW\OpenWakeWordInferenceWorker.cs" />
+    <Compile Include="PAIcom.OWW\OpenWakeWordSettings.cs" />
+    <Compile Include="PAIcom.OWW\OpenWakeWordSettingsBuilder.cs" />
     <EmbeddedResource Remove="PAIcom.OWW\**\*" />
     <None Remove="PAIcom.OWW\**\*" />
   </ItemGroup>

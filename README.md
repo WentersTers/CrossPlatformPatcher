@@ -158,6 +158,26 @@ The original `PAIcomPatcher` (in the parent folder) is **Windows-only**:
 
 ## Development Notes
 
+### Rebuild And Verify
+
+Use the checked-in patcher sources to rebuild the project from scratch:
+
+```sh
+dotnet build CrossPlatformPatcher.csproj -c Release
+dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release
+```
+
+If you are preparing release artifacts or validating platform-specific launchers, republish with the appropriate runtime identifier(s):
+
+```sh
+dotnet publish CrossPlatformPatcher.csproj -r win-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/win
+dotnet publish CrossPlatformPatcher.csproj -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/linux
+dotnet publish CrossPlatformPatcher.csproj -r osx-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/osx-x64
+dotnet publish CrossPlatformPatcher.csproj -r osx-arm64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/osx-arm64
+```
+
+Keep original PAIcom binaries and any reverse-engineered source outside version control. The repository should only contain the patcher, tests, docs, and build inputs needed to reproduce the patcher itself.
+
 ### Adding Vosk Dependency Updates
 
 To update Vosk or NAudio versions:

@@ -80,8 +80,17 @@ run.bat
 *PAIcom*.bak
 PAIcom.exe.bak
 PAIcom.exe.patched.exe
+PAIcom.exe
+PAIcom_patched.exe
+PAIcom*.patched.exe
 
 # PAIcom extraction and patching artifacts
 PAIcom.OWW.dll
 PAIcom*.dll
 *.patched.*
+
+# Local reverse-engineering or extracted source dumps
+**/decompiled/
+**/extracted/
+**/reverse-engineered/
+**/*decompile*/

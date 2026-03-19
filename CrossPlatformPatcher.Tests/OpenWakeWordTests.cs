@@ -9,6 +9,7 @@ namespace CrossPlatformPatcher.Tests;
 /// <summary>
 /// Unit tests for OpenWakeWordSettings and OpenWakeWordSettingsBuilder.
 /// </summary>
+[Collection(SequentialTestCollection.CollectionName)]
 public class OpenWakeWordSettingsTests
 {
     [Fact]
@@ -156,6 +157,7 @@ public class OpenWakeWordSettingsTests
 /// <summary>
 /// Unit tests for AudioLockManager (hard lock + queue).
 /// </summary>
+[Collection(SequentialTestCollection.CollectionName)]
 public class AudioLockManagerTests
 {
     [Fact]
@@ -289,6 +291,7 @@ public class AudioLockManagerTests
 /// <summary>
 /// Integration tests for OpenWakeWordSettings + AudioLockManager.
 /// </summary>
+[Collection(SequentialTestCollection.CollectionName)]
 public class OpenWakeWordIntegrationTests
 {
     [Fact]
