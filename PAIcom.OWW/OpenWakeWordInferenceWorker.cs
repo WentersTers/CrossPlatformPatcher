@@ -26,6 +26,7 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
 {
     private readonly OpenWakeWordSettings _settings;
     private readonly AudioLockManager _lockManager;
+    private readonly OpenWakeWordFeaturePipeline _featurePipeline;
     private readonly OpenWakeWordWrapperModel _model;
     private readonly Action<bool, float> _onDetection; // (detected: bool, confidence: float)
     private readonly Action<string>? _logger;
@@ -47,12 +48,14 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
     public OpenWakeWordInferenceWorker(
         OpenWakeWordSettings settings,
         AudioLockManager lockManager,
+        OpenWakeWordFeaturePipeline featurePipeline,
         OpenWakeWordWrapperModel model,
         Action<bool, float> onDetection,
         Action<string>? logger = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _lockManager = lockManager ?? throw new ArgumentNullException(nameof(lockManager));
+        _featurePipeline = featurePipeline ?? throw new ArgumentNullException(nameof(featurePipeline));
         _model = model ?? throw new ArgumentNullException(nameof(model));
         _onDetection = onDetection ?? throw new ArgumentNullException(nameof(onDetection));
         _logger = logger;
@@ -125,9 +128,11 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
     /// Background work item: consume audio queue, run inference, invoke callback.
     /// Called on ThreadPool thread via UnsafeQueueUserWorkItem.
     /// </summary>
-    private void ProcessAudioQueue(object state)
+    private void ProcessAudioQueue(object? state)
     {
-        var ct = (CancellationToken)state;
+        if (state is not CancellationToken ct)
+            return;
+
         Interlocked.Increment(ref _inferenceTasksActive);
         
         try
@@ -151,8 +156,11 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
 
                 try
                 {
+                    if (!_featurePipeline.TryBuildFeatureWindow(chunk, out var featureWindow) || featureWindow is null)
+                        continue;
+
                     // Run inference
-                    var (detected, confidence) = _model.RunInference(chunk, _settings.ConfidenceThreshold);
+                    var (detected, confidence) = _model.RunInference(featureWindow!, _settings.ConfidenceThreshold);
 
                     if (_settings.EnableVerboseLogging)
                         _logger?.Invoke($"[oww] Inference: detected={detected}, confidence={confidence:F3}");
@@ -171,7 +179,7 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    _logger?.Invoke($"[oww] Inference error: {ex.Message}");
+                    _logger?.Invoke($"[oww] Inference error: {ex}");
                 }
 
                 // Check if we should spawn additional background worker (queue depth > 2)

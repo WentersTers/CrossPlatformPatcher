@@ -43,7 +43,7 @@ public static class VoskResourceEmbedder
         "naudio.winmm.dll",
         
         // OpenWakeWord (wake word detection) resources
-        "oww.model.hey_pie_com.onnx",
+        "oww.model.hey_pie_com.quant.onnx",
         
         // ONNX Runtime (inference) native libraries
         "onnxruntime.native.win-x64.dll",

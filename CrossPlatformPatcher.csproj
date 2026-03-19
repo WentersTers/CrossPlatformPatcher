@@ -60,7 +60,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="hey_pie_com.quant.onnx" LogicalName="oww.model.hey_pie_com.onnx" Condition="Exists('hey_pie_com.quant.onnx')" />
+    <EmbeddedResource Include="hey_pie_com.quant.onnx" LogicalName="oww.model.hey_pie_com.quant.onnx" Condition="Exists('hey_pie_com.quant.onnx')" />
+    <EmbeddedResource Include="$(PkgMicrosoft_ML_OnnxRuntime)\runtimes\win-x86\native\onnxruntime.dll" LogicalName="onnxruntime.native.win-x86.dll" />
     <EmbeddedResource Include="Core\NativeLibraries\onnxruntime-win-x64.dll" LogicalName="onnxruntime.native.win-x64.dll" Condition="Exists('Core\NativeLibraries\onnxruntime-win-x64.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\onnxruntime-linux-x64.so" LogicalName="onnxruntime.native.linux-x64.so" Condition="Exists('Core\NativeLibraries\onnxruntime-linux-x64.so')" />
     <EmbeddedResource Include="Core\NativeLibraries\onnxruntime-linux-arm64.so" LogicalName="onnxruntime.native.linux-arm64.so" Condition="Exists('Core\NativeLibraries\onnxruntime-linux-arm64.so')" />
@@ -74,6 +75,7 @@
     <None Remove="CrossPlatformPatcher.Tests\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
+    <Compile Include="PAIcom.OWW\OpenWakeWordFeaturePipeline.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordInferenceWorker.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordSettings.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordSettingsBuilder.cs" />

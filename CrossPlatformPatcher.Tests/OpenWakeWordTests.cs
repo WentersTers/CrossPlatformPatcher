@@ -21,7 +21,7 @@ public class OpenWakeWordSettingsTests
         Assert.Equal(3000, settings.LockDurationMs);
         Assert.Equal(1024, settings.AudioChunkSize);
         Assert.Equal(1.0f, settings.InferenceThreadPoolScale);
-        Assert.Equal("oww.model.hey_pie_com.onnx", settings.ModelResourceName);
+        Assert.Equal("oww.model.hey_pie_com.quant.onnx", settings.ModelResourceName);
         Assert.Equal(16000, settings.AudioSampleRate);
         Assert.False(settings.EnableVerboseLogging);
     }
