@@ -17,6 +17,14 @@ class Program
         Console.WriteLine($"PAIcom Binary-Patch Injector ({BuildFlavor}) v1.0");
         Console.WriteLine("==================================");
 
+        if (args.Length == 1 && args[0] == "--prepare-onnx-natives")
+        {
+            var copied = OnnxNativeLibraryManager.PrepareFromNuGetCache(
+                Directory.GetCurrentDirectory(),
+                Console.WriteLine);
+            return copied > 0 ? 0 : 4;
+        }
+
         // ── Parse arguments ──────────────────────────────────────────────
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
@@ -36,6 +44,10 @@ class Program
         bool backup    = false;
         bool verbose   = false;
         bool analyze   = false;
+        bool prepareOnnxNatives = false;
+        
+        // OpenWakeWord settings (parsed from CLI args)
+        var owwBuilder = OpenWakeWordSettings.CreateBuilder();
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -46,6 +58,37 @@ class Program
                 case "--backup":   backup  = true;      break;
                 case "--verbose":  verbose = true;      break;
                 case "--analyze":  analyze = true;      break;
+                case "--prepare-onnx-natives": prepareOnnxNatives = true; break;
+                
+                // OpenWakeWord CLI arguments
+                case "--oww-threshold":
+                    if (i + 1 < args.Length && float.TryParse(args[++i], out var thresh))
+                        owwBuilder.WithThreshold(thresh);
+                    break;
+                case "--oww-lock-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var lockMs))
+                        owwBuilder.WithLockDurationMs(lockMs);
+                    break;
+                case "--oww-audio-chunk-size":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var chunkSize))
+                        owwBuilder.WithAudioChunkSize(chunkSize);
+                    break;
+                case "--oww-inference-thread-scale":
+                    if (i + 1 < args.Length && float.TryParse(args[++i], out var scale))
+                        owwBuilder.WithInferenceThreadScale(scale);
+                    break;
+                case "--oww-model-resource":
+                    if (i + 1 < args.Length)
+                        owwBuilder.WithModelResourceName(args[++i]);
+                    break;
+                case "--oww-audio-sample-rate":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var sampleRate))
+                        owwBuilder.WithAudioSampleRate(sampleRate);
+                    break;
+                case "--oww-verbose-log":
+                    owwBuilder.WithVerboseLogging(true);
+                    break;
+                    
                 default:
                     Console.Error.WriteLine($"[WARN] Unknown argument: {args[i]}");
                     break;
@@ -53,6 +96,13 @@ class Program
         }
 
         outPath ??= inputPath + ".patched.exe";
+
+        if (prepareOnnxNatives)
+        {
+            OnnxNativeLibraryManager.PrepareFromNuGetCache(
+                Directory.GetCurrentDirectory(),
+                Console.WriteLine);
+        }
 
         // ── Validate input ───────────────────────────────────────────────
         if (!File.Exists(inputPath))
@@ -99,7 +149,16 @@ class Program
         // ── Run patcher ──────────────────────────────────────────────────
         try
         {
-            var patcher = new AssemblyPatcher(verbose);
+            var owwSettings = owwBuilder.Build();
+            Console.WriteLine();
+            Console.WriteLine("OpenWakeWord Settings:");
+            Console.WriteLine($"  Threshold        : {owwSettings.ConfidenceThreshold:F3}");
+            Console.WriteLine($"  Lock Duration    : {owwSettings.LockDurationMs} ms");
+            Console.WriteLine($"  Audio Chunk Size : {owwSettings.AudioChunkSize} samples");
+            Console.WriteLine($"  Thread Scale     : {owwSettings.InferenceThreadPoolScale:F2}");
+            Console.WriteLine();
+            
+            var patcher = new AssemblyPatcher(verbose, owwSettings);
             var result  = patcher.Patch(inputPath, outPath, dryRun);
 
             Console.WriteLine();
@@ -146,17 +205,31 @@ class Program
             CrossPlatformPatcher <path-to-PAIcom.exe> [options]
 
         Options:
-            --out <file>    Output path  (default: <input>.patched.exe)
-            --dry-run       Find patch points without writing output
-            --backup        Write <input>.bak before patching
-            --verbose       Detailed IL scan output
-            --analyze       Analyze assembly and print method report (no patch)
-            -V, --version   Print version and exit
+            --out <file>                    Output path  (default: <input>.patched.exe)
+            --dry-run                       Find patch points without writing output
+            --backup                        Write <input>.bak before patching
+            --verbose                       Detailed IL scan output
+            --analyze                       Analyze assembly and print method report (no patch)
+            --prepare-onnx-natives          Copy ONNX Runtime native libs from NuGet cache into Core/NativeLibraries
+            -V, --version                   Print version and exit
+
+        OpenWakeWord Options:
+            --oww-threshold <0.0-1.0>       Wake word confidence threshold (default: 0.7)
+            --oww-lock-ms <ms>              Hard lock duration in milliseconds (default: 3000)
+            --oww-audio-chunk-size <n>      Audio chunk size in samples (default: 1024)
+            --oww-inference-thread-scale <n> ThreadPool scaling 0.5-2.0 (default: 1.0)
+            --oww-model-resource <name>     ONNX model resource name (default: oww.model.hey_pie_com.onnx)
+            --oww-audio-sample-rate <hz>    Audio sample rate in Hz (default: 16000)
+            --oww-verbose-log               Enable verbose OWW logging
 
         Description:
             Replaces Windows-only System.Speech with cross-platform Vosk
-            speech recognition. Outputs a patched executable compatible with
-            Windows, Linux, and macOS via Wine/Mono.
+            speech recognition + OpenWakeWord wake word detection.
+            Outputs a patched executable compatible with Windows, Linux,
+            and macOS via Wine/Mono.
+
+        Example:
+            CrossPlatformPatcher PAIcom.exe --oww-threshold 0.65 --oww-lock-ms 2500 --verbose
         """);
     }
 }
