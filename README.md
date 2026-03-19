@@ -351,7 +351,7 @@ run.bat
 - `PAICOM_OWW_LOCK_MS` (int, default 3000)
 - `PAICOM_OWW_AUDIO_CHUNK_SIZE` (int, default 1024)
 - `PAICOM_OWW_INFERENCE_THREAD_SCALE` (float, default 1.0)
-- `PAICOM_OWW_MODEL_RESOURCE` (string, default "oww.model.hey_pie_com.onnx")
+- `PAICOM_OWW_MODEL_RESOURCE` (string, default "oww.model.hey_pie_com.quant.onnx")
 - `PAICOM_OWW_AUDIO_SAMPLE_RATE` (int, default 16000)
 - `PAICOM_OWW_VERBOSE_LOG` (bool, default false)
 
@@ -382,7 +382,7 @@ This copies runtime-native binaries from your local NuGet cache into `Core/Nativ
 
 ```
 2025-03-18 10:15:23.456 [oww] Initialized with settings: ...
-2025-03-18 10:15:23.650 [oww] Loading ONNX model from resource: oww.model.hey_pie_com.onnx
+2025-03-18 10:15:23.650 [oww] Loading ONNX model from resource: oww.model.hey_pie_com.quant.onnx
 2025-03-18 10:15:23.750 [oww] Model loaded, size=2.34 MB
 2025-03-18 10:15:23.850 [oww] Starting inference worker
 [oww] Audio processed, confidence=0.123

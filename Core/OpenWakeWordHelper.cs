@@ -19,6 +19,7 @@ public static class OpenWakeWordHelper
     private static Exception? _initError;
     private static OpenWakeWordSettings? _settings;
     private static AudioLockManager? _lockManager;
+    private static OpenWakeWordFeaturePipeline? _featurePipeline;
     private static OpenWakeWordWrapperModel? _model;
     private static OpenWakeWordInferenceWorker? _worker;
     private static readonly object _initLock = new();
@@ -53,6 +54,9 @@ public static class OpenWakeWordHelper
                 // Create lock manager (hard lock = 3000ms)
                 _lockManager = new AudioLockManager(_settings.LockDurationMs);
 
+                // Build the OpenWakeWord preprocessing pipeline
+                _featurePipeline = new OpenWakeWordFeaturePipeline(LogEvent);
+
                 // Load ONNX model from embedded resources
                 _model = OpenWakeWordWrapperModel.GetOrCreateSession(
                     _settings.ModelResourceName,
@@ -62,6 +66,7 @@ public static class OpenWakeWordHelper
                 _worker = new OpenWakeWordInferenceWorker(
                     _settings,
                     _lockManager,
+                    _featurePipeline,
                     _model,
                     (detected, confidence) =>
                     {
@@ -84,7 +89,7 @@ public static class OpenWakeWordHelper
             catch (Exception ex)
             {
                 _initError = ex;
-                LogEvent($"OpenWakeWord initialization failed: {ex.Message}");
+                LogEvent($"OpenWakeWord initialization failed: {ex}");
             }
         }
     }
@@ -183,11 +188,13 @@ public static class OpenWakeWordHelper
         {
             _worker?.StopProcessing();
             _worker?.Dispose();
+            _featurePipeline?.Dispose();
             _model?.Dispose();
             _lockManager?.Dispose();
             
             _initialized = false;
             _worker = null;
+            _featurePipeline = null;
             _model = null;
             _lockManager = null;
             _settings = null;

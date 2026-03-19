@@ -10,4 +10,9 @@
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.17.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources/melspectrogram.onnx" LogicalName="oww.feature.melspectrogram.onnx" Condition="Exists('Resources/melspectrogram.onnx')" />
+    <EmbeddedResource Include="Resources/embedding_model.onnx" LogicalName="oww.feature.embedding.onnx" Condition="Exists('Resources/embedding_model.onnx')" />
+  </ItemGroup>
+
 </Project>

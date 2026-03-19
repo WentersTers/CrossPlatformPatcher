@@ -33,7 +33,7 @@ public sealed class OpenWakeWordSettings
     /// <summary>ThreadPool scaling factor [0.5, 2.0]. 1.0 = normal, 0.5 = low-priority, 2.0 = aggressive. Default: 1.0.</summary>
     public float InferenceThreadPoolScale { get; }
 
-    /// <summary>ONNX model resource name in patched assembly. Default: "oww.model.hey_pie_com.onnx".</summary>
+    /// <summary>ONNX model resource name in patched assembly. Default: "oww.model.hey_pie_com.quant.onnx".</summary>
     public string ModelResourceName { get; }
 
     /// <summary>Audio sample rate in Hz. Default: 16000 (16 kHz).</summary>
@@ -50,7 +50,7 @@ public sealed class OpenWakeWordSettings
         int lockDurationMs = 3000,
         int audioChunkSize = 1024,
         float inferenceThreadPoolScale = 1.0f,
-        string modelResourceName = "oww.model.hey_pie_com.onnx",
+        string modelResourceName = "oww.model.hey_pie_com.quant.onnx",
         int audioSampleRate = 16000,
         bool enableVerboseLogging = false)
     {
@@ -88,7 +88,7 @@ public sealed class OpenWakeWordSettings
     /// - Lock: 3000 ms
     /// - ChunkSize: 1024 samples
     /// - ThreadScale: 1.0
-    /// - Model: "oww.model.hey_pie_com.onnx"
+    /// - Model: "oww.model.hey_pie_com.quant.onnx"
     /// - SampleRate: 16000 Hz
     /// - VerboseLog: false
     /// </summary>

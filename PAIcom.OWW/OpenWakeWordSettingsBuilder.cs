@@ -16,7 +16,7 @@ public sealed class OpenWakeWordSettingsBuilder
     private int _lockMs = 3000;
     private int _chunkSize = 1024;
     private float _threadScale = 1.0f;
-    private string _modelResource = "oww.model.hey_pie_com.onnx";
+    private string _modelResource = "oww.model.hey_pie_com.quant.onnx";
     private int _sampleRate = 16000;
     private bool _verboseLog;
 
