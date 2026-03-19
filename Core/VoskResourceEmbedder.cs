@@ -8,11 +8,11 @@ namespace CrossPlatformPatcher.Core;
 /// into this patcher binary, then injects them as named resource streams into
 /// the target module.
 ///
-/// At runtime inside the patched exe, the injected HotSwapRuntime reads these
+/// At runtime inside the patched exe, injected compatibility/runtime helpers can read these
 /// resources via Assembly.GetExecutingAssembly().GetManifestResourceStream()
 /// and self-extracts the correct one for its OS before loading Vosk.
 ///
-/// Resource naming convention (matches HotSwapTemplate expectations):
+/// Resource naming convention:
 ///   vosk.native.win-x64.dll
 ///   vosk.native.linux-x64.so
 ///   vosk.native.linux-arm64.so
@@ -24,10 +24,11 @@ namespace CrossPlatformPatcher.Core;
 /// </summary>
 public static class VoskResourceEmbedder
 {
-    // All resource names the injected runtime may look for.
+    // All resource names runtime compatibility helpers may look for.
     // The patcher may not have all of them (conditional EmbeddedResource in .csproj).
     private static readonly string[] KnownResources =
     [
+        // Vosk (speech recognition) resources
         "vosk.native.win-x64.dll",
         "vosk.native.win-gcc.dll",
         "vosk.native.win-stdc.dll",
@@ -36,8 +37,22 @@ public static class VoskResourceEmbedder
         "vosk.native.linux-arm64.so",
         "vosk.native.osx.dylib",
         "vosk.managed.dll",
+        
+        // NAudio (audio processing) resources
         "naudio.core.dll",
         "naudio.winmm.dll",
+        
+        // OpenWakeWord (wake word detection) resources
+        "oww.model.hey_pie_com.onnx",
+        
+        // ONNX Runtime (inference) native libraries
+        "onnxruntime.native.win-x64.dll",
+        "onnxruntime.native.linux-x64.so",
+        "onnxruntime.native.linux-arm64.so",
+        "onnxruntime.native.osx-x64.dylib",
+        "onnxruntime.native.osx-arm64.dylib",
+        
+        // JSON utilities
         "newtonsoft.json.dll",
     ];
 
@@ -45,8 +60,8 @@ public static class VoskResourceEmbedder
     /// Copies all Vosk/NAudio resources from this patcher exe into
     /// <paramref name="targetModule"/> as embedded module resources.
     /// Resources that are not present in the patcher (built without them)
-    /// are silently skipped — the injected runtime handles missing natives
-    /// gracefully by falling back to file-only command dispatch.
+    /// are silently skipped — runtime code can handle missing native dependencies
+    /// gracefully.
     /// </summary>
     public static void EmbedIntoModule(ModuleDef targetModule, bool verbose = false)
     {
