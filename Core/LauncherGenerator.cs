@@ -67,6 +67,13 @@ public static class LauncherGenerator
             launch_runtime() {
                 log "Executing: $*"
                 set +e
+                # Export OpenWakeWord environment variables (can be overridden by user)
+                export PAICOM_OWW_THRESHOLD="${PAICOM_OWW_THRESHOLD:-0.7}"
+                export PAICOM_OWW_LOCK_MS="${PAICOM_OWW_LOCK_MS:-3000}"
+                export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-1024}"
+                export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
+                export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
+                
                 "$@" >> "$RUNTIME_LOG" 2>&1
                 EXIT_CODE=$?
                 set -e
@@ -745,7 +752,15 @@ public static class LauncherGenerator
     {
         var path = Path.Combine(dir, "run.bat");
         // Use Windows-style line endings for .bat compatibility
-        var content = $"@echo off\r\nstart \"\" \"%~dp0{exe}\" %*\r\n";
+        var content = "@echo off\r\n" +
+                     "REM Set OpenWakeWord environment variables (can be overridden by user)\r\n" +
+                     "if not defined PAICOM_OWW_THRESHOLD set PAICOM_OWW_THRESHOLD=0.7\r\n" +
+                     "if not defined PAICOM_OWW_LOCK_MS set PAICOM_OWW_LOCK_MS=3000\r\n" +
+                     "if not defined PAICOM_OWW_AUDIO_CHUNK_SIZE set PAICOM_OWW_AUDIO_CHUNK_SIZE=1024\r\n" +
+                     "if not defined PAICOM_OWW_INFERENCE_THREAD_SCALE set PAICOM_OWW_INFERENCE_THREAD_SCALE=1.0\r\n" +
+                     "if not defined PAICOM_OWW_VERBOSE_LOG set PAICOM_OWW_VERBOSE_LOG=false\r\n" +
+                     "\r\n" +
+                     "start \"\" \"%~dp0" + exe + "\" %*\r\n";
         File.WriteAllText(path, content, System.Text.Encoding.ASCII);
         Console.WriteLine($"  [launcher] run.bat written.");
     }
@@ -811,9 +826,9 @@ public static class LauncherGenerator
             3. Set **Driver** to `PulseAudio` (or `PipeWire` if available).
             4. Click OK and restart PAIcom.
 
-            If you see `[VOSK] NAudio startup failed` in `hotswap.log`, Wine audio is not
-            configured. The speech recogniser will fall back to file-based input
-            (`command_input.txt`) until audio is working.
+            If microphone capture fails under Wine, voice recognition may not start.
+            Verify microphone routing in `winecfg` and review `launcher-runtime.log`
+            for `[compat][speech]` diagnostics.
 
             ## Vosk Model Auto-Download
 
@@ -837,10 +852,8 @@ public static class LauncherGenerator
             ./setup-wizard.log
             ```
 
-            If runtime injection is active, also check:
-            ```
-            ./hotswap.log
-            ```
+            Voice compatibility diagnostics are written to `launcher-runtime.log`
+            with the `[compat][speech]` prefix.
             """, Utf8NoBom);
 
         Console.WriteLine($"  [launcher] SETUP_LINUX.md written.");
@@ -963,8 +976,8 @@ public static class LauncherGenerator
             PAIcom uses Windows audio (WinMM) via Wine. On macOS, Wine routes audio through
             CoreAudio automatically in most Wine builds — no extra configuration needed.
 
-            If microphone input fails, check `hotswap.log` for `[VOSK]` errors.
-            To skip speech input: `PAICOM_NO_STT=1 sh run.sh`
+            If microphone input fails, review `launcher-runtime.log` for
+            `[compat][speech]` diagnostics.
 
             ## Vosk Model Auto-Download
 
@@ -983,10 +996,8 @@ public static class LauncherGenerator
             ./setup-wizard.log
             ```
 
-            If runtime injection is active, also check:
-            ```
-            ./hotswap.log
-            ```
+            Voice compatibility diagnostics are written to `launcher-runtime.log`
+            with the `[compat][speech]` prefix.
             """, Utf8NoBom);
 
         Console.WriteLine($"  [launcher] SETUP_MAC.md written.");

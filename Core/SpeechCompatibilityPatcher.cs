@@ -12,6 +12,9 @@ public static class SpeechCompatibilityPatcher
     public static int Patch(ModuleDefMD module, Action<string>? log = null)
     {
         var patched = 0;
+        var eventLogs = 0;
+        MethodDef? logMethod = null;
+        MethodDef? eventLogMethod = null;
 
         var methods = module.GetTypes()
             .SelectMany(t => t.Methods)
@@ -20,18 +23,91 @@ public static class SpeechCompatibilityPatcher
 
         foreach (var method in methods)
         {
+            if (HasSpeechRecognitionEventArg(method))
+            {
+                eventLogMethod ??= EnsureSpeechEventLogMethod(module);
+                if (TryInjectSpeechEventLog(method, eventLogMethod))
+                    eventLogs++;
+            }
+
             if (!ReferencesSystemSpeech(method))
                 continue;
 
             if (method.Body.ExceptionHandlers.Count > 0)
                 continue;
 
-            if (TryWrapMethodWithCatch(module, method))
+            logMethod ??= EnsureSpeechLogMethod(module);
+
+            if (TryWrapMethodWithCatch(module, method, logMethod))
                 patched++;
         }
 
         log?.Invoke($"System.Speech safety wrappers applied: {patched}");
+        log?.Invoke($"System.Speech event probes applied: {eventLogs}");
         return patched;
+    }
+
+    private static bool HasSpeechRecognitionEventArg(MethodDef method)
+    {
+        if (!method.HasBody)
+            return false;
+
+        foreach (var param in method.Parameters)
+        {
+            if (param.IsHiddenThisParameter)
+                continue;
+
+            var fullName = param.Type?.FullName;
+            if (string.Equals(fullName, "System.Speech.Recognition.SpeechRecognizedEventArgs", StringComparison.Ordinal) ||
+                string.Equals(fullName, "System.Speech.Recognition.SpeechHypothesizedEventArgs", StringComparison.Ordinal) ||
+                string.Equals(fullName, "System.Speech.Recognition.RecognizeCompletedEventArgs", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryInjectSpeechEventLog(MethodDef method, IMethod eventLogMethod)
+    {
+        if (!method.HasBody || method.Body.Instructions.Count == 0)
+            return false;
+
+        var body = method.Body;
+        var instrs = body.Instructions;
+
+        // Idempotence for re-patching: skip if already instrumented.
+        for (int i = 0; i + 1 < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Ldstr && instrs[i].Operand is string s && s == method.FullName &&
+                instrs[i + 1].OpCode == OpCodes.Call && instrs[i + 1].Operand is IMethod called && called.Name == "LogSpeechEvent")
+            {
+                return false;
+            }
+        }
+
+        var first = instrs[0];
+        var methodLabel = GetMethodLogLabel(method);
+        instrs.Insert(0, Instruction.Create(OpCodes.Ldstr, method.FullName));
+        instrs.Insert(1, Instruction.Create(OpCodes.Call, eventLogMethod));
+
+        instrs[0].Operand = methodLabel;
+
+        // Expand existing handlers to include the newly inserted probe if needed.
+        foreach (var eh in body.ExceptionHandlers)
+        {
+            if (eh.TryStart == first)
+                eh.TryStart = instrs[0];
+            if (eh.HandlerStart == first)
+                eh.HandlerStart = instrs[0];
+            if (eh.FilterStart == first)
+                eh.FilterStart = instrs[0];
+        }
+
+        body.OptimizeBranches();
+        body.OptimizeMacros();
+        return true;
     }
 
     private static bool ReferencesSystemSpeech(MethodDef method)
@@ -66,7 +142,7 @@ public static class SpeechCompatibilityPatcher
         return false;
     }
 
-    private static bool TryWrapMethodWithCatch(ModuleDefMD module, MethodDef method)
+    private static bool TryWrapMethodWithCatch(ModuleDefMD module, MethodDef method, IMethod logMethod)
     {
         var body = method.Body;
         if (body.Instructions.Count == 0)
@@ -87,6 +163,9 @@ public static class SpeechCompatibilityPatcher
             retLocal = new Local(retType);
             body.Variables.Add(retLocal);
         }
+
+        var exceptionLocal = new Local(module.CorLibTypes.GetTypeRef("System", "Exception").ToTypeSig());
+        body.Variables.Add(exceptionLocal);
 
         var finalReturnNop = Instruction.Create(OpCodes.Nop);
 
@@ -113,10 +192,14 @@ public static class SpeechCompatibilityPatcher
             }
         }
 
-        var catchStart = Instruction.Create(OpCodes.Pop);
+        var catchStart = Instruction.Create(OpCodes.Stloc, exceptionLocal);
         var catchLeave = Instruction.Create(OpCodes.Leave, finalReturnNop);
+        var methodLabel = GetMethodLogLabel(method);
 
         instructions.Add(catchStart);
+        instructions.Add(Instruction.Create(OpCodes.Ldstr, methodLabel));
+        instructions.Add(Instruction.Create(OpCodes.Ldloc, exceptionLocal));
+        instructions.Add(Instruction.Create(OpCodes.Call, logMethod));
 
         if (!isVoid)
         {
@@ -153,5 +236,141 @@ public static class SpeechCompatibilityPatcher
         body.OptimizeBranches();
         body.OptimizeMacros();
         return true;
+    }
+
+    private static MethodDef EnsureSpeechLogMethod(ModuleDefMD module)
+    {
+        const string helperTypeName = "CrossPlatformPatcherCompat";
+        const string helperMethodName = "LogSuppressedSpeechException";
+
+        var helperType = module.Types.FirstOrDefault(t => t.Name == helperTypeName)
+            ?? CreateHelperType(module, helperTypeName);
+
+        var existing = helperType.Methods.FirstOrDefault(m => m.Name == helperMethodName);
+        if (existing is not null)
+            return existing;
+
+        var exceptionSig = module.CorLibTypes.GetTypeRef("System", "Exception").ToTypeSig();
+        var methodSig = MethodSig.CreateStatic(module.CorLibTypes.Void, module.CorLibTypes.String, exceptionSig);
+
+        var method = new MethodDefUser(
+            helperMethodName,
+            methodSig,
+            MethodImplAttributes.IL | MethodImplAttributes.Managed,
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+
+        method.Body = BuildSpeechLogMethodBody(module);
+        helperType.Methods.Add(method);
+        return method;
+    }
+
+    private static MethodDef EnsureSpeechEventLogMethod(ModuleDefMD module)
+    {
+        const string helperTypeName = "CrossPlatformPatcherCompat";
+        const string helperMethodName = "LogSpeechEvent";
+
+        var helperType = module.Types.FirstOrDefault(t => t.Name == helperTypeName)
+            ?? CreateHelperType(module, helperTypeName);
+
+        var existing = helperType.Methods.FirstOrDefault(m => m.Name == helperMethodName);
+        if (existing is not null)
+            return existing;
+
+        var methodSig = MethodSig.CreateStatic(module.CorLibTypes.Void, module.CorLibTypes.String);
+        var method = new MethodDefUser(
+            helperMethodName,
+            methodSig,
+            MethodImplAttributes.IL | MethodImplAttributes.Managed,
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+
+        method.Body = BuildSpeechEventLogMethodBody(module);
+        helperType.Methods.Add(method);
+        return method;
+    }
+
+    private static TypeDef CreateHelperType(ModuleDefMD module, string helperTypeName)
+    {
+        var type = new TypeDefUser(
+            string.Empty,
+            helperTypeName,
+            module.CorLibTypes.Object.TypeDefOrRef)
+        {
+            Attributes = TypeAttributes.NotPublic |
+                         TypeAttributes.AutoLayout |
+                         TypeAttributes.AnsiClass |
+                         TypeAttributes.Class |
+                         TypeAttributes.Sealed |
+                         TypeAttributes.Abstract
+        };
+
+        module.Types.Add(type);
+        return type;
+    }
+
+    private static CilBody BuildSpeechLogMethodBody(ModuleDefMD module)
+    {
+        var body = new CilBody { InitLocals = false, MaxStack = 3 };
+
+        var consoleType = module.CorLibTypes.GetTypeRef("System", "Console");
+        var stringType = module.CorLibTypes.String.TypeDefOrRef;
+
+        var writeLineString = new MemberRefUser(
+            module,
+            "WriteLine",
+            MethodSig.CreateStatic(module.CorLibTypes.Void, module.CorLibTypes.String),
+            consoleType);
+
+        var concat2 = new MemberRefUser(
+            module,
+            "Concat",
+            MethodSig.CreateStatic(module.CorLibTypes.String, module.CorLibTypes.String, module.CorLibTypes.String),
+            stringType);
+
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech][fallback] System.Speech unavailable in: "));
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, writeLineString));
+        body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+
+        body.OptimizeBranches();
+        body.OptimizeMacros();
+        return body;
+    }
+
+    private static CilBody BuildSpeechEventLogMethodBody(ModuleDefMD module)
+    {
+        var body = new CilBody { InitLocals = false, MaxStack = 3 };
+
+        var consoleType = module.CorLibTypes.GetTypeRef("System", "Console");
+        var stringType = module.CorLibTypes.String.TypeDefOrRef;
+
+        var writeLineString = new MemberRefUser(
+            module,
+            "WriteLine",
+            MethodSig.CreateStatic(module.CorLibTypes.Void, module.CorLibTypes.String),
+            consoleType);
+
+        var concat2 = new MemberRefUser(
+            module,
+            "Concat",
+            MethodSig.CreateStatic(module.CorLibTypes.String, module.CorLibTypes.String, module.CorLibTypes.String),
+            stringType);
+
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech] Event fired: "));
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, writeLineString));
+        body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+
+        body.OptimizeBranches();
+        body.OptimizeMacros();
+        return body;
+    }
+
+    private static string GetMethodLogLabel(MethodDef method)
+    {
+        var typeName = method.DeclaringType?.FullName ?? "<unknown-type>";
+        var methodName = method.Name.String ?? "<unknown-method>";
+        return $"{typeName}::{methodName} [0x{method.MDToken.ToInt32():X8}]";
     }
 }

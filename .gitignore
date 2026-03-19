@@ -63,3 +63,25 @@ desktop.ini
 *.class
 *.cache
 bin-int/
+PAIcom_Player_Folder/
+launch.command
+setup.command
+
+
+setup-wizard.sh
+
+SETUP_MAC.md
+SETUP_LINUX.md
+run.sh
+run.bat
+
+# Patching process - generated patched executables and backups
+*.patched.exe
+*PAIcom*.bak
+PAIcom.exe.bak
+PAIcom.exe.patched.exe
+
+# PAIcom extraction and patching artifacts
+PAIcom.OWW.dll
+PAIcom*.dll
+*.patched.*
