@@ -12,10 +12,11 @@ namespace CrossPlatformPatcher.Core;
 /// ONNX Runtime wrapper for OpenWakeWord model inference.
 /// 
 /// Lazy-loads the hey_pie_com.quant.onnx model from embedded resources.
-/// Provides thread-safe inference: RunInference(float[] chunk, threshold) → (bool detected, float confidence).
+/// Provides thread-safe inference on precomputed OpenWakeWord feature windows:
+/// RunInference(float[,,] features, threshold) → (bool detected, float confidence).
 /// 
 /// Model Details:
-/// - Input: FloatTensor shape [1, N_samples] (mono audio at 16 kHz)
+/// - Input: FloatTensor shape [1, 16, 96] (OpenWakeWord feature window)
 /// - Output: FloatTensor shape [1] (confidence score 0.0-1.0)
 /// - Inference: ~50-200ms per 1024-sample chunk on standard hardware
 /// 
@@ -67,7 +68,7 @@ public sealed class OpenWakeWordWrapperModel : IDisposable
     /// Throws if model not found or ONNX Runtime unavailable.
     /// </summary>
     public static OpenWakeWordWrapperModel GetOrCreateSession(
-        string modelResourceName = "oww.model.hey_pie_com.onnx",
+        string modelResourceName = "oww.model.hey_pie_com.quant.onnx",
         Action<string>? logger = null)
     {
         if (_instance != null)
@@ -108,7 +109,7 @@ public sealed class OpenWakeWordWrapperModel : IDisposable
     /// Run ONNX inference on audio chunk.
     /// 
     /// Input:
-    ///   audioChunk: float array of mono audio samples @ sample rate
+    ///   featureWindow: OpenWakeWord feature tensor shaped [1, 16, 96]
     ///   threshold: confidence threshold [0.0, 1.0]
     /// 
     /// Returns:
@@ -119,10 +120,17 @@ public sealed class OpenWakeWordWrapperModel : IDisposable
     /// 
     /// Throws if inference fails.
     /// </summary>
-    public (bool detected, float confidence) RunInference(float[] audioChunk, float threshold)
+    public (bool detected, float confidence) RunInference(float[,,] featureWindow, float threshold)
     {
-        if (audioChunk == null || audioChunk.Length == 0)
-            throw new ArgumentException("audioChunk cannot be null or empty");
+        if (featureWindow == null)
+            throw new ArgumentNullException(nameof(featureWindow));
+
+        if (featureWindow.GetLength(0) != 1 || featureWindow.GetLength(1) != 16 || featureWindow.GetLength(2) != 96)
+        {
+            throw new ArgumentException(
+                $"featureWindow must have shape [1, 16, 96], got [{featureWindow.GetLength(0)}, {featureWindow.GetLength(1)}, {featureWindow.GetLength(2)}]",
+                nameof(featureWindow));
+        }
         
         if (threshold < 0.0f || threshold > 1.0f)
             throw new ArgumentException($"threshold must be [0.0, 1.0], got {threshold}");
@@ -131,14 +139,16 @@ public sealed class OpenWakeWordWrapperModel : IDisposable
         {
             try
             {
-                // Create input tensor: shape [1, N_samples]
-                var inputTensor = new DenseTensor<float>(new[] { 1, audioChunk.Length });
-                for (int i = 0; i < audioChunk.Length; i++)
-                    inputTensor[0, i] = audioChunk[i];
+                var inputTensor = new DenseTensor<float>(new[] { 1, 16, 96 });
+                for (int frame = 0; frame < 16; frame++)
+                {
+                    for (int feature = 0; feature < 96; feature++)
+                    {
+                        inputTensor[0, frame, feature] = featureWindow[0, frame, feature];
+                    }
+                }
 
                 // Run inference
-                var inputs = new[] { _inputName };
-                var outputs = new[] { _outputName };
                 var inputValues = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_inputName, inputTensor) };
 
                 using var results = _session.Run(inputValues);

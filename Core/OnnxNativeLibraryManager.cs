@@ -38,6 +38,7 @@ public static class OnnxNativeLibraryManager
 
         var mappings = new (string SourceRelative, string TargetName)[]
         {
+            (Path.Combine("runtimes", "win-x86", "native", "onnxruntime.dll"), "onnxruntime-win-x86.dll"),
             (Path.Combine("runtimes", "win-x64", "native", "onnxruntime.dll"), "onnxruntime-win-x64.dll"),
             (Path.Combine("runtimes", "linux-x64", "native", "libonnxruntime.so"), "onnxruntime-linux-x64.so"),
             (Path.Combine("runtimes", "linux-arm64", "native", "libonnxruntime.so"), "onnxruntime-linux-arm64.so"),

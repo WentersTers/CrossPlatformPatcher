@@ -84,6 +84,7 @@ public class AssemblyPatcher
 
             var outputDir = Path.GetDirectoryName(outputPath);
             if (string.IsNullOrEmpty(outputDir)) outputDir = ".";
+            var onnxNativeResource = GetOnnxNativeResourceName(peBytes);
 
             Log("Extracting PAIcom.OWW.dll and dependencies …");
             string[] embeddedDlls = {
@@ -102,6 +103,17 @@ public class AssemblyPatcher
                 {
                     var outName = dll == "onnxruntime.managed.dll" ? "Microsoft.ML.OnnxRuntime.dll" : dll;
                     var destPath = Path.Combine(outputDir, outName);
+                    using var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536, false);
+                    s.CopyTo(fs);
+                }
+            }
+
+            if (onnxNativeResource != null)
+            {
+                using var s = typeof(AssemblyPatcher).Assembly.GetManifestResourceStream(onnxNativeResource);
+                if (s != null)
+                {
+                    var destPath = Path.Combine(outputDir, "onnxruntime.dll");
                     using var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536, false);
                     s.CopyTo(fs);
                 }
@@ -165,6 +177,25 @@ public class AssemblyPatcher
             Console.WriteLine($"  [V] {msg}");
         else
             Console.WriteLine($"  {msg}");
+    }
+
+    private static string? GetOnnxNativeResourceName(byte[] peBytes)
+    {
+        if (peBytes.Length < 0x40)
+            return null;
+
+        var peHeaderOffset = BitConverter.ToInt32(peBytes, 0x3C);
+        if (peHeaderOffset <= 0 || peHeaderOffset + 6 >= peBytes.Length)
+            return null;
+
+        var machine = BitConverter.ToUInt16(peBytes, peHeaderOffset + 4);
+        return machine switch
+        {
+            0x014c => "onnxruntime.native.win-x86.dll",
+            0x8664 => "onnxruntime.native.win-x64.dll",
+            0xAA64 => "onnxruntime.native.win-arm64.dll",
+            _ => null,
+        };
     }
 }
 

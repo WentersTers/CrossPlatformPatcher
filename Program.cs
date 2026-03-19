@@ -218,7 +218,7 @@ class Program
             --oww-lock-ms <ms>              Hard lock duration in milliseconds (default: 3000)
             --oww-audio-chunk-size <n>      Audio chunk size in samples (default: 1024)
             --oww-inference-thread-scale <n> ThreadPool scaling 0.5-2.0 (default: 1.0)
-            --oww-model-resource <name>     ONNX model resource name (default: oww.model.hey_pie_com.onnx)
+            --oww-model-resource <name>     ONNX model resource name (default: oww.model.hey_pie_com.quant.onnx)
             --oww-audio-sample-rate <hz>    Audio sample rate in Hz (default: 16000)
             --oww-verbose-log               Enable verbose OWW logging
 
