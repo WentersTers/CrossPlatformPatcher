@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "osx": "./.github/hooks/code-quality-check.sh",
+        "linux": "./.github/hooks/code-quality-check.sh",
+        "windows": ".github\\hooks\\code-quality-check.sh",
+        "cwd": "${workspaceFolder}",
+        "timeout": 120
+      }
+    ]
+  }
+}

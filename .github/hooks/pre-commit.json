@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Start": [
+      {
+        "type": "command",
+        "osx": "./.github/hooks/pre-commit.sh",
+        "linux": "./.github/hooks/pre-commit.sh",
+        "windows": ".github\\hooks\\pre-commit.sh",
+        "cwd": "${workspaceFolder}",
+        "timeout": 60
+      }
+    ]
+  }
+}
