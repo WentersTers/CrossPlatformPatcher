@@ -51,6 +51,13 @@ For an end-to-end build, publish, patch, and launch flow from the repo root on m
 ./build-patch-and-launch.sh
 ```
 
+The wrapper script supports additional flags:
+- `--rid <runtime-identifier>` (override auto-detected target)
+- `--verbose` (print each invoked command)
+- `--show-build-output` (don’t suppress `dotnet` output)
+- `--no-launch` (build/publish/patch only, do not run setup-wizard)
+- `--build-log <file>` (save output to a log file)
+
 If you want to force a specific runtime identifier, pass `--rid`:
 
 ```sh
