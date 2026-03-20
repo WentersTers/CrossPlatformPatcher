@@ -760,9 +760,9 @@ public static class LauncherGenerator
         var path = Path.Combine(dir, "launch.command");
         File.WriteAllText(path, $"""
             #!/usr/bin/env sh
-            # Mac Finder double-click launcher — runs setup wizard auto-launch mode
+            # Mac Finder double-click launcher — runs the game
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-            exec sh "$SCRIPT_DIR/setup-wizard.sh" --launch "$@"
+            exec sh "$SCRIPT_DIR/run.sh" "$@"
             """, Utf8NoBom);
 
         TryChmod(path, "755");
