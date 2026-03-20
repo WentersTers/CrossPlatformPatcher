@@ -35,11 +35,16 @@ public sealed class OpenWakeWordFeaturePipeline : IDisposable
     private readonly List<float[]> _melBuffer = new();
     private readonly List<float[]> _featureBuffer = new();
     private readonly object _sync = new();
+    private readonly Action<string>? _logger;
+    private bool _loggedAudioStarted;
+    private bool _loggedMelPrimed;
+    private bool _loggedFeaturePrimed;
     private bool _disposed;
 
     public OpenWakeWordFeaturePipeline(Action<string>? logger = null)
     {
         var assembly = Assembly.GetExecutingAssembly();
+        _logger = logger;
 
         _melspecSession = LoadSession(assembly, "oww.feature.melspectrogram.onnx");
         _embeddingSession = LoadSession(assembly, "oww.feature.embedding.onnx");
@@ -57,6 +62,12 @@ public sealed class OpenWakeWordFeaturePipeline : IDisposable
 
         lock (_sync)
         {
+            if (!_loggedAudioStarted)
+            {
+                _loggedAudioStarted = true;
+                _logger?.Invoke("[oww] Audio stream received; warming up feature extractor");
+            }
+
             _rawBuffer.AddRange(audioChunk);
 
             while (_rawBuffer.Count >= RawChunkSize)
@@ -71,12 +82,24 @@ public sealed class OpenWakeWordFeaturePipeline : IDisposable
                 }
                 TrimToMaxLength(_melBuffer, MaxMelFrames);
 
+                if (!_loggedMelPrimed && _melBuffer.Count >= MelWindowSize)
+                {
+                    _loggedMelPrimed = true;
+                    _logger?.Invoke("[oww] Mel feature buffer primed (76 frames)");
+                }
+
                 if (_melBuffer.Count >= MelWindowSize)
                 {
                     var melWindow = _melBuffer.Skip(_melBuffer.Count - MelWindowSize).Take(MelWindowSize).ToArray();
                     var embedding = ComputeEmbedding(melWindow);
                     _featureBuffer.Add(embedding);
                     TrimToMaxLength(_featureBuffer, MaxFeatureFrames);
+
+                    if (!_loggedFeaturePrimed && _featureBuffer.Count >= FeatureWindowSize)
+                    {
+                        _loggedFeaturePrimed = true;
+                        _logger?.Invoke("[oww] Wake-word feature window primed (16 x 96); classifier ready");
+                    }
                 }
             }
 
@@ -111,7 +134,19 @@ public sealed class OpenWakeWordFeaturePipeline : IDisposable
 
         using var results = _melspecSession.Run(new[] { NamedOnnxValue.CreateFromTensor(_melspecInputName, input) });
         var tensor = results.First().AsTensor<float>();
-        return ToJagged2D(tensor, MelBins);
+        var mels = ToJagged2D(tensor, MelBins);
+
+        // Match upstream openWakeWord preprocessing scaling.
+        for (int frame = 0; frame < mels.Length; frame++)
+        {
+            var row = mels[frame];
+            for (int bin = 0; bin < row.Length; bin++)
+            {
+                row[bin] = row[bin] / 10.0f + 2.0f;
+            }
+        }
+
+        return mels;
     }
 
     private float[] ComputeEmbedding(float[][] melWindow)

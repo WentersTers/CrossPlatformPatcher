@@ -13,6 +13,7 @@
 ## Build And Test
 - Build the patcher with `dotnet build CrossPlatformPatcher.csproj -c Release`.
 - Test the patcher with `dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release`.
+- run the ./build-and-test.sh script to validate the full build and test workflow.
 - If launcher generation or runtime patching changes, validate the generated output on the relevant operating systems when possible.
 
 ## Documentation

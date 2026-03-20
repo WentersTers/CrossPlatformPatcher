@@ -47,7 +47,13 @@ public static class OpenWakeWordCompatibilityPatcher
                 continue;
 
             if (TryInjectAudioHook(method, helper))
+            {
                 patched++;
+                var signature = string.Join(", ", method.Parameters
+                    .Where(p => !p.IsHiddenThisParameter)
+                    .Select(p => p.Type?.FullName ?? "<unknown>"));
+                log?.Invoke($"[oww] Hooked audio method: {method.DeclaringType.FullName}::{method.Name}({signature}) [0x{method.MDToken.Raw:X8}]");
+            }
         }
 
         log?.Invoke($"[oww] Audio event injection points: {patched}");
@@ -150,6 +156,7 @@ public static class OpenWakeWordCompatibilityPatcher
         var nameLooksAudio = LooksLikeAudioCallbackName(methodName);
         var hasAudioTypedParam = false;
         var hasAudioEventArgsParam = false;
+        var hasAudioCarrierParam = false;
 
         foreach (var instr in method.Body.Instructions)
         {
@@ -188,14 +195,45 @@ public static class OpenWakeWordCompatibilityPatcher
             {
                 hasAudioEventArgsParam = true;
             }
+
+            if (!hasAudioCarrierParam && IsAudioCarrierType(param.Type))
+                hasAudioCarrierParam = true;
         }
 
-        if (nameLooksAudio && (hasAudioTypedParam || hasAudioEventArgsParam))
+        if (nameLooksAudio && (hasAudioTypedParam || hasAudioEventArgsParam || hasAudioCarrierParam))
             return true;
 
-        // Obfuscated builds often hide method names, so allow array-based hooks
-        // when the signature strongly suggests an audio callback.
+        // Obfuscated builds often hide method names; allow signature-driven hooks.
+        if (hasAudioCarrierParam)
+            return true;
+
         return hasAudioTypedParam && method.Parameters.Count <= 4;
+    }
+
+    private static bool IsAudioCarrierType(TypeSig? typeSig)
+    {
+        if (typeSig == null)
+            return false;
+
+        var typeRef = typeSig.ToTypeDefOrRef();
+        var typeDef = typeRef?.ResolveTypeDef();
+        if (typeDef == null)
+            return false;
+
+        var hasBufferField = false;
+        var hasSizeField = false;
+
+        foreach (var field in typeDef.Fields)
+        {
+            var fieldType = field.FieldType?.FullName ?? string.Empty;
+            if (fieldType is "System.Byte[]" or "System.Int16[]" or "System.Single[]")
+                hasBufferField = true;
+
+            if (fieldType is "System.Int32" or "System.UInt32")
+                hasSizeField = true;
+        }
+
+        return hasBufferField && hasSizeField;
     }
 
     private static bool IsAudioType(string fullTypeName)

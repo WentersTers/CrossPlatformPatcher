@@ -85,23 +85,64 @@ public class AssemblyPatcher
             var outputDir = Path.GetDirectoryName(outputPath);
             if (string.IsNullOrEmpty(outputDir)) outputDir = ".";
             var onnxNativeResource = GetOnnxNativeResourceName(peBytes);
+            var isX86Target = IsX86Target(peBytes);
 
             Log("Extracting PAIcom.OWW.dll and dependencies …");
-            string[] embeddedDlls = {
+            var embeddedDlls = new List<string>
+            {
                 "PAIcom.OWW.dll",
                 "System.Memory.dll",
                 "System.Buffers.dll",
                 "System.Numerics.Vectors.dll",
                 "System.Runtime.CompilerServices.Unsafe.dll",
-                "onnxruntime.managed.dll"
+                "onnxruntime.managed.dll",
+                "vosk.managed.dll",
+                "naudio.core.dll",
+                "naudio.winmm.dll"
             };
+
+            if (isX86Target)
+            {
+                embeddedDlls.AddRange([
+                    "vosk.native.win-x86.dll",
+                    "vosk.native.win-gcc-x86.dll",
+                    "vosk.native.win-stdc-x86.dll",
+                    "vosk.native.win-pthread-x86.dll"
+                ]);
+                Log("Target machine is x86; extracting win32 Vosk native libraries.");
+            }
+            else
+            {
+                embeddedDlls.AddRange([
+                    "vosk.native.win-x64.dll",
+                    "vosk.native.win-gcc.dll",
+                    "vosk.native.win-stdc.dll",
+                    "vosk.native.win-pthread.dll"
+                ]);
+                Log("Target machine is x64; extracting win64 Vosk native libraries.");
+            }
 
             foreach (var dll in embeddedDlls)
             {
                 using var s = typeof(AssemblyPatcher).Assembly.GetManifestResourceStream(dll);
                 if (s != null)
                 {
-                    var outName = dll == "onnxruntime.managed.dll" ? "Microsoft.ML.OnnxRuntime.dll" : dll;
+                    var outName = dll switch
+                    {
+                        "onnxruntime.managed.dll" => "Microsoft.ML.OnnxRuntime.dll",
+                        "vosk.managed.dll" => "Vosk.dll",
+                        "vosk.native.win-x86.dll" => "libvosk.dll",
+                        "vosk.native.win-gcc-x86.dll" => "libgcc_s_sjlj-1.dll",
+                        "vosk.native.win-stdc-x86.dll" => "libstdc++-6.dll",
+                        "vosk.native.win-pthread-x86.dll" => "libwinpthread-1.dll",
+                        "vosk.native.win-x64.dll" => "libvosk.dll",
+                        "vosk.native.win-gcc.dll" => "libgcc_s_seh-1.dll",
+                        "vosk.native.win-stdc.dll" => "libstdc++-6.dll",
+                        "vosk.native.win-pthread.dll" => "libwinpthread-1.dll",
+                        "naudio.core.dll" => "NAudio.Core.dll",
+                        "naudio.winmm.dll" => "NAudio.WinMM.dll",
+                        _ => dll,
+                    };
                     var destPath = Path.Combine(outputDir, outName);
                     using var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536, false);
                     s.CopyTo(fs);
@@ -177,6 +218,19 @@ public class AssemblyPatcher
             Console.WriteLine($"  [V] {msg}");
         else
             Console.WriteLine($"  {msg}");
+    }
+
+    private static bool IsX86Target(byte[] peBytes)
+    {
+        if (peBytes.Length < 0x40)
+            return true;
+
+        var peHeaderOffset = BitConverter.ToInt32(peBytes, 0x3C);
+        if (peHeaderOffset <= 0 || peHeaderOffset + 6 >= peBytes.Length)
+            return true;
+
+        var machine = BitConverter.ToUInt16(peBytes, peHeaderOffset + 4);
+        return machine == 0x014c;
     }
 
     private static string? GetOnnxNativeResourceName(byte[] peBytes)
