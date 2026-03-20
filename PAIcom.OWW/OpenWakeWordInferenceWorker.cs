@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -36,6 +37,11 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
     private bool _isRunning;
     private bool _disposed;
     private int _inferenceTasksActive; // For ThreadPool scaling
+    private int _chunksDequeued;
+    private int _featureNotReadyCount;
+    private int _featureReadyCount;
+    private int _inferenceCount;
+    private float _maxObservedConfidence;
 
     /// <summary>
     /// Create inference worker.
@@ -154,13 +160,49 @@ public sealed class OpenWakeWordInferenceWorker : IDisposable
                 if (chunk == null || chunk.Length == 0)
                     continue;
 
+                _chunksDequeued++;
+                if (_chunksDequeued == 1 || _chunksDequeued % 200 == 0)
+                {
+                    _logger?.Invoke($"Dequeued audio chunk #{_chunksDequeued} (len={chunk.Length}, queue={_audioQueue.Count})");
+                }
+
                 try
                 {
-                    if (!_featurePipeline.TryBuildFeatureWindow(chunk, out var featureWindow) || featureWindow is null)
+                    var sw = Stopwatch.StartNew();
+                    var ready = _featurePipeline.TryBuildFeatureWindow(chunk, out var featureWindow);
+                    sw.Stop();
+
+                    if (sw.ElapsedMilliseconds > 250)
+                    {
+                        _logger?.Invoke($"Feature pipeline latency {sw.ElapsedMilliseconds} ms (queue={_audioQueue.Count})");
+                    }
+
+                    if (!ready || featureWindow is null)
+                    {
+                        _featureNotReadyCount++;
+                        if (_featureNotReadyCount <= 5 || _featureNotReadyCount % 200 == 0)
+                        {
+                            _logger?.Invoke($"Feature window not ready yet (count={_featureNotReadyCount}, dequeued={_chunksDequeued})");
+                        }
                         continue;
+                    }
+
+                    _featureReadyCount++;
+                    if (_featureReadyCount == 1 || _featureReadyCount % 100 == 0)
+                    {
+                        _logger?.Invoke($"Feature window ready (count={_featureReadyCount})");
+                    }
 
                     // Run inference
                     var (detected, confidence) = _model.RunInference(featureWindow!, _settings.ConfidenceThreshold);
+                    _inferenceCount++;
+                    if (confidence > _maxObservedConfidence)
+                        _maxObservedConfidence = confidence;
+
+                    if (_inferenceCount % 100 == 0)
+                    {
+                        _logger?.Invoke($"Inference stats: count={_inferenceCount}, last={confidence:F3}, max={_maxObservedConfidence:F3}, threshold={_settings.ConfidenceThreshold:F3}");
+                    }
 
                     if (_settings.EnableVerboseLogging)
                         _logger?.Invoke($"[oww] Inference: detected={detected}, confidence={confidence:F3}");

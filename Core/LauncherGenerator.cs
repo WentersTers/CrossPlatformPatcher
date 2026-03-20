@@ -73,9 +73,21 @@ public static class LauncherGenerator
                 export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-1024}"
                 export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
                 export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
-                
-                "$@" >> "$RUNTIME_LOG" 2>&1
+
+                printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
+
+                "$@" >> "$RUNTIME_LOG" 2>&1 &
+                RUNTIME_PID=$!
+
+                tail -n 0 -F "$RUNTIME_LOG" &
+                TAIL_PID=$!
+
+                wait "$RUNTIME_PID"
                 EXIT_CODE=$?
+
+                kill "$TAIL_PID" 2>/dev/null || true
+                wait "$TAIL_PID" 2>/dev/null || true
+
                 set -e
                 log "Runtime exited with code: $EXIT_CODE"
 
@@ -114,6 +126,10 @@ public static class LauncherGenerator
                 export WINEPREFIX="$SCRIPT_DIR/.wine-prefix"
             fi
             log "WINEPREFIX: $WINEPREFIX"
+
+            # Always launch from the player folder so relative in-game paths resolve.
+            cd "$SCRIPT_DIR"
+            log "Working directory: $(pwd)"
 
             if [ ! -f "$EXE" ]; then
                 log "ERROR: Target executable not found: $EXE"
@@ -681,6 +697,13 @@ public static class LauncherGenerator
                 exit 0
             fi
 
+            if [ "x$1" = "x--launch" ]; then
+                print_header
+                run_diagnostics
+                log "Auto-launch mode: selecting option 3"
+                launch_now
+            fi
+
             print_header
             run_diagnostics
 
@@ -737,9 +760,9 @@ public static class LauncherGenerator
         var path = Path.Combine(dir, "launch.command");
         File.WriteAllText(path, $"""
             #!/usr/bin/env sh
-            # Mac Finder double-click launcher — delegates to run.sh
+            # Mac Finder double-click launcher — runs setup wizard auto-launch mode
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-            sh "$SCRIPT_DIR/run.sh" "$@"
+            exec sh "$SCRIPT_DIR/setup-wizard.sh" --launch "$@"
             """, Utf8NoBom);
 
         TryChmod(path, "755");

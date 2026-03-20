@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="dnlib" Version="4.4.0" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.17.3" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.17.3" GeneratePathProperty="true" />
     
@@ -25,6 +26,12 @@
 
   <Target Name="BuildOWW" BeforeTargets="BeforeBuild">
     <Exec Command="dotnet build PAIcom.OWW/PAIcom.OWW.csproj -c Release" />
+  </Target>
+  <Target Name="PrepareVoskModels" BeforeTargets="BeforeBuild">
+    <Exec
+      Command="bash &quot;$(MSBuildProjectDirectory)/prepare-vosk-models.sh&quot;"
+      Condition="Exists('$(MSBuildProjectDirectory)/prepare-vosk-models.sh')"
+      ContinueOnError="WarnAndContinue" />
   </Target>
   <Target Name="AddOWWResource" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildOWW">
     <ItemGroup>
@@ -43,6 +50,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Core\NativeLibraries\vosk-win-x86.dll" LogicalName="vosk.native.win-x86.dll" Condition="Exists('Core\NativeLibraries\vosk-win-x86.dll')" />
+    <EmbeddedResource Include="Core\NativeLibraries\vosk-win-gcc-x86.dll" LogicalName="vosk.native.win-gcc-x86.dll" Condition="Exists('Core\NativeLibraries\vosk-win-gcc-x86.dll')" />
+    <EmbeddedResource Include="Core\NativeLibraries\vosk-win-stdc-x86.dll" LogicalName="vosk.native.win-stdc-x86.dll" Condition="Exists('Core\NativeLibraries\vosk-win-stdc-x86.dll')" />
+    <EmbeddedResource Include="Core\NativeLibraries\vosk-win-pthread-x86.dll" LogicalName="vosk.native.win-pthread-x86.dll" Condition="Exists('Core\NativeLibraries\vosk-win-pthread-x86.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-x64.dll" LogicalName="vosk.native.win-x64.dll" Condition="Exists('Core\NativeLibraries\vosk-win-x64.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-gcc.dll" LogicalName="vosk.native.win-gcc.dll" Condition="Exists('Core\NativeLibraries\vosk-win-gcc.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-stdc.dll" LogicalName="vosk.native.win-stdc.dll" Condition="Exists('Core\NativeLibraries\vosk-win-stdc.dll')" />
@@ -75,6 +86,7 @@
     <None Remove="CrossPlatformPatcher.Tests\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
+    <Compile Include="PAIcom.OWW\OpenWakeWordMicrophoneCapture.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordFeaturePipeline.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordInferenceWorker.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordSettings.cs" />

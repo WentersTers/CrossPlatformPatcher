@@ -45,6 +45,27 @@ publish-all.bat
 sh publish-all.sh
 ```
 
+For an end-to-end build, publish, patch, and launch flow from the repo root on macOS or Linux, use:
+
+```sh
+./build-patch-and-launch.sh
+```
+
+If you want to force a specific runtime identifier, pass `--rid`:
+
+```sh
+./build-patch-and-launch.sh --rid osx-arm64
+```
+
+This script:
+- builds the patcher in Release
+- publishes a self-contained OS-specific patcher
+- copies the published patcher into `PAIcom_Player_Folder/`
+- patches `PAIcom.exe` to `PAIcom_patched.exe`
+- runs `PAIcom_Player_Folder/launch.command`
+
+Build, patch, and launcher logs stream to the terminal that started the script. Press `Ctrl+C` to stop the wrapper and its child process.
+
 > **Note:** `publish-all.sh` / `publish-all.bat` publish `CrossPlatformPatcher.csproj` for
 > all four runtime identifiers into `publish/CrossPlatformPatcher/<RID>/` with the following naming scheme:
 > - Windows x64: `CrossPlatformPatcher-W-x64.exe`
