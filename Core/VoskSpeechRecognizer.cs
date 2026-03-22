@@ -42,6 +42,33 @@ public class VoskSpeechRecognizer : IDisposable
                 return false;
             }
 
+            var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "stable";
+            var verifiedRuntime = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_VERIFIED_64BIT") ?? "0";
+            
+            // In Stable mode, keep Vosk disabled for maximum safety
+            if (string.Equals(migrationMode, "stable", StringComparison.OrdinalIgnoreCase))
+            {
+                LogEvent("[vosk-speech] Vosk disabled: stable mode requires no advanced features");
+                return false;
+            }
+            
+            // In Probe mode, require launcher verification of 64-bit runtime
+            if (string.Equals(migrationMode, "probe", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.Equals(verifiedRuntime, "1", StringComparison.Ordinal))
+                {
+                    LogEvent("[vosk-speech] Vosk disabled: probe mode requires launcher verification of 64-bit runtime");
+                    return false;
+                }
+                LogEvent("[vosk-speech] Vosk enabled: probe mode with runtime verification confirmed");
+            }
+            
+            // In Full mode, allow Vosk if we're 64-bit (already checked above)
+            if (string.Equals(migrationMode, "full", StringComparison.OrdinalIgnoreCase))
+            {
+                LogEvent("[vosk-speech] Vosk enabled: full 64-bit mode");
+            }
+
             // Try to load Vosk.dll from embedded resources
             if (!LoadVoskAssembly())
             {

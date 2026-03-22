@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using NAudio.Wave;
 
 namespace CrossPlatformPatcher.Core;
@@ -13,13 +14,17 @@ public sealed class OpenWakeWordMicrophoneCapture : IDisposable
 {
     private readonly Action<float[]> _onAudio;
     private readonly Action<string>? _logger;
+    private readonly int _bufferMilliseconds;
     private WaveInEvent? _waveIn;
     private bool _started;
+    private int _dataAvailableEventCount;
+    private long _lastDataAvailableUtcTicks;
 
-    public OpenWakeWordMicrophoneCapture(Action<float[]> onAudio, Action<string>? logger = null)
+    public OpenWakeWordMicrophoneCapture(Action<float[]> onAudio, Action<string>? logger = null, int bufferMilliseconds = 200)
     {
         _onAudio = onAudio ?? throw new ArgumentNullException(nameof(onAudio));
         _logger = logger;
+        _bufferMilliseconds = bufferMilliseconds;
     }
 
     public bool Start()
@@ -33,7 +38,7 @@ public sealed class OpenWakeWordMicrophoneCapture : IDisposable
             {
                 DeviceNumber = 0,
                 WaveFormat = new WaveFormat(16000, 16, 1),
-                BufferMilliseconds = 80,
+                BufferMilliseconds = _bufferMilliseconds,
                 NumberOfBuffers = 3,
             };
 
@@ -41,6 +46,8 @@ public sealed class OpenWakeWordMicrophoneCapture : IDisposable
             _waveIn.RecordingStopped += OnRecordingStopped;
             _waveIn.StartRecording();
             _started = true;
+            _dataAvailableEventCount = 0;
+            Interlocked.Exchange(ref _lastDataAvailableUtcTicks, 0);
 
             _logger?.Invoke("[oww] Direct microphone capture started (NAudio WaveInEvent)");
             return true;
@@ -81,6 +88,13 @@ public sealed class OpenWakeWordMicrophoneCapture : IDisposable
         if (e.BytesRecorded <= 0)
             return;
 
+        int callbackCount = Interlocked.Increment(ref _dataAvailableEventCount);
+        Interlocked.Exchange(ref _lastDataAvailableUtcTicks, DateTime.UtcNow.Ticks);
+        if (callbackCount <= 3 || callbackCount % 100 == 0)
+        {
+            _logger?.Invoke($"[oww-mic-capture] DataAvailable callback #{callbackCount}, bytes={e.BytesRecorded}");
+        }
+
         int samples = e.BytesRecorded / 2;
         if (samples <= 0)
             return;
@@ -92,7 +106,14 @@ public sealed class OpenWakeWordMicrophoneCapture : IDisposable
             chunk[i] = pcm / 32768.0f;
         }
 
-        _onAudio(chunk);
+        try
+        {
+            _onAudio(chunk);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Invoke($"[oww-mic-capture] ERROR in onAudio callback: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private void OnRecordingStopped(object? sender, StoppedEventArgs e)
@@ -110,5 +131,18 @@ public sealed class OpenWakeWordMicrophoneCapture : IDisposable
     public void Dispose()
     {
         Stop();
+    }
+
+    public bool IsStarted => _started;
+
+    public int DataAvailableEventCount => Volatile.Read(ref _dataAvailableEventCount);
+
+    public DateTime? LastDataAvailableUtc
+    {
+        get
+        {
+            var ticks = Interlocked.Read(ref _lastDataAvailableUtcTicks);
+            return ticks > 0 ? new DateTime(ticks, DateTimeKind.Utc) : null;
+        }
     }
 }
