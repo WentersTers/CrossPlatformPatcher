@@ -18,13 +18,13 @@ public static class LauncherGenerator
 {
     private static readonly System.Text.Encoding Utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    public static void WriteAll(string outputDir, string exeFileName)
+    public static void WriteAll(string outputDir, string exeFileName, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied)
     {
         Directory.CreateDirectory(outputDir);
 
-        WriteRunSh(outputDir, exeFileName);
+        WriteRunSh(outputDir, exeFileName, migrationMode, targetPeMachine, probeCorFlagsApplied);
         WriteLaunchCommand(outputDir);
-        WriteSetupWizardSh(outputDir, exeFileName);
+        WriteSetupWizardSh(outputDir, exeFileName, migrationMode, targetPeMachine);
         WriteSetupCommand(outputDir);
         WriteRunBat(outputDir, exeFileName);
         WriteSetupLinux(outputDir, exeFileName);
@@ -35,13 +35,13 @@ public static class LauncherGenerator
 
     // ── run.sh ────────────────────────────────────────────────────────────
 
-    private static void WriteRunSh(string dir, string exe)
+    private static void WriteRunSh(string dir, string exe, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied)
     {
         var path = Path.Combine(dir, "run.sh");
         var content = """
             #!/usr/bin/env sh
             # PAIcom Launcher - Linux / macOS
-            # Tries bundled Wine, then system Wine, then Mono.
+            # Supports migration modes: stable, probe, full.
             set -e
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
             EXE="$SCRIPT_DIR/__EXE__"
@@ -51,9 +51,21 @@ public static class LauncherGenerator
             ALT_BUNDLED_WINE="$SCRIPT_DIR/runtime/wine/bin/wine"
             WHISKY_WINE="/Applications/Whisky.app/Contents/MacOS/wine"
             WHISKY_CMD=""
+            DEFAULT_MIGRATION_MODE="__MIGRATION_MODE__"
+            TARGET_PE_MACHINE="__TARGET_PE_MACHINE__"
+            PROBE_CORFLAGS_APPLIED="__PROBE_CORFLAGS_APPLIED__"
             if [ -z "$WHISKY_BOTTLE" ]; then
                 WHISKY_BOTTLE="PAIcom"
             fi
+
+            migration_mode="${PAICOM_MIGRATION_MODE:-$DEFAULT_MIGRATION_MODE}"
+            case "$migration_mode" in
+                stable|probe|full)
+                    ;;
+                *)
+                    migration_mode="stable"
+                    ;;
+            esac
 
             timestamp() {
                 date "+%Y-%m-%d %H:%M:%S"
@@ -64,15 +76,103 @@ public static class LauncherGenerator
                 printf "[launcher] %s\n" "$*"
             }
 
-            launch_runtime() {
-                log "Executing: $*"
+            log_arch_truth() {
+                selected_runtime="$1"
+                log "arch.target_pe_machine=$TARGET_PE_MACHINE"
+                log "arch.selected_runtime=$selected_runtime"
+                log "arch.wineprefix=$WINEPREFIX"
+                if [ -f "$WINEPREFIX/system.reg" ]; then
+                    if grep -qi "#arch=win64" "$WINEPREFIX/system.reg"; then
+                        log "arch.wineprefix_arch=win64"
+                    elif grep -qi "#arch=win32" "$WINEPREFIX/system.reg"; then
+                        log "arch.wineprefix_arch=win32"
+                    else
+                        log "arch.wineprefix_arch=unknown"
+                    fi
+                else
+                    log "arch.wineprefix_arch=uninitialized"
+                fi
+            }
+
+            verify_runtime_bitness() {
+                runtime_bin="$1"
                 set +e
-                # Export OpenWakeWord environment variables (can be overridden by user)
+                BITNESS_LINE="$($runtime_bin cmd /c "echo PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE%" 2>> "$RUNTIME_LOG" | tr -d '\r' | tail -n 1)"
+                RC=$?
+                set -e
+                if [ "$RC" -eq 0 ]; then
+                    log "arch.process_probe=$BITNESS_LINE"
+                    case "$BITNESS_LINE" in
+                        *AMD64*|*ARM64*)
+                            export PAICOM_RUNTIME_VERIFIED_64BIT=1
+                            log "arch.process_bitness=64"
+                            ;;
+                        *)
+                            export PAICOM_RUNTIME_VERIFIED_64BIT=0
+                            log "arch.process_bitness=32_or_unknown"
+                            ;;
+                    esac
+                else
+                    export PAICOM_RUNTIME_VERIFIED_64BIT=0
+                    log "arch.process_probe_failed=true"
+                fi
+            }
+
+            classify_reason_code() {
+                if grep -q "reason.code=PROBE_STILL_32BIT" "$RUNTIME_LOG"; then
+                    echo "PROBE_STILL_32BIT"
+                elif grep -q "reason.code=PROBE_ONNX_INIT_FAILED" "$RUNTIME_LOG"; then
+                    echo "PROBE_ONNX_INIT_FAILED"
+                elif grep -q "reason.code=PROBE_RESOURCE_NOT_FOUND" "$RUNTIME_LOG"; then
+                    echo "PROBE_RESOURCE_NOT_FOUND"
+                elif grep -q "reason.code=PROBE_PLATFORM_NOT_SUPPORTED" "$RUNTIME_LOG"; then
+                    echo "PROBE_PLATFORM_NOT_SUPPORTED"
+                elif grep -q "MissingManifestResourceException" "$RUNTIME_LOG"; then
+                    echo "LOAD_FAILURE_MANAGED_RESOURCE"
+                elif grep -qi "BadImageFormatException\|0x8007000B\|wrong ELF class" "$RUNTIME_LOG"; then
+                    echo "DEPENDENCY_MISMATCH"
+                elif grep -qi "SEHException\|Unhandled Exception\|unmanaged" "$RUNTIME_LOG"; then
+                    echo "UNMANAGED_EXCEPTION"
+                else
+                    echo "PROBE_EXIT_NONZERO"
+                fi
+            }
+
+            prepare_whisky_env() {
+                if [ -z "$WHISKY_CMD" ]; then
+                    return 1
+                fi
+
+                if "$WHISKY_CMD" shellenv "$WHISKY_BOTTLE" >/dev/null 2>&1; then
+                    log "Whisky bottle exists: $WHISKY_BOTTLE"
+                else
+                    log "Whisky bottle '$WHISKY_BOTTLE' not found. Creating it now."
+                    if ! "$WHISKY_CMD" create "$WHISKY_BOTTLE"; then
+                        log "ERROR: Could not create Whisky bottle '$WHISKY_BOTTLE'."
+                        return 1
+                    fi
+                    log "Whisky bottle created successfully: $WHISKY_BOTTLE"
+                fi
+
+                SHELLENV_EXPORTS="$($WHISKY_CMD shellenv "$WHISKY_BOTTLE" 2>> "$LOG_FILE" | grep '^export ' || true)"
+                if [ -n "$SHELLENV_EXPORTS" ]; then
+                    eval "$SHELLENV_EXPORTS"
+                fi
+                return 0
+            }
+
+            launch_runtime_capture() {
+                runtime_name="$1"
+                shift
+                log "Executing: $runtime_name $*"
+                set +e
+
                 export PAICOM_OWW_THRESHOLD="${PAICOM_OWW_THRESHOLD:-0.7}"
                 export PAICOM_OWW_LOCK_MS="${PAICOM_OWW_LOCK_MS:-3000}"
                 export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-1024}"
                 export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
                 export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
+                export PAICOM_MIGRATION_MODE="$migration_mode"
 
                 printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
 
@@ -90,14 +190,144 @@ public static class LauncherGenerator
 
                 set -e
                 log "Runtime exited with code: $EXIT_CODE"
+                return "$EXIT_CODE"
+            }
 
-                if [ "$EXIT_CODE" -ne 0 ] && grep -q "MissingManifestResourceException" "$RUNTIME_LOG"; then
-                    log "Detected MissingManifestResourceException in runtime output."
-                    log "Likely cause: app is running on Wine Mono instead of native .NET Framework."
-                    log "Action: run setup-wizard.sh and choose '.NET Framework 4.8 (Whisky bottle)'."
+            choose_probe_runtime() {
+                if [ -x "$ALT_BUNDLED_WINE" ]; then
+                    echo "$ALT_BUNDLED_WINE"
+                elif [ -x "$BUNDLED_WINE" ]; then
+                    echo "$BUNDLED_WINE"
+                elif [ -x "$WHISKY_WINE" ]; then
+                    echo "$WHISKY_WINE"
+                elif command -v wine64 >/dev/null 2>&1; then
+                    command -v wine64
+                elif command -v wine >/dev/null 2>&1; then
+                    command -v wine
+                elif prepare_whisky_env; then
+                    if [ -n "$WINE" ] && command -v "$WINE" >/dev/null 2>&1; then
+                        echo "$WINE"
+                    elif command -v wine64 >/dev/null 2>&1; then
+                        command -v wine64
+                    elif command -v wine >/dev/null 2>&1; then
+                        command -v wine
+                    else
+                        echo "$WHISKY_CMD run"
+                    fi
+                else
+                    echo ""
+                fi
+            }
+
+            launch_stable_path() {
+                log "Launching stable runtime path"
+                if [ -x "$ALT_BUNDLED_WINE" ]; then
+                    log_arch_truth "$ALT_BUNDLED_WINE"
+                    verify_runtime_bitness "$ALT_BUNDLED_WINE"
+                    launch_runtime_capture "$ALT_BUNDLED_WINE" "$ALT_BUNDLED_WINE" "$EXE" "$@"
+                elif [ -x "$BUNDLED_WINE" ]; then
+                    log_arch_truth "$BUNDLED_WINE"
+                    verify_runtime_bitness "$BUNDLED_WINE"
+                    launch_runtime_capture "$BUNDLED_WINE" "$BUNDLED_WINE" "$EXE" "$@"
+                elif [ -x "$WHISKY_WINE" ]; then
+                    log_arch_truth "$WHISKY_WINE"
+                    verify_runtime_bitness "$WHISKY_WINE"
+                    launch_runtime_capture "$WHISKY_WINE" "$WHISKY_WINE" "$EXE" "$@"
+                elif command -v wine >/dev/null 2>&1; then
+                    system_wine="$(command -v wine)"
+                    log_arch_truth "$system_wine"
+                    verify_runtime_bitness "$system_wine"
+                    launch_runtime_capture "$system_wine" wine "$EXE" "$@"
+                elif [ -n "$WHISKY_CMD" ]; then
+                    if prepare_whisky_env; then
+                        if [ -n "$WINE" ] && command -v "$WINE" >/dev/null 2>&1; then
+                            log_arch_truth "$WINE"
+                            verify_runtime_bitness "$WINE"
+                            launch_runtime_capture "$WINE" "$WINE" "$EXE" "$@"
+                        elif command -v wine >/dev/null 2>&1; then
+                            system_wine="$(command -v wine)"
+                            log_arch_truth "$system_wine"
+                            verify_runtime_bitness "$system_wine"
+                            launch_runtime_capture "$system_wine" wine "$EXE" "$@"
+                        elif command -v wine64 >/dev/null 2>&1; then
+                            system_wine64="$(command -v wine64)"
+                            log_arch_truth "$system_wine64"
+                            verify_runtime_bitness "$system_wine64"
+                            launch_runtime_capture "$system_wine64" wine64 "$EXE" "$@"
+                        else
+                            log_arch_truth "$WHISKY_CMD run"
+                            launch_runtime_capture "$WHISKY_CMD run" "$WHISKY_CMD" run "$WHISKY_BOTTLE" "$EXE" "$@"
+                        fi
+                    else
+                        log "ERROR: Whisky bottle setup failed and no Wine runtime was found."
+                        exit 1
+                    fi
+                elif command -v mono >/dev/null 2>&1; then
+                    log_arch_truth "mono"
+                    export PAICOM_RUNTIME_VERIFIED_64BIT=0
+                    launch_runtime_capture "mono" mono "$EXE" "$@"
+                else
+                    log "ERROR: Neither Wine nor Mono is available."
+                    log "Run the guided setup wizard: sh setup-wizard.sh"
+                    exit 1
+                fi
+            }
+
+            launch_probe_or_full() {
+                runtime64="$(choose_probe_runtime)"
+                if [ -z "$runtime64" ]; then
+                    log "reason.code=PROBE_PRECONDITION_RUNTIME_MISSING"
+                    log "No wine64-compatible runtime found; using stable path."
+                    launch_stable_path "$@"
+                    return $?
                 fi
 
-                exit "$EXIT_CODE"
+                if [ "$runtime64" = "$WHISKY_CMD run" ]; then
+                    log "reason.code=PROBE_PRECONDITION_NO_WINE_BINARY"
+                    log "Whisky CLI available but wine binary was not exposed; falling back to stable path."
+                    launch_stable_path "$@"
+                    return $?
+                fi
+
+                if [ "$TARGET_PE_MACHINE" = "x86" ] && [ "$PROBE_CORFLAGS_APPLIED" != "1" ]; then
+                    log "reason.code=PROBE_PRECONDITION_PE32_UNMIGRATED"
+                    log "x86 target did not receive probe CorFlags migration; falling back to stable path."
+                    launch_stable_path "$@"
+                    return $?
+                fi
+
+                if [ -z "${WINEARCH:-}" ]; then
+                    export WINEARCH=win64
+                fi
+                log "Probe/full mode: preferring 64-bit runtime and win64 prefix init"
+                log_arch_truth "$runtime64"
+                verify_runtime_bitness "$runtime64"
+
+                if [ "$migration_mode" = "probe" ]; then
+                    export PAICOM_VOSK_REQUIRE_VERIFIED_64BIT=1
+                fi
+
+                set +e
+                launch_runtime_capture "$runtime64" "$runtime64" "$EXE" "$@"
+                probe_exit=$?
+                set -e
+
+                if [ "$probe_exit" -eq 0 ]; then
+                    if grep -q "reason.code=PROBE_STILL_32BIT" "$RUNTIME_LOG"; then
+                        log "reason.code=PROBE_STILL_32BIT"
+                        log "Probe run stayed 32-bit; relaunching on stable path."
+                        launch_stable_path "$@"
+                        return $?
+                    fi
+                    log "Probe/full launch succeeded."
+                    return 0
+                fi
+
+                reason="$(classify_reason_code)"
+                log "reason.code=$reason"
+                log "Probe/full launch failed; automatic rollback to stable path."
+                launch_stable_path "$@"
+                return $?
             }
 
             : > "$LOG_FILE"
@@ -105,6 +335,7 @@ public static class LauncherGenerator
             log "Launcher start"
             log "Script dir: $SCRIPT_DIR"
             log "Target exe: $EXE"
+            log "Migration mode: $migration_mode"
             log "Whisky bottle: $WHISKY_BOTTLE"
             log "Runtime log: $RUNTIME_LOG"
 
@@ -136,80 +367,22 @@ public static class LauncherGenerator
                 exit 1
             fi
 
-            if [ -x "$ALT_BUNDLED_WINE" ]; then
-                log "Starting with bundled Wine (runtime/wine): $ALT_BUNDLED_WINE"
-                launch_runtime "$ALT_BUNDLED_WINE" "$EXE" "$@"
-            elif [ -x "$BUNDLED_WINE" ]; then
-                log "Starting with bundled Wine (wine): $BUNDLED_WINE"
-                launch_runtime "$BUNDLED_WINE" "$EXE" "$@"
-            elif [ -x "$WHISKY_WINE" ]; then
-                log "Starting with Whisky Wine runtime: $WHISKY_WINE"
-                launch_runtime "$WHISKY_WINE" "$EXE" "$@"
-            elif command -v wine >/dev/null 2>&1; then
-                log "Starting with system Wine: $(command -v wine)"
-                launch_runtime wine "$EXE" "$@"
-            elif [ -n "$WHISKY_CMD" ]; then
-                log "Starting with Whisky CLI: $WHISKY_CMD"
-                if "$WHISKY_CMD" shellenv "$WHISKY_BOTTLE" >/dev/null 2>&1; then
-                    log "Whisky bottle exists: $WHISKY_BOTTLE"
-                    SHELLENV_EXPORTS="$($WHISKY_CMD shellenv "$WHISKY_BOTTLE" 2>> "$LOG_FILE" | grep '^export ' || true)"
-                    if [ -n "$SHELLENV_EXPORTS" ]; then
-                        eval "$SHELLENV_EXPORTS"
-                    fi
-
-                    if [ -n "$WINE" ] && command -v "$WINE" >/dev/null 2>&1; then
-                        log "Using Whisky shellenv Wine command: $WINE"
-                        launch_runtime "$WINE" "$EXE" "$@"
-                    elif command -v wine >/dev/null 2>&1; then
-                        log "Using Wine from Whisky shellenv PATH: $(command -v wine)"
-                        launch_runtime wine "$EXE" "$@"
-                    elif command -v wine64 >/dev/null 2>&1; then
-                        log "Using wine64 from Whisky shellenv PATH: $(command -v wine64)"
-                        launch_runtime wine64 "$EXE" "$@"
-                    else
-                        log "Could not find wine binary after applying whisky shellenv; falling back to whisky run."
-                        launch_runtime "$WHISKY_CMD" run "$WHISKY_BOTTLE" "$EXE" "$@"
-                    fi
-                else
-                    log "Whisky bottle '$WHISKY_BOTTLE' not found. Creating it now."
-                    if "$WHISKY_CMD" create "$WHISKY_BOTTLE"; then
-                        log "Whisky bottle created successfully: $WHISKY_BOTTLE"
-                        SHELLENV_EXPORTS="$($WHISKY_CMD shellenv "$WHISKY_BOTTLE" 2>> "$LOG_FILE" | grep '^export ' || true)"
-                        if [ -n "$SHELLENV_EXPORTS" ]; then
-                            eval "$SHELLENV_EXPORTS"
-                        fi
-
-                        if [ -n "$WINE" ] && command -v "$WINE" >/dev/null 2>&1; then
-                            log "Using Whisky shellenv Wine command: $WINE"
-                            launch_runtime "$WINE" "$EXE" "$@"
-                        elif command -v wine >/dev/null 2>&1; then
-                            log "Using Wine from Whisky shellenv PATH: $(command -v wine)"
-                            launch_runtime wine "$EXE" "$@"
-                        elif command -v wine64 >/dev/null 2>&1; then
-                            log "Using wine64 from Whisky shellenv PATH: $(command -v wine64)"
-                            launch_runtime wine64 "$EXE" "$@"
-                        else
-                            log "Could not find wine binary after creating bottle; falling back to whisky run."
-                            launch_runtime "$WHISKY_CMD" run "$WHISKY_BOTTLE" "$EXE" "$@"
-                        fi
-                    else
-                        log "ERROR: Could not create Whisky bottle '$WHISKY_BOTTLE'."
-                        log "Try manually: whisky create $WHISKY_BOTTLE"
-                        exit 1
-                    fi
-                fi
-            elif command -v mono >/dev/null 2>&1; then
-                log "Wine not found - trying Mono fallback: $(command -v mono)"
-                launch_runtime mono "$EXE" "$@"
-            else
-                log "ERROR: Neither Wine nor Mono is available."
-                log "Run the guided setup wizard: sh setup-wizard.sh"
-                log "Or read SETUP_LINUX.md / SETUP_MAC.md for manual steps."
-                exit 1
+            if [ "$migration_mode" = "probe" ] || [ "$migration_mode" = "full" ]; then
+                launch_probe_or_full "$@"
+                exit $?
             fi
+
+            launch_stable_path "$@"
+            exit $?
             """;
 
-        File.WriteAllText(path, content.Replace("__EXE__", exe), Utf8NoBom);
+        content = content
+            .Replace("__EXE__", exe)
+            .Replace("__MIGRATION_MODE__", MigrationModeParser.ToCliString(migrationMode))
+            .Replace("__TARGET_PE_MACHINE__", targetPeMachine)
+            .Replace("__PROBE_CORFLAGS_APPLIED__", probeCorFlagsApplied ? "1" : "0");
+
+        File.WriteAllText(path, content, Utf8NoBom);
 
         // Make it executable on Unix (no-op on Windows)
         TryChmod(path, "755");
@@ -218,7 +391,7 @@ public static class LauncherGenerator
 
     // ── setup-wizard.sh (Linux/Mac smart setup) ──────────────────────────
 
-    private static void WriteSetupWizardSh(string dir, string exe)
+    private static void WriteSetupWizardSh(string dir, string exe, MigrationMode migrationMode, string targetPeMachine)
     {
         var path = Path.Combine(dir, "setup-wizard.sh");
         var content = """
@@ -233,7 +406,18 @@ public static class LauncherGenerator
             ALT_BUNDLED_WINE="$SCRIPT_DIR/runtime/wine/bin/wine"
             WHISKY_WINE="/Applications/Whisky.app/Contents/MacOS/wine"
             WHISKY_BOTTLE="${WHISKY_BOTTLE:-PAIcom}"
+            DEFAULT_MIGRATION_MODE="__MIGRATION_MODE__"
+            TARGET_PE_MACHINE="__TARGET_PE_MACHINE__"
             LOG_FILE="$SCRIPT_DIR/setup-wizard.log"
+
+            migration_mode="${PAICOM_MIGRATION_MODE:-$DEFAULT_MIGRATION_MODE}"
+            case "$migration_mode" in
+                stable|probe|full)
+                    ;;
+                *)
+                    migration_mode="stable"
+                    ;;
+            esac
 
             timestamp() {
                 date "+%Y-%m-%d %H:%M:%S"
@@ -342,12 +526,16 @@ public static class LauncherGenerator
                 echo "OS: $(detect_os)"
                 echo "App: $EXE"
                 echo "WINEPREFIX: $WINEPREFIX"
+                echo "Migration mode: $migration_mode"
+                echo "Target PE machine: $TARGET_PE_MACHINE"
                 echo ""
             }
 
             run_diagnostics() {
                 log "Diagnostics started"
                 echo "[diagnostics] Checking environment..."
+                echo "[diagnostics] migration mode: $migration_mode"
+                echo "[diagnostics] target PE machine: $TARGET_PE_MACHINE"
 
                 if [ -f "$EXE" ]; then
                     echo "[ok] Target executable found."
@@ -730,7 +918,12 @@ public static class LauncherGenerator
 
             """;
 
-        File.WriteAllText(path, content.Replace("__EXE__", exe), Utf8NoBom);
+        content = content
+            .Replace("__EXE__", exe)
+            .Replace("__MIGRATION_MODE__", MigrationModeParser.ToCliString(migrationMode))
+            .Replace("__TARGET_PE_MACHINE__", targetPeMachine);
+
+        File.WriteAllText(path, content, Utf8NoBom);
 
         // Make it executable on Unix (no-op on Windows)
         TryChmod(path, "755");

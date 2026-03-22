@@ -53,6 +53,7 @@ For an end-to-end build, publish, patch, and launch flow from the repo root on m
 
 The wrapper script supports additional flags:
 - `--rid <runtime-identifier>` (override auto-detected target)
+- `--migration-mode <stable|probe|full>` (launcher migration mode, default `stable`)
 - `--verbose` (print each invoked command)
 - `--show-build-output` (don’t suppress `dotnet` output)
 - `--no-launch` (build/publish/patch only, do not run setup-wizard)
@@ -62,6 +63,7 @@ If you want to force a specific runtime identifier, pass `--rid`:
 
 ```sh
 ./build-patch-and-launch.sh --rid osx-arm64
+./build-patch-and-launch.sh --migration-mode probe --no-launch
 ```
 
 This script:
@@ -148,14 +150,148 @@ All dependencies are **embedded** in the final binary (e.g., `CrossPlatformPatch
 
 ## Configuration
 
+### Migration Modes (32-bit to 64-bit rollout)
+
+Launchers support staged migration from 32-bit (x86) PE to 64-bit (x64) execution:
+
+- **`stable`** (default): Traditional behavior, no 64-bit enforcement. Vosk speech is disabled for safety.
+  - Uses x86 / x64 target based on original PAIcom PE header.
+  - No CorFlags rewriting.
+  - Vosk disabled by default (available only in Full mode or with explicit override).
+
+- **`probe`**: Staged 64-bit trial with auto-fallback.
+  - x86 targets: clears CorFlags 32BitRequired/32BitPreferred flags (CLR may attempt 64-bit execution).
+  - Prefers `win64` Wine prefix and `wine64` runtime if available.
+  - Verifies runtime process bitness at startup via `PROCESSOR_ARCHITECTURE` probe.
+  - Enables Vosk speech only if launcher confirms 64-bit execution.
+  - On failure: automatically rollback to stable x86 path with detailed `reason.code` logging.
+
+- **`full`**: Committed 64-bit mode (rollback still available during transition).
+  - x86 targets: applies same CorFlags rewriting as probe.
+  - Prefers 64-bit runtime same as probe.
+  - Enables Vosk in 64-bit process (no verification gatekeeping).
+  - Intended for environments where 64-bit success is verified.
+
+#### Setting Migration Mode
+
+Three ways to select mode:
+
+1. **Patch-time CLI:**
+   ```bash
+   CrossPlatformPatcher PAIcom.exe --migration-mode probe
+   CrossPlatformPatcher PAIcom.exe --migration-mode full
+   ```
+
+2. **Wrapper script:**
+   ```bash
+   ./build-patch-and-launch.sh --migration-mode probe
+   ```
+
+3. **Runtime override (environment variable):**
+   ```bash
+   PAICOM_MIGRATION_MODE=full sh run.sh
+   ```
+
+#### Fallback and Diagnostics
+
+When probe/full mode fails, the launcher automatically switches to the stable path and logs a `reason.code` to diagnose the issue:
+
+| Reason Code | Meaning | Recovery |
+|---|---|---|
+| `PROBE_PRECONDITION_RUNTIME_MISSING` | No wine64-compatible runtime found | Use stable mode |
+| `PROBE_PRECONDITION_PE32_UNMIGRATED` | x86 PE but CorFlags not migrated | Rebuild with probe/full mode |
+| `PROBE_STILL_32BIT` | Launch succeeded but process is still x86 | Check Wine/prefix configuration |
+| `PROBE_ONNX_INIT_FAILED` | OpenWakeWord model load failed | See `launcher-runtime.log` for details |
+| `PROBE_RESOURCE_NOT_FOUND` | Embedded resources missing | Ensure patched exe is complete |
+| `PROBE_PLATFORM_NOT_SUPPORTED` | Platform not supported for this runtime | Check OS/arch compatibility |
+| `LOAD_FAILURE_MANAGED_RESOURCE` | Managed assembly resource missing | Rebuild patcher |
+| `DEPENDENCY_MISMATCH` | Native library incompatibility | Check Wine version and 64-bit capability |
+| `UNMANAGED_EXCEPTION` | Unmanaged (native) exception during probe | Check Wine logs in `launcher-runtime.log` |
+| `PROBE_EXIT_NONZERO` | Launch exited with unidentified error | Inspect full log for diagnosis |
+
+#### Architecture Truth and Logging
+
+Launcher emits architecture diagnostics to `launcher.log` and `launcher-runtime.log`:
+
+**At launcher start (`launcher.log`):**
+```
+[launcher] arch.target_pe_machine=x86       # PE header machine type
+[launcher] arch.selected_runtime=/usr/bin/wine64  # Chosen Wine binary
+[launcher] arch.wineprefix=/home/user/.wine-prefix  # Wine prefix path
+[launcher] arch.wineprefix_arch=win64       # Detected prefix architecture (win32/win64)
+```
+
+**At process startup (`launcher-runtime.log`):**
+```
+[startup-diag] process.bitness=x64          # Actual CLR process bitness
+[startup-diag] migration.mode=probe         # Selected migration mode
+[startup-diag] launcher.verified_64bit=1    # Runtime verification result (1=verified, 0=not verified)
+[diag] vosk.bridge_status=enabled           # Vosk bridge state
+```
+
+**OpenWakeWord initialization:**
+```
+[oww] arch.process_bitness=64               # Process bitness from OWW perspective
+[oww] reason.code=PROBE_STILL_32BIT         # Failure reason if in 32-bit
+[oww] Wake word detected! Confidence: 0.892 # Detection event
+[vosk-speech] Vosk enabled: probe mode with runtime verification confirmed
+[vosk-speech] Vosk disabled: stable mode requires no advanced features
+```
+
+#### Native Library Manifest
+
+After successful patching, `NATIVES_MANIFEST.txt` documents which architecture-specific native libraries were extracted:
+
+```
+PAIcom Cross-Platform Patcher - Native Library Manifest
+======================================
+Generated: 2026-03-20T12:34:56.0000000Z
+Target Architecture: x86
+Migration Mode: stable
+
+Extracted Native Libraries:
+  PAIcom.OWW.dll
+  Vosk.dll
+  libvosk.dll
+  libgcc_s_sjlj-1.dll
+  ... (others)
+
+ONNX Runtime Bundle:
+  onnxruntime.native.win-x86.dll
+
+Architecture Details:
+  PE Machine: 0x014c
+  CorFlags Probe Attempted: false
+  CorFlags Probe Applied: false
+```
+
+Use this manifest to verify the correct architecture-specific binaries were bundled for your target.
+
+#### Vosk Speech Registration per Mode
+
+| Mode | Process Bitness | Behavior |
+|---|---|---|
+| `stable` | 32-bit | Vosk disabled (maximum safety) |
+| `stable` | 64-bit | Vosk disabled (not intended for stable mode) |
+| `probe` | 32-bit | Vosk disabled (process stayed 32-bit) |
+| `probe` | 64-bit | Vosk enabled **only if** launcher verified 64-bit |
+| `full` | 32-bit | Not expected (full mode is 64-bit committed) |
+| `full` | 64-bit | Vosk enabled (no verification gate) |
+
 ### Environment Variables
 
 ```bash
-# Skip microphone input entirely (use file-based dispatch only)
-PAICOM_NO_STT=1 ./run.sh
+# Use migration mode at runtime (overrides patched default)
+PAICOM_MIGRATION_MODE=probe sh run.sh
 
-# Verbose logging (includes Vosk diagnostics)
-# (Edit SETUP_LINUX.md for Wine configuration)
+# Require launcher 64-bit verification before enabling Vosk (set by launcher in probe mode)
+PAICOM_VOSK_REQUIRE_VERIFIED_64BIT=1
+
+# Launcher verification result (set by launcher after runtime bitness probe)
+PAICOM_RUNTIME_VERIFIED_64BIT=1
+
+# Skip microphone input entirely  (use file-based dispatch only)
+PAICOM_NO_STT=1 ./run.sh
 ```
 
 ### File-Based Commands
@@ -193,7 +329,17 @@ Use the checked-in patcher sources to rebuild the project from scratch:
 ```sh
 dotnet build CrossPlatformPatcher.csproj -c Release
 dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release
+./build-patch-and-launch.sh --migration-mode probe --no-launch
 ```
+
+### Migration Verification Checklist
+
+1. Build Release and ensure no new errors.
+2. Patch in `probe` mode and confirm generated launchers include migration mode diagnostics.
+3. Inspect `launcher.log` for PE machine, selected Wine binary, prefix path/arch, and process bitness probe.
+4. Run at least 5 cold starts in `probe` mode with no unmanaged crash.
+5. Force a probe precondition failure (for example, hide wine64) and verify automatic rollback plus `reason.code` logging.
+6. Confirm `stable` mode behavior is unchanged when migration flags are off.
 
 If you are preparing release artifacts or validating platform-specific launchers, republish with the appropriate runtime identifier(s):
 

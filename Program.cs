@@ -45,6 +45,7 @@ class Program
         bool verbose   = false;
         bool analyze   = false;
         bool prepareOnnxNatives = false;
+        var migrationMode = MigrationMode.Stable;
         
         // OpenWakeWord settings (parsed from CLI args)
         var owwBuilder = OpenWakeWordSettings.CreateBuilder();
@@ -59,6 +60,18 @@ class Program
                 case "--verbose":  verbose = true;      break;
                 case "--analyze":  analyze = true;      break;
                 case "--prepare-onnx-natives": prepareOnnxNatives = true; break;
+                case "--migration-mode":
+                    if (i + 1 < args.Length && MigrationModeParser.TryParse(args[++i], out var parsedMode))
+                    {
+                        migrationMode = parsedMode;
+                    }
+                    else
+                    {
+                        var invalid = i < args.Length ? args[i] : "<missing>";
+                        Console.Error.WriteLine($"[WARN] Invalid migration mode: {invalid}. Using stable mode.");
+                        migrationMode = MigrationMode.Stable;
+                    }
+                    break;
                 
                 // OpenWakeWord CLI arguments
                 case "--oww-threshold":
@@ -156,9 +169,10 @@ class Program
             Console.WriteLine($"  Lock Duration    : {owwSettings.LockDurationMs} ms");
             Console.WriteLine($"  Audio Chunk Size : {owwSettings.AudioChunkSize} samples");
             Console.WriteLine($"  Thread Scale     : {owwSettings.InferenceThreadPoolScale:F2}");
+            Console.WriteLine($"  Migration Mode   : {MigrationModeParser.ToCliString(migrationMode)}");
             Console.WriteLine();
             
-            var patcher = new AssemblyPatcher(verbose, owwSettings);
+            var patcher = new AssemblyPatcher(verbose, owwSettings, migrationMode);
             var result  = patcher.Patch(inputPath, outPath, dryRun);
 
             Console.WriteLine();
@@ -211,6 +225,8 @@ class Program
             --verbose                       Detailed IL scan output
             --analyze                       Analyze assembly and print method report (no patch)
             --prepare-onnx-natives          Copy ONNX Runtime native libs from NuGet cache into Core/NativeLibraries
+            --migration-mode <stable|probe|full>
+                                          Launcher migration mode (default: stable)
             -V, --version                   Print version and exit
 
         OpenWakeWord Options:

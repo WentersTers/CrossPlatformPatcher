@@ -7,9 +7,10 @@ namespace CrossPlatformPatcher.Core;
 /// IL patcher for OpenWakeWord integration into target assembly.
 ///
 /// This patcher emits a concrete helper type into the target module and injects
-/// calls at audio-related method entry points:
+/// calls at audio-related method entry sites:
 /// 1) InitializeOpenWakeWord()
-/// 2) if (!IsLocked()) OnAudioChunkAvailable(object audioArg)
+/// 2) if (!IsLocked()) OnAudioChunkAvailable(object audioArg)     [For OWW inference]
+/// 3) EnqueueAudioForVosk(object audioArg)         [Always called, even during lock] [For Vosk STT during lock window]
 /// </summary>
 public static class OpenWakeWordCompatibilityPatcher
 {
@@ -82,14 +83,13 @@ public static class OpenWakeWordCompatibilityPatcher
         body.SimplifyMacros(method.Parameters);
 
         var first = instrs[0];
-        var skipEnqueue = Instruction.Create(OpCodes.Nop);
         var audioParam = PickAudioParameter(method);
 
+        // Inject audio hook WITHOUT lock guard - let EnqueueAudio() decide what to do
+        // (queue to Vosk if locked, queue to OWW if not)
         var injected = new List<Instruction>
         {
             Instruction.Create(OpCodes.Call, helper.InitMethod),
-            Instruction.Create(OpCodes.Call, helper.IsLockedMethod),
-            Instruction.Create(OpCodes.Brtrue_S, skipEnqueue)
         };
 
         if (audioParam is null)
@@ -98,7 +98,6 @@ public static class OpenWakeWordCompatibilityPatcher
             injected.Add(Instruction.Create(OpCodes.Ldarg, audioParam));
 
         injected.Add(Instruction.Create(OpCodes.Call, helper.OnAudioMethod));
-        injected.Add(skipEnqueue);
 
         for (int i = injected.Count - 1; i >= 0; i--)
             instrs.Insert(0, injected[i]);
@@ -485,11 +484,43 @@ public static class OpenWakeWordCompatibilityPatcher
 
         var utcNowLocal = new Local(new ValueTypeSig(dateTimeType));
 
+        // Get or create reference to external OpenWakeWordHelper class from PAIcom.OWW assembly
+        // This is the runtime helper that receives audio and routes it to OWW or Vosk
+        IMethod? enqueueAudioMethod = null;
+        
+        // Look for existing assembly reference to PAIcom.OWW
+        var owwAssemblyRef = module.GetAssemblyRefs()
+            .FirstOrDefault(a => a.Name == "PAIcom.OWW");
+        
+        // If no reference exists, create one
+        // Dnlib will handle emitting the reference metadata when writing the module
+        if (owwAssemblyRef == null)
+        {
+            owwAssemblyRef = new AssemblyRefUser("PAIcom.OWW", new Version(1, 0, 0, 0));
+        }
+        
+        if (owwAssemblyRef != null)
+        {
+            // Create a TypeRef pointing to OpenWakeWordHelper in the external assembly
+            var owwHelperTypeRef = new TypeRefUser(
+                module,
+                "CrossPlatformPatcher.Core",
+                "OpenWakeWordHelper",
+                owwAssemblyRef);
+            
+            // Create MemberRef to EnqueueAudio method in external type
+            enqueueAudioMethod = new MemberRefUser(
+                module,
+                "EnqueueAudio",
+                MethodSig.CreateStatic(module.CorLibTypes.Void, module.CorLibTypes.Object),
+                owwHelperTypeRef);
+        }
+
         method.Body = new CilBody { InitLocals = true, MaxStack = 4 };
         method.Body.Variables.Add(utcNowLocal);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, initMethod));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, isLockedMethod));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, ret));
+        // Removed: lock check that prevented audio processing during lock window
+        // Now OnAudioChunkAvailable always runs, allowing Vosk to get audio during lock
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsfld, firstAudioLoggedField));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, skipFirstAudioLog));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));
@@ -517,6 +548,14 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "Wake-word gate triggered; lock armed"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, logMethod));
         method.Body.Instructions.Add(skipWakeLock);
+        
+        // Call the real OpenWakeWordHelper.EnqueueAudio() unconditionally with the audio argument
+        if (enqueueAudioMethod != null)
+        {
+            method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
+            method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, enqueueAudioMethod));
+        }
+        
         method.Body.Instructions.Add(ret);
 
         method.Body.OptimizeBranches();

@@ -18,10 +18,11 @@ BUILD_LOG_FILE=""
 usage() {
     cat <<'EOF'
 Usage:
-  ./build-patch-and-launch.sh [--rid <runtime-identifier>] [OPTIONS]
+    ./build-patch-and-launch.sh [--rid <runtime-identifier>] [OPTIONS]
 
 Options:
   --rid <runtime-identifier>   Override the detected publish target.
+    --migration-mode <mode>      Launcher migration mode: stable, probe, or full.
   --verbose                    Show all executed commands (set -x mode).
   --show-build-output          Display full build/publish command output.
   --no-launch                  Skip launching the patched game.
@@ -31,6 +32,7 @@ Options:
 Examples:
   ./build-patch-and-launch.sh
   ./build-patch-and-launch.sh --rid osx-arm64
+    ./build-patch-and-launch.sh --migration-mode probe
   ./build-patch-and-launch.sh --verbose --show-build-output
   ./build-patch-and-launch.sh --build-log build.log --no-launch
 EOF
@@ -119,6 +121,7 @@ run_step() {
 }
 
 RID=""
+MIGRATION_MODE="stable"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -130,6 +133,18 @@ while [[ $# -gt 0 ]]; do
         --verbose)
             VERBOSE=1
             shift
+            ;;
+        --migration-mode)
+            [[ $# -ge 2 ]] || die "--migration-mode requires a value"
+            MIGRATION_MODE="$2"
+            case "$MIGRATION_MODE" in
+                stable|probe|full)
+                    ;;
+                *)
+                    die "Unsupported migration mode: $MIGRATION_MODE (expected: stable, probe, full)"
+                    ;;
+            esac
+            shift 2
             ;;
         --show-build-output)
             SHOW_BUILD_OUTPUT=1
@@ -181,6 +196,7 @@ PUBLISHED_PATCHER="$PUBLISH_DIR/$PATCHER_FILE"
 PLAYER_PATCHER="$PLAYER_DIR/$PATCHER_FILE"
 
 printf 'Detected runtime identifier: %s\n' "$RID"
+printf 'Migration mode: %s\n' "$MIGRATION_MODE"
 printf 'Player folder: %s\n' "$PLAYER_DIR"
 printf 'Patched output: %s\n' "$PATCHED_EXE"
 
@@ -208,7 +224,7 @@ printf '\n==> Copying published patcher to player folder\n'
 printf '    %s -> %s\n' "$PUBLISHED_PATCHER" "$PLAYER_PATCHER"
 
 run_step "Patching PAIcom.exe" \
-    "$PLAYER_PATCHER" "$PLAYER_EXE" --out "$PATCHED_EXE"
+    "$PLAYER_PATCHER" "$PLAYER_EXE" --out "$PATCHED_EXE" --migration-mode "$MIGRATION_MODE"
 
 if (( NO_LAUNCH )); then
     printf '\n==> Build completed successfully\n'
@@ -218,5 +234,5 @@ if (( NO_LAUNCH )); then
     fi
 else
     printf '\n==> Launching patched game\n'
-    exec sh "$PLAYER_DIR/setup-wizard.sh" --launch
+    PAICOM_MIGRATION_MODE="$MIGRATION_MODE" exec sh "$PLAYER_DIR/setup-wizard.sh" --launch
 fi
