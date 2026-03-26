@@ -94,3 +94,4 @@ PAIcom*.dll
 **/extracted/
 **/reverse-engineered/
 **/*decompile*/
+Command Caller reference/
