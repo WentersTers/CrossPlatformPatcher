@@ -18,6 +18,10 @@ namespace CrossPlatformPatcher.Core;
 ///   PAICOM_OWW_AUDIO_CHUNK_SIZE       → AudioChunkSize (samples)
 ///   PAICOM_OWW_INFERENCE_THREAD_SCALE → InferenceThreadPoolScale (0.5-2.0)
 ///   PAICOM_OWW_VERBOSE_LOG            → EnableVerboseLogging (true/false)
+///   PAICOM_OWW_MIC_BUFFER_MS          → MicrophoneBufferMilliseconds
+///   PAICOM_OWW_FUZZY_MATCH_CONFIDENCE  → FuzzyMatchMinConfidence (0.0-1.0)
+///   PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS → PostWakeSilenceGraceMilliseconds
+///   PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS   → SpeechSilenceCutoffMilliseconds
 /// </summary>
 public sealed class OpenWakeWordSettings
 {
@@ -48,19 +52,27 @@ public sealed class OpenWakeWordSettings
     /// <summary>Fuzzy matching minimum confidence for command matching [0.0, 1.0]. Default: 0.80 (80%).</summary>
     public float FuzzyMatchMinConfidence { get; }
 
+    /// <summary>Silence grace after wake word before cut-off counting starts. Default: 450 ms.</summary>
+    public int PostWakeSilenceGraceMilliseconds { get; }
+
+    /// <summary>Silence duration after the grace window before Vosk stops. Default: 1000 ms.</summary>
+    public int SpeechSilenceCutoffMilliseconds { get; }
+
     /// <summary>
     /// Internal constructor for immutability. Use CreateDefault() or builder pattern.
     /// </summary>
     internal OpenWakeWordSettings(
         float confidenceThreshold = 0.7f,
-        int lockDurationMs = 5000,
+        int lockDurationMs = 3000,
         int audioChunkSize = 1024,
         float inferenceThreadPoolScale = 1.0f,
         string modelResourceName = "oww.model.hey_pie_com.quant.onnx",
         int audioSampleRate = 16000,
         bool enableVerboseLogging = false,
         int microphoneBufferMilliseconds = 200,
-        float fuzzyMatchMinConfidence = 0.80f)
+        float fuzzyMatchMinConfidence = 0.80f,
+        int postWakeSilenceGraceMilliseconds = 450,
+        int speechSilenceCutoffMilliseconds = 1000)
     {
         // Validate ranges
         if (confidenceThreshold < 0.0f || confidenceThreshold > 1.0f)
@@ -87,6 +99,12 @@ public sealed class OpenWakeWordSettings
         if (fuzzyMatchMinConfidence < 0.0f || fuzzyMatchMinConfidence > 1.0f)
             throw new ArgumentException($"FuzzyMatchMinConfidence must be in [0.0, 1.0], got {fuzzyMatchMinConfidence}");
 
+        if (postWakeSilenceGraceMilliseconds < 0 || postWakeSilenceGraceMilliseconds > 2000)
+            throw new ArgumentException($"PostWakeSilenceGraceMilliseconds must be in [0, 2000], got {postWakeSilenceGraceMilliseconds}");
+
+        if (speechSilenceCutoffMilliseconds < 100 || speechSilenceCutoffMilliseconds > 10000)
+            throw new ArgumentException($"SpeechSilenceCutoffMilliseconds must be in [100, 10000], got {speechSilenceCutoffMilliseconds}");
+
         ConfidenceThreshold = confidenceThreshold;
         LockDurationMs = lockDurationMs;
         AudioChunkSize = audioChunkSize;
@@ -96,17 +114,23 @@ public sealed class OpenWakeWordSettings
         EnableVerboseLogging = enableVerboseLogging;
         MicrophoneBufferMilliseconds = microphoneBufferMilliseconds;
         FuzzyMatchMinConfidence = fuzzyMatchMinConfidence;
+        PostWakeSilenceGraceMilliseconds = postWakeSilenceGraceMilliseconds;
+        SpeechSilenceCutoffMilliseconds = speechSilenceCutoffMilliseconds;
     }
 
     /// <summary>
     /// Create default settings:
     /// - Threshold: 0.7
-    /// - Lock: 5000 ms (increased for better speech recognition)
+    /// - Lock: 3000 ms
     /// - ChunkSize: 1024 samples
     /// - ThreadScale: 1.0
     /// - Model: "oww.model.hey_pie_com.quant.onnx"
     /// - SampleRate: 16000 Hz
     /// - VerboseLog: false
+    /// - MicBufferMs: 200
+    /// - FuzzyMatchMinConfidence: 0.80
+    /// - PostWakeSilenceGraceMs: 450
+    /// - SpeechSilenceCutoffMs: 1000
     /// </summary>
     public static OpenWakeWordSettings CreateDefault() =>
         new();
@@ -125,6 +149,8 @@ public sealed class OpenWakeWordSettings
     ///   PAICOM_OWW_VERBOSE_LOG (bool: true/false/1/0)
     ///   PAICOM_OWW_MIC_BUFFER_MS (int)
     ///   PAICOM_OWW_FUZZY_MATCH_CONFIDENCE (float)
+    ///   PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS (int)
+    ///   PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS (int)
     /// </summary>
     public static OpenWakeWordSettings FromEnvironmentVariables()
     {
@@ -170,7 +196,15 @@ public sealed class OpenWakeWordSettings
             v => float.TryParse(v, out var f) ? f : (float?)null)
             ?? defaults.FuzzyMatchMinConfidence;
 
-        return new(threshold, lockMs, chunkSize, threadScale, model, sampleRate, verbose, micBufferMs, fuzzyConfidence);
+        var silenceGraceMs = ParseEnvVar("PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS",
+            v => int.TryParse(v, out var i) ? i : (int?)null)
+            ?? defaults.PostWakeSilenceGraceMilliseconds;
+
+        var silenceCutoffMs = ParseEnvVar("PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS",
+            v => int.TryParse(v, out var i) ? i : (int?)null)
+            ?? defaults.SpeechSilenceCutoffMilliseconds;
+
+        return new(threshold, lockMs, chunkSize, threadScale, model, sampleRate, verbose, micBufferMs, fuzzyConfidence, silenceGraceMs, silenceCutoffMs);
     }
 
     /// <summary>Create builder for fluent configuration.</summary>
@@ -195,6 +229,8 @@ public sealed class OpenWakeWordSettings
         $"  AudioSampleRate={AudioSampleRate},\n" +
         $"  EnableVerboseLogging={EnableVerboseLogging},\n" +
         $"  MicrophoneBufferMilliseconds={MicrophoneBufferMilliseconds},\n" +
-        $"  FuzzyMatchMinConfidence={FuzzyMatchMinConfidence:F2}\n" +
+        $"  FuzzyMatchMinConfidence={FuzzyMatchMinConfidence:F2},\n" +
+        $"  PostWakeSilenceGraceMilliseconds={PostWakeSilenceGraceMilliseconds},\n" +
+        $"  SpeechSilenceCutoffMilliseconds={SpeechSilenceCutoffMilliseconds}\n" +
         "}";
 }

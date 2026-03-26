@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 
 namespace CrossPlatformPatcher.Core;
 
@@ -40,6 +41,31 @@ public static class OpenWakeWordHelper
     private static int _enqueueSuccessCount;
     private static bool _voskInitAttempted;
     private static bool _voskListening;
+
+    private const float SilenceAmplitudeThreshold = 0.01f;
+
+    private static readonly Lazy<IReadOnlyList<string>> KnownCommands = new(LoadKnownCommands, true);
+
+    private static readonly Dictionary<string, string> CommandResponses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["open the browser"] = "Opening the browser.",
+        ["open browser"] = "Opening the browser.",
+        ["launch browser"] = "Opening the browser.",
+        ["open the web"] = "Opening the browser.",
+        ["pause the music"] = "Pausing the music.",
+        ["resume the music"] = "Resuming the music.",
+        ["play the next song"] = "Playing the next song.",
+        ["play the previous song"] = "Playing the previous song.",
+        ["play the previous song on spotify"] = "Playing the previous song on Spotify."
+    };
+
+    private static readonly string[] WakeWordPrefixes =
+    {
+        "hey paicom",
+        "hey pie com",
+        "hey p a i com",
+        "paicom"
+    };
 
     /// <summary>
     /// Initialize OpenWakeWord runtime system.
@@ -422,35 +448,36 @@ public static class OpenWakeWordHelper
 
     /// <summary>
     /// Background task: feed queued audio to Vosk recognizer during lock window.
-    /// <summary>
-    /// Background task: feed queued audio to Vosk recognizer during lock window.
     /// Runs in ThreadPool thread.
     /// </summary>
     private static void ProcessSpeechRecognitionLocked()
     {
-        if (_voskRecognizer == null)
+        if (_voskRecognizer == null || _lockManager == null)
             return;
 
         try
         {
-            LogEvent("Vosk speech recognition started. Accumulating audio for the entire lock window...");
-            int lockTimeoutMs = (_settings?.LockDurationMs ?? 5000) + 500; // Add buffer
-            var stopTime = DateTime.UtcNow.AddMilliseconds(lockTimeoutMs);
-            int lockQueuedAtStart = _voskLockAudioQueuedCount;
-            bool attemptedMicRecovery = false;
-            bool loggedQueueEmptyOnce = false;
-            var firstAudioGraceDeadline = DateTime.UtcNow.AddMilliseconds(700);
-            LogEvent($"[vosk-audio-queue] Accumulating lock-window audio for {lockTimeoutMs}ms");
+            var settings = _settings ?? OpenWakeWordSettings.CreateDefault();
+            var wakeUtc = DateTime.UtcNow;
+            var stopTime = wakeUtc.AddMilliseconds(settings.LockDurationMs + 500);
+            var graceDeadline = wakeUtc.AddMilliseconds(settings.PostWakeSilenceGraceMilliseconds);
+            var silenceCutoffMs = settings.SpeechSilenceCutoffMilliseconds;
+            var silenceStartUtc = (DateTime?)null;
+            var attemptedMicRecovery = false;
+            var loggedQueueEmptyOnce = false;
+            var firstAudioGraceDeadline = wakeUtc.AddMilliseconds(Math.Max(700, settings.PostWakeSilenceGraceMilliseconds));
+            var lockQueuedAtStart = _voskLockAudioQueuedCount;
+            var accumulatedAudio = new List<float>();
+            var dequeuedChunks = 0;
+            var hasSpeechAudio = false;
 
-            var accumulatedAudio = new System.Collections.Generic.List<float>();
-            int dequeuedChunks = 0;
+            LogEvent($"Vosk speech recognition started. Silence grace={settings.PostWakeSilenceGraceMilliseconds}ms, cutoff={silenceCutoffMs}ms.");
+            LogEvent($"[vosk-audio-queue] Accumulating until silence exceeds cutoff or lock window ends ({settings.LockDurationMs}ms lock + buffer)");
 
-            // Process audio from the lock-window queue
-            while (DateTime.UtcNow < stopTime && _voskListening)
+            while (_voskListening && DateTime.UtcNow < stopTime)
             {
                 float[]? chunk = null;
-                
-                // Try to dequeue from Vosk lock audio queue
+
                 lock (_voskLockQueueLock)
                 {
                     if (_voskLockAudioQueue.Count > 0)
@@ -465,7 +492,6 @@ public static class OpenWakeWordHelper
                     }
                     else if (!loggedQueueEmptyOnce && dequeuedChunks == 0 && _voskLockAudioQueuedCount == 0)
                     {
-                        // Log once if queue is empty and no audio has been queued
                         loggedQueueEmptyOnce = true;
                         LogEvent($"[vosk-audio-queue] Queue empty: queued={_voskLockAudioQueuedCount}, dequeued={_voskLockAudioDequeuedCount}");
                     }
@@ -473,13 +499,30 @@ public static class OpenWakeWordHelper
 
                 if (chunk != null && chunk.Length > 0)
                 {
-                    firstAudioGraceDeadline = DateTime.UtcNow.AddMilliseconds(700);
-                    loggedQueueEmptyOnce = false;
-                    accumulatedAudio.AddRange(chunk);
+                    var chunkIsSilent = IsSilentChunk(chunk);
+                    if (!chunkIsSilent)
+                    {
+                        hasSpeechAudio = true;
+                        silenceStartUtc = null;
+                        firstAudioGraceDeadline = DateTime.UtcNow.AddMilliseconds(settings.PostWakeSilenceGraceMilliseconds);
+                        loggedQueueEmptyOnce = false;
+                        accumulatedAudio.AddRange(chunk);
+                    }
+                    else if (DateTime.UtcNow >= graceDeadline)
+                    {
+                        accumulatedAudio.AddRange(chunk);
+                        silenceStartUtc ??= DateTime.UtcNow;
+                    }
+
+                    if (hasSpeechAudio && silenceStartUtc.HasValue && DateTime.UtcNow >= silenceStartUtc.Value.AddMilliseconds(silenceCutoffMs))
+                    {
+                        LogEvent($"[vosk-speech] Silence cutoff reached after {silenceCutoffMs}ms; finalizing speech capture.");
+                        break;
+                    }
                 }
                 else
                 {
-                    int queuedDelta = _voskLockAudioQueuedCount - lockQueuedAtStart;
+                    var queuedDelta = _voskLockAudioQueuedCount - lockQueuedAtStart;
                     if (!attemptedMicRecovery && DateTime.UtcNow >= firstAudioGraceDeadline && queuedDelta == 0)
                     {
                         attemptedMicRecovery = true;
@@ -490,12 +533,21 @@ public static class OpenWakeWordHelper
                         EnsureMicrophoneCaptureStarted("lock-window-recovery", forceRestart: true);
                     }
 
-                    // Small delay to avoid busy-waiting when queue is empty
+                    if (DateTime.UtcNow >= graceDeadline)
+                    {
+                        silenceStartUtc ??= DateTime.UtcNow;
+                        if (DateTime.UtcNow >= silenceStartUtc.Value.AddMilliseconds(silenceCutoffMs))
+                        {
+                            LogEvent($"[vosk-speech] Silence cutoff reached after {silenceCutoffMs}ms without additional speech; finalizing speech capture.");
+                            break;
+                        }
+                    }
+
                     System.Threading.Thread.Sleep(50);
                 }
             }
 
-            LogEvent($"Lock window ended. Processing {accumulatedAudio.Count} accumulated audio samples in one go.");
+            LogEvent($"Speech window ended. Processing {accumulatedAudio.Count} accumulated audio samples.");
 
             if (accumulatedAudio.Count > 0)
             {
@@ -511,12 +563,16 @@ public static class OpenWakeWordHelper
                 if (!string.IsNullOrEmpty(result))
                 {
                     LogEvent($"Vosk result: {result}");
+                    HandleRecognizedSpeech(result);
                 }
             }
 
             var finalResult = _voskRecognizer.GetFinalResult();
             if (!string.IsNullOrEmpty(finalResult))
+            {
                 LogEvent($"Vosk final result: {finalResult}");
+                HandleRecognizedSpeech(finalResult);
+            }
 
             LogEvent($"Vosk speech recognition completed (processed {dequeuedChunks} audio chunks, total accumulated samples: {accumulatedAudio.Count}, queued={_voskLockAudioQueuedCount}, dequeued={_voskLockAudioDequeuedCount})");
         }
@@ -526,8 +582,233 @@ public static class OpenWakeWordHelper
         }
         finally
         {
+            lock (_voskLockQueueLock)
+            {
+                _voskLockAudioQueue.Clear();
+            }
+
+            _lockManager?.Reset();
             _voskListening = false;
         }
+    }
+
+    public static string? HandleRecognizedSpeech(string? rawResult)
+    {
+        var transcript = ExtractRecognizedText(rawResult);
+        if (string.IsNullOrWhiteSpace(transcript))
+            return null;
+
+        LogEvent($"[vosk-speech] Transcript: {transcript}");
+
+        var response = ResolveCommandResponse(transcript);
+        if (!string.IsNullOrWhiteSpace(response))
+        {
+            LogEvent($"[oww-command] Assistant line: {response}");
+        }
+
+        return response;
+    }
+
+    public static string? ResolveCommandResponse(string? transcript)
+    {
+        if (string.IsNullOrWhiteSpace(transcript))
+            return null;
+
+        var commandText = NormalizeCommandText(transcript!);
+        if (string.IsNullOrWhiteSpace(commandText))
+            return null;
+
+        var knownCommands = KnownCommands.Value;
+        if (knownCommands.Count == 0)
+            return null;
+
+        var match = FuzzyMatcher.FindClosestMatch(
+            commandText,
+            knownCommands,
+            _settings?.FuzzyMatchMinConfidence ?? 0.80f,
+            LogEvent);
+
+        if (match == null)
+            return null;
+
+        var matchedCommand = match.MatchedCommand;
+        if (string.IsNullOrWhiteSpace(matchedCommand))
+            return null;
+
+        LogEvent($"[oww-command] command='{matchedCommand}', confidence={match.Confidence:P1}");
+
+        return CommandResponses.TryGetValue(matchedCommand, out var response)
+            ? response
+            : null;
+    }
+
+    private static IReadOnlyList<string> LoadKnownCommands()
+    {
+        var manifestPath = FindCommandManifestPath();
+        if (manifestPath == null)
+        {
+            LogEvent("[oww-command] Command manifest not found; fuzzy matching limited to built-in responses.");
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var commands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in System.IO.File.ReadLines(manifestPath))
+            {
+                if (ParseCommandLine(line) is string commandText)
+                    commands.Add(commandText);
+            }
+
+            LogEvent($"[oww-command] Loaded {commands.Count} commands from {manifestPath}");
+            return commands.ToArray();
+        }
+        catch (Exception ex)
+        {
+            LogEvent($"[oww-command] Failed to load command manifest '{manifestPath}': {ex.GetType().Name}: {ex.Message}");
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string? ParseCommandLine(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return null;
+
+        var trimmed = line.Trim();
+        if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal))
+            return null;
+
+        var commandText = trimmed;
+        var scriptDelimiter = commandText.LastIndexOf(" (", StringComparison.Ordinal);
+        if (scriptDelimiter > 0 && commandText.EndsWith(")", StringComparison.Ordinal))
+            commandText = commandText.Substring(0, scriptDelimiter);
+
+        return NormalizeCommandText(commandText!);
+    }
+
+    private static string? FindCommandManifestPath()
+    {
+        var baseDirectories = new[]
+        {
+            AppDomain.CurrentDomain.BaseDirectory,
+            System.IO.Directory.GetCurrentDirectory()
+        };
+
+        foreach (var root in baseDirectories)
+        {
+            var current = new System.IO.DirectoryInfo(root!);
+            while (true)
+            {
+                var fullName = current.FullName;
+                var directPath = System.IO.Path.Combine(fullName, "custom-commands", "commands.txt");
+                if (System.IO.File.Exists(directPath))
+                    return directPath;
+
+                var legacyPath = System.IO.Path.Combine(fullName, "PAIcom_Player_Folder", "custom-commands", "commands.txt");
+                if (System.IO.File.Exists(legacyPath))
+                    return legacyPath;
+
+                var parent = current.Parent;
+                if (parent == null)
+                    break;
+
+                current = parent;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractRecognizedText(string? rawResult)
+    {
+        if (string.IsNullOrWhiteSpace(rawResult))
+            return null;
+
+        var trimmed = rawResult.Trim();
+        if (!trimmed.StartsWith("{", StringComparison.Ordinal))
+            return trimmed;
+
+        const string key = "\"text\"";
+        var keyIndex = trimmed.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+        if (keyIndex < 0)
+            return trimmed;
+
+        var colonIndex = trimmed.IndexOf(':', keyIndex);
+        if (colonIndex < 0)
+            return null;
+
+        var start = colonIndex + 1;
+        while (start < trimmed.Length && char.IsWhiteSpace(trimmed[start]))
+            start++;
+
+        if (start >= trimmed.Length)
+            return null;
+
+        if (trimmed[start] == '"')
+            start++;
+
+        var builder = new StringBuilder();
+        var escaping = false;
+        for (var i = start; i < trimmed.Length; i++)
+        {
+            var current = trimmed[i];
+            if (escaping)
+            {
+                builder.Append(current switch
+                {
+                    '"' => '"',
+                    '\\' => '\\',
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    _ => current
+                });
+                escaping = false;
+                continue;
+            }
+
+            if (current == '\\')
+            {
+                escaping = true;
+                continue;
+            }
+
+            if (current == '"' || current == '}')
+                break;
+
+            builder.Append(current);
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private static string NormalizeCommandText(string transcript)
+    {
+        var normalized = transcript.Trim();
+        foreach (var prefix in WakeWordPrefixes)
+        {
+            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = normalized.Substring(prefix.Length).Trim();
+                break;
+            }
+        }
+
+        return normalized.TrimStart(',', '.', '!', '?', ':', ';');
+    }
+
+    private static bool IsSilentChunk(float[] chunk)
+    {
+        if (chunk.Length == 0)
+            return true;
+
+        double sumAbs = 0.0;
+        for (var i = 0; i < chunk.Length; i++)
+            sumAbs += Math.Abs(chunk[i]);
+
+        var meanAbs = sumAbs / chunk.Length;
+        return meanAbs < SilenceAmplitudeThreshold;
     }
 
     private static void EnsureMicrophoneCaptureStarted(string reason, bool forceRestart)

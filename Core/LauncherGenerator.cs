@@ -172,6 +172,10 @@ public static class LauncherGenerator
                 export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-1024}"
                 export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
                 export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
+                export PAICOM_OWW_MIC_BUFFER_MS="${PAICOM_OWW_MIC_BUFFER_MS:-200}"
+                export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.80}"
+                export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS="${PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS:-450}"
+                export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-1000}"
                 export PAICOM_MIGRATION_MODE="$migration_mode"
 
                 printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
@@ -975,6 +979,10 @@ public static class LauncherGenerator
                      "if not defined PAICOM_OWW_AUDIO_CHUNK_SIZE set PAICOM_OWW_AUDIO_CHUNK_SIZE=1024\r\n" +
                      "if not defined PAICOM_OWW_INFERENCE_THREAD_SCALE set PAICOM_OWW_INFERENCE_THREAD_SCALE=1.0\r\n" +
                      "if not defined PAICOM_OWW_VERBOSE_LOG set PAICOM_OWW_VERBOSE_LOG=false\r\n" +
+                     "if not defined PAICOM_OWW_MIC_BUFFER_MS set PAICOM_OWW_MIC_BUFFER_MS=200\r\n" +
+                     "if not defined PAICOM_OWW_FUZZY_MATCH_CONFIDENCE set PAICOM_OWW_FUZZY_MATCH_CONFIDENCE=0.80\r\n" +
+                     "if not defined PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450\r\n" +
+                     "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000\r\n" +
                      "\r\n" +
                      "start \"\" \"%~dp0" + exe + "\" %*\r\n";
         File.WriteAllText(path, content, System.Text.Encoding.ASCII);
