@@ -301,6 +301,14 @@ to inspect `[compat][speech]` diagnostics and verify the active speech path.
 
 When speech recognition is active, the runtime fuzzy-matches against the full command manifest in `PAIcom_Player_Folder/custom-commands/commands.txt`, not just the browser-related commands.
 
+When a phrase is matched, runtime command handling now follows this order:
+1. Resolve transcript -> manifest phrase -> command token (for example `please hide` -> `hide.txt`).
+2. Try in-process dispatch into the game's own command handler via reflection (preferred path).
+3. If no handler is discoverable, try script/process fallback for token-based command scripts.
+4. Always keep assistant-line logging for observability, even if dispatch is unavailable.
+
+Use `launcher-runtime.log` and search for `[oww-command]` entries to verify whether dispatch succeeded or fell back.
+
 ## Differences from Original PAIcomPatcher
 
 The original `PAIcomPatcher` (in the parent folder) is **Windows-only**:
@@ -600,8 +608,16 @@ This copies runtime-native binaries from your local NuGet cache into `Core/Nativ
 **Command preview after speech recognition:**
 ```
 [oww] [vosk-speech] Transcript: hey paicom open the browser
-[oww] [oww-command] command='open the browser', confidence=91.2%
+[oww] [oww-command] command='open the browser', token='internet', confidence=91.2%
 [oww] [oww-command] Assistant line: Opening the browser.
+[oww] [oww-command] Dispatch succeeded: Queued 'hey paicom open the browser' via UI dispatcher ...
+```
+
+If the in-process handler is not available yet, runtime will emit an explicit fallback trail:
+```
+[oww] [oww-command] Dispatcher 'game-reflection' skipped: No high-confidence in-process command handler discovered.
+[oww] [oww-command] Dispatcher 'process-fallback' skipped: No fallback script found for token 'internet'.
+[oww] [oww-command] Dispatch unavailable: No dispatcher could execute the command.
 ```
 
 ### Troubleshooting

@@ -1,6 +1,7 @@
 using CrossPlatformPatcher.Core;
 using dnlib.DotNet;
 using System;
+using System.IO;
 using System.Threading;
 using Xunit;
 
@@ -163,6 +164,44 @@ public class OpenWakeWordSettingsTests
         var response = OpenWakeWordHelper.ResolveCommandResponse("hey paicom pause the music");
 
         Assert.Equal("Pausing the music.", response);
+    }
+
+    [Fact]
+    public void ResolveCommandAction_Manifest_Preserves_CommandToken()
+    {
+        var originalDirectory = Directory.GetCurrentDirectory();
+        var tempRoot = Path.Combine(Path.GetTempPath(), "oww-command-action-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(tempRoot, "custom-commands"));
+        File.WriteAllText(
+            Path.Combine(tempRoot, "custom-commands", "commands.txt"),
+            "hey paicom please hide (fatherless.txt)" + Environment.NewLine);
+
+        try
+        {
+            Directory.SetCurrentDirectory(tempRoot);
+            OpenWakeWordHelper.Shutdown();
+
+            var action = OpenWakeWordHelper.ResolveCommandAction("hey paicom please hide");
+
+            Assert.NotNull(action);
+            Assert.Equal("please hide", action!.MatchPhrase);
+            Assert.Equal("hey paicom please hide", action.DispatchPhrase);
+            Assert.Equal("fatherless", action.CommandToken);
+        }
+        finally
+        {
+            OpenWakeWordHelper.Shutdown();
+            Directory.SetCurrentDirectory(originalDirectory);
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveCommandAction_UnsupportedTranscript_ReturnsNull()
+    {
+        var action = OpenWakeWordHelper.ResolveCommandAction("hey paicom do something not in the manifest");
+
+        Assert.Null(action);
     }
 
     [Fact]
