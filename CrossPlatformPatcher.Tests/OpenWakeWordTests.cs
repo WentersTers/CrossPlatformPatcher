@@ -24,6 +24,10 @@ public class OpenWakeWordSettingsTests
         Assert.Equal("oww.model.hey_pie_com.quant.onnx", settings.ModelResourceName);
         Assert.Equal(16000, settings.AudioSampleRate);
         Assert.False(settings.EnableVerboseLogging);
+        Assert.Equal(200, settings.MicrophoneBufferMilliseconds);
+        Assert.Equal(0.80f, settings.FuzzyMatchMinConfidence);
+        Assert.Equal(450, settings.PostWakeSilenceGraceMilliseconds);
+        Assert.Equal(1000, settings.SpeechSilenceCutoffMilliseconds);
     }
 
     [Fact]
@@ -107,7 +111,7 @@ public class OpenWakeWordSettingsTests
 
     [Theory]
     [InlineData(50)]
-    [InlineData(11000)]
+    [InlineData(25000)]
     public void CreateDefault_LockDurationMs_Validation_Throws(int invalid)
     {
         Assert.Throws<ArgumentException>(() =>
@@ -122,6 +126,8 @@ public class OpenWakeWordSettingsTests
         Environment.SetEnvironmentVariable("PAICOM_OWW_THRESHOLD", "0.6");
         Environment.SetEnvironmentVariable("PAICOM_OWW_LOCK_MS", "2500");
         Environment.SetEnvironmentVariable("PAICOM_OWW_VERBOSE_LOG", "true");
+        Environment.SetEnvironmentVariable("PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS", "420");
+        Environment.SetEnvironmentVariable("PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS", "900");
         
         try
         {
@@ -130,13 +136,33 @@ public class OpenWakeWordSettingsTests
             Assert.Equal(0.6f, settings.ConfidenceThreshold);
             Assert.Equal(2500, settings.LockDurationMs);
             Assert.True(settings.EnableVerboseLogging);
+            Assert.Equal(420, settings.PostWakeSilenceGraceMilliseconds);
+            Assert.Equal(900, settings.SpeechSilenceCutoffMilliseconds);
         }
         finally
         {
             Environment.SetEnvironmentVariable("PAICOM_OWW_THRESHOLD", null);
             Environment.SetEnvironmentVariable("PAICOM_OWW_LOCK_MS", null);
             Environment.SetEnvironmentVariable("PAICOM_OWW_VERBOSE_LOG", null);
+            Environment.SetEnvironmentVariable("PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS", null);
+            Environment.SetEnvironmentVariable("PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS", null);
         }
+    }
+
+    [Fact]
+    public void ResolveCommandResponse_Matches_Browser_Command()
+    {
+        var response = OpenWakeWordHelper.ResolveCommandResponse("hey paicom open the browser");
+
+        Assert.Equal("Opening the browser.", response);
+    }
+
+    [Fact]
+    public void ResolveCommandResponse_Matches_NonBrowser_Command()
+    {
+        var response = OpenWakeWordHelper.ResolveCommandResponse("hey paicom pause the music");
+
+        Assert.Equal("Pausing the music.", response);
     }
 
     [Fact]
@@ -187,7 +213,7 @@ public class AudioLockManagerTests
         manager.WakeWordDetected();
         Assert.True(manager.IsLocked);
         
-        Thread.Sleep(150); // Wait for lock to expire
+        Thread.Sleep(1150); // Wait for lock to expire
         
         Assert.False(manager.IsLocked);
     }
@@ -298,7 +324,7 @@ public class OpenWakeWordIntegrationTests
     public void Settings_And_Lock_Work_Together()
     {
         var settings = OpenWakeWordSettings.CreateBuilder()
-            .WithLockDurationMs(100)
+            .WithLockDurationMs(1000)
             .WithThreshold(0.7f)
             .Build();
         
@@ -314,7 +340,7 @@ public class OpenWakeWordIntegrationTests
         var chunk = new float[settings.AudioChunkSize];
         Assert.True(lockManager.TryEnqueueAudio(chunk));
         
-        Thread.Sleep(150); // Wait for lock to expire
+        Thread.Sleep(1150); // Wait for lock to expire
         
         Assert.False(lockManager.IsLocked);
     }

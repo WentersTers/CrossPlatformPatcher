@@ -13,7 +13,7 @@ namespace CrossPlatformPatcher.Core;
 public sealed class OpenWakeWordSettingsBuilder
 {
     private float _threshold = 0.7f;
-    private int _lockMs = 5000;
+    private int _lockMs = 3000;
     private int _chunkSize = 1024;
     private float _threadScale = 1.0f;
     private string _modelResource = "oww.model.hey_pie_com.quant.onnx";
@@ -21,6 +21,8 @@ public sealed class OpenWakeWordSettingsBuilder
     private bool _verboseLog;
     private int _micBufferMs = 200;
     private float _fuzzyMatchConfidence = 0.80f;
+    private int _postWakeSilenceGraceMs = 450;
+    private int _speechSilenceCutoffMs = 1000;
 
     /// <summary>Set confidence threshold [0.0, 1.0].</summary>
     public OpenWakeWordSettingsBuilder WithThreshold(float value)
@@ -85,7 +87,21 @@ public sealed class OpenWakeWordSettingsBuilder
         return this;
     }
 
+    /// <summary>Set silence grace after wake in milliseconds.</summary>
+    public OpenWakeWordSettingsBuilder WithPostWakeSilenceGraceMilliseconds(int milliseconds)
+    {
+        _postWakeSilenceGraceMs = milliseconds;
+        return this;
+    }
+
+    /// <summary>Set silence cutoff in milliseconds after the grace window.</summary>
+    public OpenWakeWordSettingsBuilder WithSpeechSilenceCutoffMilliseconds(int milliseconds)
+    {
+        _speechSilenceCutoffMs = milliseconds;
+        return this;
+    }
+
     /// <summary>Build immutable settings instance. Throws if any value is invalid.</summary>
     public OpenWakeWordSettings Build() =>
-        new(_threshold, _lockMs, _chunkSize, _threadScale, _modelResource, _sampleRate, _verboseLog, _micBufferMs, _fuzzyMatchConfidence);
+        new(_threshold, _lockMs, _chunkSize, _threadScale, _modelResource, _sampleRate, _verboseLog, _micBufferMs, _fuzzyMatchConfidence, _postWakeSilenceGraceMs, _speechSilenceCutoffMs);
 }

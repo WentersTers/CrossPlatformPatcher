@@ -101,6 +101,22 @@ class Program
                 case "--oww-verbose-log":
                     owwBuilder.WithVerboseLogging(true);
                     break;
+                case "--oww-mic-buffer-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var micBufferMs))
+                        owwBuilder.WithMicrophoneBufferMilliseconds(micBufferMs);
+                    break;
+                case "--oww-fuzzy-match-confidence":
+                    if (i + 1 < args.Length && float.TryParse(args[++i], out var fuzzyConfidence))
+                        owwBuilder.WithFuzzyMatchMinConfidence(fuzzyConfidence);
+                    break;
+                case "--oww-post-wake-silence-grace-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var postWakeSilenceGraceMs))
+                        owwBuilder.WithPostWakeSilenceGraceMilliseconds(postWakeSilenceGraceMs);
+                    break;
+                case "--oww-speech-silence-cutoff-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var speechSilenceCutoffMs))
+                        owwBuilder.WithSpeechSilenceCutoffMilliseconds(speechSilenceCutoffMs);
+                    break;
                     
                 default:
                     Console.Error.WriteLine($"[WARN] Unknown argument: {args[i]}");
@@ -169,6 +185,10 @@ class Program
             Console.WriteLine($"  Lock Duration    : {owwSettings.LockDurationMs} ms");
             Console.WriteLine($"  Audio Chunk Size : {owwSettings.AudioChunkSize} samples");
             Console.WriteLine($"  Thread Scale     : {owwSettings.InferenceThreadPoolScale:F2}");
+            Console.WriteLine($"  Mic Buffer       : {owwSettings.MicrophoneBufferMilliseconds} ms");
+            Console.WriteLine($"  Fuzzy Confidence : {owwSettings.FuzzyMatchMinConfidence:F2}");
+            Console.WriteLine($"  Wake Grace       : {owwSettings.PostWakeSilenceGraceMilliseconds} ms");
+            Console.WriteLine($"  Silence Cutoff   : {owwSettings.SpeechSilenceCutoffMilliseconds} ms");
             Console.WriteLine($"  Migration Mode   : {MigrationModeParser.ToCliString(migrationMode)}");
             Console.WriteLine();
             
@@ -237,6 +257,12 @@ class Program
             --oww-model-resource <name>     ONNX model resource name (default: oww.model.hey_pie_com.quant.onnx)
             --oww-audio-sample-rate <hz>    Audio sample rate in Hz (default: 16000)
             --oww-verbose-log               Enable verbose OWW logging
+            --oww-mic-buffer-ms <ms>        Microphone buffer size in milliseconds (default: 200)
+            --oww-fuzzy-match-confidence <f> Fuzzy command match confidence (default: 0.80)
+            --oww-post-wake-silence-grace-ms <ms>
+                                         Silence grace after wake before cut-off starts (default: 450)
+            --oww-speech-silence-cutoff-ms <ms>
+                                         Silence duration that ends Vosk capture (default: 1000)
 
         Description:
             Replaces Windows-only System.Speech with cross-platform Vosk
