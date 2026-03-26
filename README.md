@@ -299,6 +299,8 @@ PAICOM_NO_STT=1 ./run.sh
 If microphone recognition is unavailable under Wine, use `launcher-runtime.log`
 to inspect `[compat][speech]` diagnostics and verify the active speech path.
 
+When speech recognition is active, the runtime fuzzy-matches against the full command manifest in `PAIcom_Player_Folder/custom-commands/commands.txt`, not just the browser-related commands.
+
 ## Differences from Original PAIcomPatcher
 
 The original `PAIcomPatcher` (in the parent folder) is **Windows-only**:
@@ -504,19 +506,23 @@ CrossPlatformPatcher PAIcom.exe \
 
 ### Runtime Configuration (Environment Variables)
 
-After patching, end users can **override settings at runtime** by setting environment variables:
+After patching, end users can **override settings at runtime** by setting environment variables. The default settings live in [PAIcom.OWW/OpenWakeWordSettings.cs](PAIcom.OWW/OpenWakeWordSettings.cs) and the CLI surface is in [Program.cs](Program.cs).
 
 ```bash
 # Linux/macOS
 export PAICOM_OWW_THRESHOLD=0.65
 export PAICOM_OWW_LOCK_MS=2500
 export PAICOM_OWW_VERBOSE_LOG=true
+export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450
+export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000
 sh run.sh
 
 # Windows
 set PAICOM_OWW_THRESHOLD=0.65
 set PAICOM_OWW_LOCK_MS=2500
 set PAICOM_OWW_VERBOSE_LOG=true
+set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450
+set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000
 run.bat
 ```
 
@@ -528,6 +534,10 @@ run.bat
 - `PAICOM_OWW_MODEL_RESOURCE` (string, default "oww.model.hey_pie_com.quant.onnx")
 - `PAICOM_OWW_AUDIO_SAMPLE_RATE` (int, default 16000)
 - `PAICOM_OWW_VERBOSE_LOG` (bool, default false)
+- `PAICOM_OWW_MIC_BUFFER_MS` (int, default 200)
+- `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.80)
+- `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450)
+- `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000)
 
 ### Embedded Resources
 
@@ -582,8 +592,17 @@ This copies runtime-native binaries from your local NuGet cache into `Core/Nativ
 | `chunk-size` ↑ | Lower CPU | Higher latency (fewer inference cycles) |
 | `thread-scale` ↑ | Higher CPU (more workers) | Better multi-chunk handling |
 | `lock-ms` ↑ | Prevents back-queuing | May delay legitimate 2nd command |
+| `post-wake-silence-grace-ms` ↓ | Faster cutoff after wake | Too low can clip the start of the command |
+| `speech-silence-cutoff-ms` ↓ | Faster stop after command ends | Too low can cut off longer pauses |
 
-**Default balanced setting:** threshold=0.7, lock-ms=3000, chunk-size=1024, thread-scale=1.0
+**Default balanced setting:** threshold=0.7, lock-ms=3000, chunk-size=1024, thread-scale=1.0, post-wake-silence-grace-ms=450, speech-silence-cutoff-ms=1000
+
+**Command preview after speech recognition:**
+```
+[oww] [vosk-speech] Transcript: hey paicom open the browser
+[oww] [oww-command] command='open the browser', confidence=91.2%
+[oww] [oww-command] Assistant line: Opening the browser.
+```
 
 ### Troubleshooting
 
