@@ -84,6 +84,9 @@
     <Compile Remove="CrossPlatformPatcher.Tests\**\*.cs" />
     <EmbeddedResource Remove="CrossPlatformPatcher.Tests\**\*" />
     <None Remove="CrossPlatformPatcher.Tests\**\*" />
+    <Compile Remove="Command Caller reference\**\*.cs" />
+    <EmbeddedResource Remove="Command Caller reference\**\*" />
+    <None Remove="Command Caller reference\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordMicrophoneCapture.cs" />

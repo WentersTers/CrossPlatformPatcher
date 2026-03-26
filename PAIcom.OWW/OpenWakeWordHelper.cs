@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -46,7 +47,16 @@ public static class OpenWakeWordHelper
 
     private const float SilenceAmplitudeThreshold = 0.01f;
 
-    private static readonly Lazy<IReadOnlyList<string>> KnownCommands = new(LoadKnownCommands, true);
+    private static readonly object _commandManifestLock = new();
+    private static Lazy<IReadOnlyList<CommandManifestEntry>> KnownCommands = new(LoadKnownCommands, true);
+    private static readonly object _dispatcherLock = new();
+    private static readonly ICommandDispatcher[] CommandDispatchers =
+    {
+        new ReflectionCommandDispatcher(),
+        new ProcessFallbackCommandDispatcher()
+    };
+    private static MethodInfo? _cachedGameHandlerMethod;
+    private static object? _cachedGameHandlerTarget;
 
     private static readonly Dictionary<string, string> CommandResponses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -69,6 +79,199 @@ public static class OpenWakeWordHelper
         "paicom"
     };
 
+    private sealed class CommandManifestEntry
+    {
+        public CommandManifestEntry(string matchPhrase, string dispatchPhrase, string commandToken, string? scriptReference)
+        {
+            MatchPhrase = matchPhrase;
+            DispatchPhrase = dispatchPhrase;
+            CommandToken = commandToken;
+            ScriptReference = scriptReference;
+        }
+
+        public string MatchPhrase { get; }
+        public string DispatchPhrase { get; }
+        public string CommandToken { get; }
+        public string? ScriptReference { get; }
+    }
+
+    public sealed class CommandAction
+    {
+        internal CommandAction(
+            string transcript,
+            string matchPhrase,
+            string dispatchPhrase,
+            string commandToken,
+            float confidence,
+            string? scriptReference,
+            string? assistantLine)
+        {
+            Transcript = transcript;
+            MatchPhrase = matchPhrase;
+            DispatchPhrase = dispatchPhrase;
+            CommandToken = commandToken;
+            Confidence = confidence;
+            ScriptReference = scriptReference;
+            AssistantLine = assistantLine;
+        }
+
+        public string Transcript { get; }
+        public string MatchPhrase { get; }
+        public string DispatchPhrase { get; }
+        public string CommandToken { get; }
+        public float Confidence { get; }
+        public string? ScriptReference { get; }
+        public string? AssistantLine { get; }
+    }
+
+    private interface ICommandDispatcher
+    {
+        string Name { get; }
+        bool TryDispatch(CommandAction action, out string detail);
+    }
+
+    private sealed class ReflectionCommandDispatcher : ICommandDispatcher
+    {
+        public string Name => "game-reflection";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            if (!TryGetGameCommandHandler(out var target, out var method, out detail))
+                return false;
+
+            try
+            {
+                if (TryInvokeOnUiThread(target!, method!, action.DispatchPhrase, out detail))
+                    return true;
+
+                method!.Invoke(target, new object[] { action.DispatchPhrase });
+                detail = $"Invoked {method.DeclaringType?.FullName}.{method.Name}(\"{action.DispatchPhrase}\") directly.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Reflection dispatch failed via {method!.Name}: {ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+    }
+
+    private sealed class ProcessFallbackCommandDispatcher : ICommandDispatcher
+    {
+        private static readonly string[] ScriptExtensions = { ".sh", ".command", ".bat", ".cmd", ".exe", ".ps1" };
+
+        public string Name => "process-fallback";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            if (TryResolveScriptPath(action.CommandToken, out var scriptPath))
+            {
+                if (TryStartScript(scriptPath!, out detail))
+                    return true;
+
+                return false;
+            }
+
+            detail = $"No fallback script found for token '{action.CommandToken}'.";
+            return false;
+        }
+
+        private static bool TryResolveScriptPath(string commandToken, out string? scriptPath)
+        {
+            scriptPath = null;
+            var baseDirectory = ResolveCommandRootDirectory();
+            if (string.IsNullOrWhiteSpace(baseDirectory))
+                return false;
+
+            var searchRoots = new[]
+            {
+                System.IO.Path.Combine(baseDirectory!, "custom-commands"),
+                System.IO.Path.Combine(baseDirectory!, "animations"),
+                baseDirectory!
+            };
+
+            foreach (var root in searchRoots)
+            {
+                foreach (var extension in ScriptExtensions)
+                {
+                    var candidate = System.IO.Path.Combine(root, commandToken + extension);
+                    if (System.IO.File.Exists(candidate))
+                    {
+                        scriptPath = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryStartScript(string scriptPath, out string detail)
+        {
+            try
+            {
+                var extension = System.IO.Path.GetExtension(scriptPath);
+                ProcessStartInfo startInfo;
+
+                if (string.Equals(extension, ".sh", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(extension, ".command", StringComparison.OrdinalIgnoreCase))
+                {
+                    startInfo = new ProcessStartInfo
+                    {
+                        FileName = "sh",
+                        Arguments = QuoteArgument(scriptPath),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WorkingDirectory = System.IO.Path.GetDirectoryName(scriptPath)
+                    };
+                }
+                else if (string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase))
+                {
+                    startInfo = new ProcessStartInfo
+                    {
+                        FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "wine",
+                        Arguments = Environment.OSVersion.Platform == PlatformID.Win32NT
+                            ? $"/c {QuoteArgument(scriptPath)}"
+                            : $"cmd /c {QuoteArgument(scriptPath)}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WorkingDirectory = System.IO.Path.GetDirectoryName(scriptPath)
+                    };
+                }
+                else
+                {
+                    startInfo = new ProcessStartInfo
+                    {
+                        FileName = scriptPath,
+                        UseShellExecute = true,
+                        WorkingDirectory = System.IO.Path.GetDirectoryName(scriptPath)
+                    };
+                }
+
+                var process = Process.Start(startInfo);
+                detail = process == null
+                    ? $"Process launch returned null for script '{scriptPath}'."
+                    : $"Launched fallback script '{scriptPath}'.";
+
+                return process != null;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Failed to launch fallback script '{scriptPath}': {ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static string QuoteArgument(string argument)
+        {
+            if (argument.IndexOf(' ') < 0 && argument.IndexOf('\t') < 0)
+                return argument;
+
+            return "\"" + argument.Replace("\"", "\\\"") + "\"";
+        }
+    }
+
     /// <summary>
     /// Initialize OpenWakeWord runtime system.
     /// Called once by injected code before first audio processing.
@@ -90,6 +293,9 @@ public static class OpenWakeWordHelper
 
             try
             {
+                // Report architecture diagnostics at startup
+                ReportStartupDiagnostics();
+
                 // Load settings from environment or use embedded defaults
                 var embeddedSettings = OpenWakeWordSettings.CreateDefault();
                 _settings = OpenWakeWordSettings.FromEnvironmentVariables();
@@ -129,6 +335,7 @@ public static class OpenWakeWordHelper
                         {
                             LogEvent($"Wake word detected! Confidence: {confidence:F3}");
                             LogEvent($"Wake->speech handoff: lock window opened for {_settings.LockDurationMs}ms; expecting speech/command events next");
+                            // Trigger app's speech recognition handler
                             TriggerSpeechRecognitionOnWake();
                         }
                         else if (_settings.EnableVerboseLogging)
@@ -170,14 +377,14 @@ public static class OpenWakeWordHelper
                     _microphoneCapture = null;
                     LogEvent($"Direct microphone capture init failed (non-fatal): {micEx.GetType().Name}: {micEx.Message}");
                 }
-
+                
                 _initialized = true;
             }
             catch (Exception ex)
             {
                 _initError = ex;
                 LogEvent($"OpenWakeWord initialization failed: {ex}");
-
+                
                 // Emit specific reason codes for common failure modes
                 if (ex is FileNotFoundException || ex.Message.Contains("not found"))
                 {
@@ -275,10 +482,10 @@ public static class OpenWakeWordHelper
                 _enqueueDropCount++;
                 return;
             }
-            // Check if we're in the lock window after wake detection
+
+            // During lock window, queue for Vosk speech recognition instead of OWW
             if (_lockManager?.IsLocked == true)
             {
-                // Queue audio specifically for Vosk speech recognition during lock window
                 lock (_voskLockQueueLock)
                 {
                     _voskLockAudioQueue.Enqueue(floatChunk);
@@ -288,9 +495,10 @@ public static class OpenWakeWordHelper
                         LogEvent($"[vosk-audio-queue] Queued audio chunk #{_voskLockAudioQueuedCount} during lock window (len={floatChunk.Length}, queueSize={_voskLockAudioQueue.Count})");
                     }
                 }
-                return; // Queue for Vosk, don't drop
+                return;
             }
-            // Enqueue for background inference
+
+            // Enqueue for OWW background inference
             var added = _worker?.EnqueueAudio(floatChunk) ?? false;
             if (added)
             {
@@ -371,6 +579,7 @@ public static class OpenWakeWordHelper
             LogEvent($"[startup-diag] wine.prefix={winePrefix}");
             LogEvent($"[startup-diag] processor_count={Environment.ProcessorCount}");
 
+            // Check for architecture mismatch conditions
             if (string.Equals(migrationMode, "probe", StringComparison.OrdinalIgnoreCase) && processBitness == "x86")
             {
                 LogEvent("[startup-diag] reason.code=PROBE_MODE_BUT_RUNNING_32BIT");
@@ -453,24 +662,27 @@ public static class OpenWakeWordHelper
 
         try
         {
-            LogEvent("Vosk speech recognition started. Accumulating audio for the entire lock window...");
-            int lockTimeoutMs = (_settings?.LockDurationMs ?? 5000) + 500; // Add buffer
-            var stopTime = DateTime.UtcNow.AddMilliseconds(lockTimeoutMs);
-            int lockQueuedAtStart = _voskLockAudioQueuedCount;
-            bool attemptedMicRecovery = false;
-            bool loggedQueueEmptyOnce = false;
-            var firstAudioGraceDeadline = DateTime.UtcNow.AddMilliseconds(700);
-            LogEvent($"[vosk-audio-queue] Accumulating lock-window audio for {lockTimeoutMs}ms");
+            var settings = _settings ?? OpenWakeWordSettings.CreateDefault();
+            var wakeUtc = DateTime.UtcNow;
+            var stopTime = wakeUtc.AddMilliseconds(settings.LockDurationMs + 500);
+            var graceDeadline = wakeUtc.AddMilliseconds(settings.PostWakeSilenceGraceMilliseconds);
+            var silenceCutoffMs = settings.SpeechSilenceCutoffMilliseconds;
+            var silenceStartUtc = (DateTime?)null;
+            var attemptedMicRecovery = false;
+            var loggedQueueEmptyOnce = false;
+            var firstAudioGraceDeadline = wakeUtc.AddMilliseconds(Math.Max(700, settings.PostWakeSilenceGraceMilliseconds));
+            var lockQueuedAtStart = _voskLockAudioQueuedCount;
+            var accumulatedAudio = new List<float>();
+            var dequeuedChunks = 0;
+            var hasSpeechAudio = false;
 
-            var accumulatedAudio = new System.Collections.Generic.List<float>();
-            int dequeuedChunks = 0;
+            LogEvent($"Vosk speech recognition started. Silence grace={settings.PostWakeSilenceGraceMilliseconds}ms, cutoff={silenceCutoffMs}ms.");
+            LogEvent($"[vosk-audio-queue] Accumulating until silence exceeds cutoff or lock window ends ({settings.LockDurationMs}ms lock + buffer)");
 
-            // Process audio while lock is active or timeout expires
-            while (DateTime.UtcNow < stopTime && _voskListening)
+            while (_voskListening && DateTime.UtcNow < stopTime)
             {
                 float[]? chunk = null;
-                
-                // Try to dequeue from Vosk lock queue (populated during lock window)
+
                 lock (_voskLockQueueLock)
                 {
                     if (_voskLockAudioQueue.Count > 0)
@@ -485,21 +697,37 @@ public static class OpenWakeWordHelper
                     }
                     else if (!loggedQueueEmptyOnce && dequeuedChunks == 0 && _voskLockAudioQueuedCount == 0)
                     {
-                        // Log once if queue is empty and no audio has been queued
                         loggedQueueEmptyOnce = true;
                         LogEvent($"[vosk-audio-queue] Queue empty: queued={_voskLockAudioQueuedCount}, dequeued={_voskLockAudioDequeuedCount}");
                     }
                 }
-                
+
                 if (chunk != null && chunk.Length > 0)
                 {
-                    firstAudioGraceDeadline = DateTime.UtcNow.AddMilliseconds(700);
-                    loggedQueueEmptyOnce = false;
-                    accumulatedAudio.AddRange(chunk);
+                    var chunkIsSilent = IsSilentChunk(chunk);
+                    if (!chunkIsSilent)
+                    {
+                        hasSpeechAudio = true;
+                        silenceStartUtc = null;
+                        firstAudioGraceDeadline = DateTime.UtcNow.AddMilliseconds(settings.PostWakeSilenceGraceMilliseconds);
+                        loggedQueueEmptyOnce = false;
+                        accumulatedAudio.AddRange(chunk);
+                    }
+                    else if (DateTime.UtcNow >= graceDeadline)
+                    {
+                        accumulatedAudio.AddRange(chunk);
+                        silenceStartUtc ??= DateTime.UtcNow;
+                    }
+
+                    if (hasSpeechAudio && silenceStartUtc.HasValue && DateTime.UtcNow >= silenceStartUtc.Value.AddMilliseconds(silenceCutoffMs))
+                    {
+                        LogEvent($"[vosk-speech] Silence cutoff reached after {silenceCutoffMs}ms; finalizing speech capture.");
+                        break;
+                    }
                 }
                 else
                 {
-                    int queuedDelta = _voskLockAudioQueuedCount - lockQueuedAtStart;
+                    var queuedDelta = _voskLockAudioQueuedCount - lockQueuedAtStart;
                     if (!attemptedMicRecovery && DateTime.UtcNow >= firstAudioGraceDeadline && queuedDelta == 0)
                     {
                         attemptedMicRecovery = true;
@@ -510,12 +738,21 @@ public static class OpenWakeWordHelper
                         EnsureMicrophoneCaptureStarted("lock-window-recovery", forceRestart: true);
                     }
 
-                    // Small delay to avoid busy-waiting
+                    if (DateTime.UtcNow >= graceDeadline)
+                    {
+                        silenceStartUtc ??= DateTime.UtcNow;
+                        if (DateTime.UtcNow >= silenceStartUtc.Value.AddMilliseconds(silenceCutoffMs))
+                        {
+                            LogEvent($"[vosk-speech] Silence cutoff reached after {silenceCutoffMs}ms without additional speech; finalizing speech capture.");
+                            break;
+                        }
+                    }
+
                     System.Threading.Thread.Sleep(50);
                 }
             }
 
-            LogEvent($"Lock window ended. Processing {accumulatedAudio.Count} accumulated audio samples in one go.");
+            LogEvent($"Speech window ended. Processing {accumulatedAudio.Count} accumulated audio samples.");
 
             if (accumulatedAudio.Count > 0)
             {
@@ -568,16 +805,28 @@ public static class OpenWakeWordHelper
 
         LogEvent($"[vosk-speech] Transcript: {transcript}");
 
-        var response = ResolveCommandResponse(transcript);
-        if (!string.IsNullOrWhiteSpace(response))
+        var action = ResolveCommandAction(transcript);
+        if (action == null)
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(action.AssistantLine))
         {
-            LogEvent($"[oww-command] Assistant line: {response}");
+            LogEvent($"[oww-command] Assistant line: {action.AssistantLine}");
         }
 
-        return response;
+        if (DispatchCommandAction(action, out var dispatchDetail))
+        {
+            LogEvent($"[oww-command] Dispatch succeeded: {dispatchDetail}");
+        }
+        else
+        {
+            LogEvent($"[oww-command] Dispatch unavailable: {dispatchDetail}");
+        }
+
+        return action.AssistantLine;
     }
 
-    public static string? ResolveCommandResponse(string? transcript)
+    public static CommandAction? ResolveCommandAction(string? transcript)
     {
         if (string.IsNullOrWhiteSpace(transcript))
             return null;
@@ -590,55 +839,235 @@ public static class OpenWakeWordHelper
         if (knownCommands.Count == 0)
             return null;
 
+        var candidatePhrases = knownCommands
+            .Select(entry => entry.MatchPhrase)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (candidatePhrases.Length == 0)
+            return null;
+
         var match = FuzzyMatcher.FindClosestMatch(
             commandText,
-            knownCommands,
+            candidatePhrases,
             _settings?.FuzzyMatchMinConfidence ?? 0.80f,
             LogEvent);
 
-        if (match == null)
+        if (match == null || string.IsNullOrWhiteSpace(match.MatchedCommand))
             return null;
 
-        var matchedCommand = match.MatchedCommand;
-        if (string.IsNullOrWhiteSpace(matchedCommand))
+        var entry = knownCommands.FirstOrDefault(c =>
+            string.Equals(c.MatchPhrase, match.MatchedCommand, StringComparison.OrdinalIgnoreCase));
+
+        if (entry == null)
             return null;
 
-        LogEvent($"[oww-command] command='{matchedCommand}', confidence={match.Confidence:P1}");
+        LogEvent($"[oww-command] command='{entry.MatchPhrase}', token='{entry.CommandToken}', confidence={match.Confidence:P1}");
 
-        return CommandResponses.TryGetValue(matchedCommand, out var response)
-            ? response
-            : null;
+        CommandResponses.TryGetValue(entry.MatchPhrase, out var response);
+
+        return new CommandAction(
+            transcript!,
+            entry.MatchPhrase,
+            entry.DispatchPhrase,
+            entry.CommandToken,
+            match.Confidence,
+            entry.ScriptReference,
+            response);
     }
 
-    private static IReadOnlyList<string> LoadKnownCommands()
+    public static string? ResolveCommandResponse(string? transcript)
+    {
+        return ResolveCommandAction(transcript)?.AssistantLine;
+    }
+
+    private static bool DispatchCommandAction(CommandAction action, out string detail)
+    {
+        foreach (var dispatcher in CommandDispatchers)
+        {
+            if (dispatcher.TryDispatch(action, out detail))
+                return true;
+
+            LogEvent($"[oww-command] Dispatcher '{dispatcher.Name}' skipped: {detail}");
+        }
+
+        detail = "No dispatcher could execute the command.";
+        return false;
+    }
+
+    private static bool TryGetGameCommandHandler(out object? target, out MethodInfo? method, out string detail)
+    {
+        lock (_dispatcherLock)
+        {
+            if (_cachedGameHandlerTarget != null && _cachedGameHandlerMethod != null)
+            {
+                target = _cachedGameHandlerTarget;
+                method = _cachedGameHandlerMethod;
+                detail = $"Using cached handler {_cachedGameHandlerMethod.DeclaringType?.FullName}.{_cachedGameHandlerMethod.Name}.";
+                return true;
+            }
+        }
+
+        var appType = Type.GetType("System.Windows.Forms.Application, System.Windows.Forms", throwOnError: false);
+        if (appType == null)
+        {
+            target = null;
+            method = null;
+            detail = "System.Windows.Forms.Application is unavailable.";
+            return false;
+        }
+
+        var openFormsProperty = appType.GetProperty("OpenForms", BindingFlags.Public | BindingFlags.Static);
+        var openForms = openFormsProperty?.GetValue(null) as IEnumerable;
+        if (openForms == null)
+        {
+            target = null;
+            method = null;
+            detail = "OpenForms collection is unavailable.";
+            return false;
+        }
+
+        object? bestTarget = null;
+        MethodInfo? bestMethod = null;
+        var bestScore = int.MinValue;
+
+        foreach (var form in openForms)
+        {
+            if (form == null)
+                continue;
+
+            var candidates = form.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m =>
+                {
+                    if (m.IsSpecialName)
+                        return false;
+
+                    var parameters = m.GetParameters();
+                    return parameters.Length == 1 && parameters[0].ParameterType == typeof(string);
+                });
+
+            foreach (var candidate in candidates)
+            {
+                var score = ScoreGameHandlerCandidate(candidate);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestTarget = form;
+                    bestMethod = candidate;
+                }
+            }
+        }
+
+        if (bestTarget == null || bestMethod == null || bestScore < 10)
+        {
+            target = null;
+            method = null;
+            detail = "No high-confidence in-process command handler discovered.";
+            return false;
+        }
+
+        lock (_dispatcherLock)
+        {
+            _cachedGameHandlerTarget = bestTarget;
+            _cachedGameHandlerMethod = bestMethod;
+        }
+
+        target = bestTarget;
+        method = bestMethod;
+        detail = $"Selected handler {bestMethod.DeclaringType?.FullName}.{bestMethod.Name} (score={bestScore}).";
+        return true;
+    }
+
+    private static int ScoreGameHandlerCandidate(MethodInfo method)
+    {
+        var score = 0;
+        if (method.ReturnType == typeof(void))
+            score += 3;
+
+        var name = method.Name;
+        if (name.IndexOf("command", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 10;
+        if (name.IndexOf("dispatch", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 10;
+        if (name.IndexOf("speech", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 6;
+        if (name.IndexOf("recogn", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 5;
+
+        try
+        {
+            var ilSize = method.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0;
+            if (ilSize >= 32 && ilSize <= 4096)
+                score += 4;
+        }
+        catch
+        {
+            // Reflection can throw for dynamic/protected methods; keep score as-is.
+        }
+
+        return score;
+    }
+
+    private static bool TryInvokeOnUiThread(object target, MethodInfo method, string phrase, out string detail)
+    {
+        var beginInvoke = target.GetType().GetMethod(
+            "BeginInvoke",
+            BindingFlags.Instance | BindingFlags.Public,
+            null,
+            new[] { typeof(Delegate) },
+            null);
+
+        if (beginInvoke == null)
+        {
+            detail = "UI thread marshalling unavailable; invoking directly.";
+            return false;
+        }
+
+        Action invokeAction = () => method.Invoke(target, new object[] { phrase });
+        beginInvoke.Invoke(target, new object[] { invokeAction });
+        detail = $"Queued '{phrase}' via UI dispatcher {method.Name}.";
+        return true;
+    }
+
+    private static IReadOnlyList<CommandManifestEntry> LoadKnownCommands()
     {
         var manifestPath = FindCommandManifestPath();
         if (manifestPath == null)
         {
             LogEvent("[oww-command] Command manifest not found; fuzzy matching limited to built-in responses.");
-            return Array.Empty<string>();
+            return CommandResponses.Keys
+                .Select(responseKey => new CommandManifestEntry(responseKey, responseKey, responseKey, null))
+                .ToArray();
         }
 
         try
         {
-            var commands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var commandsByPhrase = new Dictionary<string, CommandManifestEntry>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in System.IO.File.ReadLines(manifestPath))
             {
-                if (ParseCommandLine(line) is string commandText)
-                    commands.Add(commandText);
+                if (ParseCommandLine(line) is CommandManifestEntry entry)
+                    commandsByPhrase[entry.MatchPhrase] = entry;
             }
 
-            LogEvent($"[oww-command] Loaded {commands.Count} commands from {manifestPath}");
-            return commands.ToArray();
+            foreach (var pair in CommandResponses)
+            {
+                if (!commandsByPhrase.ContainsKey(pair.Key))
+                    commandsByPhrase[pair.Key] = new CommandManifestEntry(pair.Key, pair.Key, pair.Key, null);
+            }
+
+            LogEvent($"[oww-command] Loaded {commandsByPhrase.Count} commands from {manifestPath}");
+            return commandsByPhrase.Values.ToArray();
         }
         catch (Exception ex)
         {
             LogEvent($"[oww-command] Failed to load command manifest '{manifestPath}': {ex.GetType().Name}: {ex.Message}");
-            return Array.Empty<string>();
+            return CommandResponses.Keys
+                .Select(responseKey => new CommandManifestEntry(responseKey, responseKey, responseKey, null))
+                .ToArray();
         }
     }
 
-    private static string? ParseCommandLine(string? line)
+    private static CommandManifestEntry? ParseCommandLine(string? line)
     {
         if (string.IsNullOrWhiteSpace(line))
             return null;
@@ -648,11 +1077,47 @@ public static class OpenWakeWordHelper
             return null;
 
         var commandText = trimmed;
-        var scriptDelimiter = commandText.LastIndexOf(" (", StringComparison.Ordinal);
-        if (scriptDelimiter > 0 && commandText.EndsWith(")", StringComparison.Ordinal))
-            commandText = commandText.Substring(0, scriptDelimiter);
+        string? scriptReference = null;
 
-        return NormalizeCommandText(commandText!);
+        var parenOpen = commandText.LastIndexOf('(');
+        var parenClose = commandText.LastIndexOf(')');
+        if (parenOpen > 0 && parenClose > parenOpen)
+        {
+            scriptReference = commandText.Substring(parenOpen + 1, parenClose - parenOpen - 1).Trim();
+            commandText = commandText.Substring(0, parenOpen).Trim();
+        }
+
+        var normalizedPhrase = NormalizeCommandText(commandText);
+        if (string.IsNullOrWhiteSpace(normalizedPhrase))
+            return null;
+
+        var commandToken = normalizedPhrase;
+        if (!string.IsNullOrWhiteSpace(scriptReference))
+        {
+            commandToken = scriptReference!;
+            if (commandToken.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+                commandToken = commandToken.Substring(0, commandToken.Length - 4);
+
+            commandToken = commandToken.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(commandToken))
+            commandToken = normalizedPhrase;
+
+        return new CommandManifestEntry(normalizedPhrase, commandText, commandToken, scriptReference);
+    }
+
+    private static string? ResolveCommandRootDirectory()
+    {
+        var manifestPath = FindCommandManifestPath();
+        if (string.IsNullOrWhiteSpace(manifestPath))
+            return null;
+
+        var customCommandsDirectory = System.IO.Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(customCommandsDirectory))
+            return null;
+
+        return System.IO.Path.GetDirectoryName(customCommandsDirectory);
     }
 
     private static string? FindCommandManifestPath()
@@ -843,6 +1308,17 @@ public static class OpenWakeWordHelper
             _voskRecognizer = null;
             _voskListening = false;
             _voskInitAttempted = false;
+        }
+
+        lock (_dispatcherLock)
+        {
+            _cachedGameHandlerMethod = null;
+            _cachedGameHandlerTarget = null;
+        }
+
+        lock (_commandManifestLock)
+        {
+            KnownCommands = new Lazy<IReadOnlyList<CommandManifestEntry>>(LoadKnownCommands, true);
         }
     }
 
