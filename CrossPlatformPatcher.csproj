@@ -10,6 +10,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Optimize>true</Optimize>
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
   <ItemGroup>
@@ -87,6 +89,9 @@
     <Compile Remove="Command Caller reference\**\*.cs" />
     <EmbeddedResource Remove="Command Caller reference\**\*" />
     <None Remove="Command Caller reference\**\*" />
+    <Compile Remove="dumper\**\*.cs" />
+    <EmbeddedResource Remove="dumper\**\*" />
+    <None Remove="dumper\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordMicrophoneCapture.cs" />

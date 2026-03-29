@@ -487,6 +487,7 @@ public static class OpenWakeWordCompatibilityPatcher
         // Get or create reference to external OpenWakeWordHelper class from PAIcom.OWW assembly
         // This is the runtime helper that receives audio and routes it to OWW or Vosk
         IMethod? enqueueAudioMethod = null;
+        IMethod? realInitializeMethod = null;
         
         // Look for existing assembly reference to PAIcom.OWW
         var owwAssemblyRef = module.GetAssemblyRefs()
@@ -508,6 +509,13 @@ public static class OpenWakeWordCompatibilityPatcher
                 "OpenWakeWordHelper",
                 owwAssemblyRef);
             
+            // Create MemberRef to Initialize method in external type
+            realInitializeMethod = new MemberRefUser(
+                module,
+                "Initialize",
+                MethodSig.CreateStatic(module.CorLibTypes.Void),
+                owwHelperTypeRef);
+            
             // Create MemberRef to EnqueueAudio method in external type
             enqueueAudioMethod = new MemberRefUser(
                 module,
@@ -519,6 +527,11 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body = new CilBody { InitLocals = true, MaxStack = 4 };
         method.Body.Variables.Add(utcNowLocal);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, initMethod));
+        // Call the real OpenWakeWordHelper.Initialize() to run initialization logic including sequential method testing setup
+        if (realInitializeMethod != null)
+        {
+            method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, realInitializeMethod));
+        }
         // Removed: lock check that prevented audio processing during lock window
         // Now OnAudioChunkAvailable always runs, allowing Vosk to get audio during lock
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsfld, firstAudioLoggedField));
