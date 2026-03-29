@@ -17,12 +17,18 @@ class Program
         Console.WriteLine($"PAIcom Binary-Patch Injector ({BuildFlavor}) v1.0");
         Console.WriteLine("==================================");
 
-        if (args.Length == 1 && args[0] == "--prepare-onnx-natives")
+        if (args.Length >= 1 && args[0] == "--prepare-onnx-natives")
         {
             var copied = OnnxNativeLibraryManager.PrepareFromNuGetCache(
                 Directory.GetCurrentDirectory(),
                 Console.WriteLine);
             return copied > 0 ? 0 : 4;
+        }
+
+        if (args.Length >= 2 && args[0] == "--test-commands")
+        {
+            TestCommandInjection.Run(args.Skip(1).ToArray());
+            return 0;
         }
 
         // ── Parse arguments ──────────────────────────────────────────────

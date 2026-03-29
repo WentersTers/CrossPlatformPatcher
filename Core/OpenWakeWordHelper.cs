@@ -4,6 +4,9 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Runtime.CompilerServices;
+using CrossPlatformPatcher.Core.Audio;
+using CrossPlatformPatcher.Core.Animation;
 
 namespace CrossPlatformPatcher.Core;
 
@@ -28,6 +31,9 @@ public static class OpenWakeWordHelper
     private static OpenWakeWordInferenceWorker? _worker;
     private static OpenWakeWordMicrophoneCapture? _microphoneCapture;
     private static VoskSpeechRecognizer? _voskRecognizer;
+    private static Lazy<IAnimationDispatcher>? _lazyCrossPlatformAnimationDispatcher;
+    private static Lazy<IAudioPlayer>? _lazyCrossPlatformAudioPlayer;
+    private static Lazy<AnimationScriptExecutor>? _lazyAnimationScriptExecutor;
     private static readonly object _initLock = new();
     
     // Audio queue specifically for Vosk during lock window
@@ -45,16 +51,74 @@ public static class OpenWakeWordHelper
 
     private const float SilenceAmplitudeThreshold = 0.01f;
 
+    // Sequential method testing (for diagnostics and compatibility testing)
+    private static bool _sequentialMethodTestMode;
+    private static string? _testCategoryFilter;
+    private static int _testMethodCount;
+    private static int _testMethodSuccessCount;
+    private static int _testMethodFailureCount;
+    private static readonly object _methodTestLock = new();
+
+    // Live method testing (keeps game running, tests against live instance)
+    private static bool _liveMethodTestMode;
+    private static string? _liveTestLogPath;
+    private static readonly object _liveTestLock = new();
+
     private static readonly object _commandManifestLock = new();
     private static Lazy<IReadOnlyList<CommandManifestEntry>> KnownCommands = new(LoadKnownCommands, true);
     private static readonly object _dispatcherLock = new();
     private static readonly ICommandDispatcher[] CommandDispatchers =
     {
+        new SpeechEmulationCommandDispatcher(),
+        new UiSimulationCommandDispatcher(),
+        new CrossPlatformAnimationCommandDispatcher(),
+        new CrossPlatformAudioCommandDispatcher(),
         new ReflectionCommandDispatcher(),
+        new AnimationReflectionDispatcher(),
         new ProcessFallbackCommandDispatcher()
     };
     private static MethodInfo? _cachedGameHandlerMethod;
     private static object? _cachedGameHandlerTarget;
+    private static MethodInfo? _cachedAnimationHandlerMethod;
+    private static object? _cachedAnimationHandlerTarget;
+    private static readonly object _runtimeDiagnosticLock = new();
+    private static bool _runtimeDiagnosticStarted;
+    private static bool _runtimeDiagnosticCompleted;
+    private static string? _runtimeDiagnosticRawPath;
+    private static string? _runtimeDiagnosticSummaryPath;
+    private static DateTime _runtimeDiagnosticStartedUtc;
+    private static DateTime _runtimeDiagnosticLastRawFlushUtc;
+    private static DateTime _runtimeDiagnosticLastSummaryWriteUtc;
+    private static readonly List<string> _runtimeDiagnosticPendingLines = new();
+    private static readonly HashSet<string> _runtimeDiagnosticSeenEntries = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> _runtimeDiagnosticScannedTypes = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, int> _runtimeDiagnosticCategoryCounts = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, int> _runtimeDiagnosticLikelyScores = new(StringComparer.Ordinal);
+    private static readonly string[] RuntimeDiagnosticLikelyKeywords =
+    {
+        "speech", "recogn", "emulate", "command", "dispatch", "anim", "audio",
+        "textbox", "text", "input", "button", "click", "picturebox", "show", "hide",
+        "key", "form", "control", "sound", "play"
+    };
+    private const int RuntimeDiagnosticMaxLinesPerFlush = 250;
+    private const int RuntimeDiagnosticRawFlushMs = 900;
+    private const int RuntimeDiagnosticSummaryWriteMs = 4000;
+    private const int RuntimeDiagnosticSnapshotIntervalMs = 2000;
+    private const int SequentialCandidateDefaultLimit = 25;
+
+    private sealed class ScoredMethodCandidate
+    {
+        public ScoredMethodCandidate(object? target, MethodInfo method, int score)
+        {
+            Target = target;
+            Method = method;
+            Score = score;
+        }
+
+        public object? Target { get; }
+        public MethodInfo Method { get; }
+        public int Score { get; }
+    }
 
     private static readonly Dictionary<string, string> CommandResponses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -134,21 +198,48 @@ public static class OpenWakeWordHelper
 
         public bool TryDispatch(CommandAction action, out string detail)
         {
+            if (IsSequentialCandidateTestingEnabled())
+                return TryDispatchAcrossLikelyGameHandlers(action, out detail);
+
             if (!TryGetGameCommandHandler(out var target, out var method, out detail))
                 return false;
 
+            LogEvent($"[oww-dispatch-debug] Found handler: {method?.Name}, DispatchPhrase: '{action.DispatchPhrase}', MatchPhrase: '{action.MatchPhrase}'");
+            
             try
             {
-                if (TryInvokeOnUiThread(target!, method!, action.DispatchPhrase, out detail))
+                // Try dispatching with the full dispatch phrase (including wake word)
+                // Only try UI thread if we have a target object
+                if (target != null && TryInvokeOnUiThread(target, method!, action.DispatchPhrase, out detail))
+                {
+                    LogEvent($"[oww-dispatch-result] UI thread invoke succeeded");
                     return true;
+                }
 
-                method!.Invoke(target, new object[] { action.DispatchPhrase });
-                detail = $"Invoked {method.DeclaringType?.FullName}.{method.Name}(\"{action.DispatchPhrase}\") directly.";
+                // Direct invocation (works for both instance and static methods)
+                if (method!.IsStatic)
+                {
+                    method.Invoke(null, new object[] { action.DispatchPhrase });
+                    detail = $"Invoked static {method.DeclaringType?.FullName}.{method.Name}(\"{action.DispatchPhrase}\") with dispatch phrase.";
+                }
+                else if (target != null)
+                {
+                    method.Invoke(target, new object[] { action.DispatchPhrase });
+                    detail = $"Invoked {method.DeclaringType?.FullName}.{method.Name}(\"{action.DispatchPhrase}\") with dispatch phrase.";
+                }
+                else
+                {
+                    detail = "Unable to invoke handler: no target object for instance method and method is not static.";
+                    return false;
+                }
+                
+                LogEvent($"[oww-dispatch-result] Direct invoke succeeded");
                 return true;
             }
             catch (Exception ex)
             {
                 detail = $"Reflection dispatch failed via {method!.Name}: {ex.GetType().Name}: {ex.Message}";
+                LogEvent($"[oww-dispatch-error] {detail}");
                 return false;
             }
         }
@@ -270,6 +361,513 @@ public static class OpenWakeWordHelper
         }
     }
 
+    private sealed class AnimationReflectionDispatcher : ICommandDispatcher
+    {
+        public string Name => "game-animation-reflection";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            if (IsSequentialCandidateTestingEnabled())
+                return TryDispatchAcrossLikelyAnimationHandlers(action, out detail);
+
+            if (!TryGetAnimationHandler(out var target, out var method, out detail))
+                return false;
+
+            var candidateArguments = BuildAnimationDispatchArguments(action);
+            Exception? lastError = null;
+
+            foreach (var argument in candidateArguments)
+            {
+                try
+                {
+                    if (target != null && TryInvokeOnUiThread(target, method!, argument, out detail))
+                    {
+                        detail = $"Animation handler queued via UI dispatcher using argument '{argument}'.";
+                        return true;
+                    }
+
+                    if (method!.IsStatic)
+                    {
+                        method.Invoke(null, new object[] { argument });
+                        detail = $"Invoked static animation handler {method.DeclaringType?.FullName}.{method.Name}(\"{argument}\").";
+                        return true;
+                    }
+
+                    if (target != null)
+                    {
+                        method.Invoke(target, new object[] { argument });
+                        detail = $"Invoked animation handler {method.DeclaringType?.FullName}.{method.Name}(\"{argument}\").";
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    LogEvent($"[oww-animation-dispatch] Candidate argument '{argument}' failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            detail = lastError == null
+                ? "Animation handler found, but no invocation path succeeded."
+                : $"Animation dispatch failed: {lastError.GetType().Name}: {lastError.Message}";
+            return false;
+        }
+    }
+
+    private sealed class CrossPlatformAnimationCommandDispatcher : ICommandDispatcher
+    {
+        public string Name => "cross-platform-animation";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            try
+            {
+                // Get or initialize the dispatcher
+                var dispatcher = GetCrossPlatformAnimationDispatcher();
+                if (dispatcher == null)
+                {
+                    detail = "Cross-platform animation dispatcher is not available on this platform.";
+                    return false;
+                }
+
+                // Extract delay from action if available
+                int delayMs = ExtractDelayFromAction(action) ?? 50;
+                
+                LogEvent($"[oww-cross-platform-animation] Dispatching animation with {delayMs}ms delay");
+                
+                // Schedule animation frame
+                var animationTask = dispatcher.AnimateFrame(delayMs);
+                
+                // Queue UI callbacks if needed
+                if (!string.IsNullOrWhiteSpace(action.DispatchPhrase))
+                {
+                    dispatcher.TryQueueUiAction(() =>
+                    {
+                        LogEvent($"[oww-cross-platform-animation] Animation callback: {action.DispatchPhrase}");
+                    }, out var queueError);
+                    
+                    if (!string.IsNullOrEmpty(queueError))
+                        LogEvent($"[oww-cross-platform-animation] Queue error: {queueError}");
+                }
+                
+                detail = $"Cross-platform animation dispatched with {delayMs}ms delay, state={dispatcher.GetState()}.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Cross-platform animation dispatch failed: {ex.GetType().Name}: {ex.Message}";
+                LogEvent($"[oww-cross-platform-animation-error] {detail}");
+                return false;
+            }
+        }
+    }
+
+    private sealed class CrossPlatformAudioCommandDispatcher : ICommandDispatcher
+    {
+        public string Name => "cross-platform-audio";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            try
+            {
+                // Get or initialize the audio player
+                var audioPlayer = GetCrossPlatformAudioPlayer();
+                if (audioPlayer == null)
+                {
+                    detail = "Cross-platform audio player is not available on this platform.";
+                    return false;
+                }
+
+                // Try to load audio from the action dispatch phrase
+                var resourcePath = action.DispatchPhrase ?? action.CommandToken ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(resourcePath))
+                {
+                    detail = "No audio resource path found in action.";
+                    return false;
+                }
+
+                LogEvent($"[oww-cross-platform-audio] Loading audio from: {resourcePath}");
+                
+                if (!audioPlayer.TryLoadAudio(resourcePath, out var track, out var loadError))
+                {
+                    detail = $"Failed to load audio: {loadError}";
+                    LogEvent($"[oww-cross-platform-audio-error] {detail}");
+                    return false;
+                }
+
+                LogEvent($"[oww-cross-platform-audio] Loaded audio track, playing...");
+                
+                if (track == null)
+                {
+                    detail = "Failed to load audio track: track is null";
+                    LogEvent($"[oww-cross-platform-audio-error] {detail}");
+                    return false;
+                }
+
+                if (!audioPlayer.TryPlayAudio(track, out var playError))
+                {
+                    track?.Dispose();
+                    detail = $"Failed to play audio: {playError}";
+                    LogEvent($"[oww-cross-platform-audio-error] {detail}");
+                    return false;
+                }
+
+                detail = $"Audio played successfully from {resourcePath}, state={audioPlayer.GetState()}.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Cross-platform audio dispatch failed: {ex.GetType().Name}: {ex.Message}";
+                LogEvent($"[oww-cross-platform-audio-error] {detail}");
+                return false;
+            }
+        }
+    }
+
+    private static IAnimationDispatcher? GetCrossPlatformAnimationDispatcher()
+    {
+        _lazyCrossPlatformAnimationDispatcher ??= new Lazy<IAnimationDispatcher>(
+            () => new CrossPlatformAnimationDispatcher(logger: LogEvent));
+        return _lazyCrossPlatformAnimationDispatcher.Value;
+    }
+
+    private static IAudioPlayer? GetCrossPlatformAudioPlayer()
+    {
+        _lazyCrossPlatformAudioPlayer ??= new Lazy<IAudioPlayer>(
+            () => new CrossPlatformAudioPlayer(logger: LogEvent));
+        return _lazyCrossPlatformAudioPlayer.Value;
+    }
+
+    private static AnimationScriptExecutor? GetAnimationScriptExecutor()
+    {
+        _lazyAnimationScriptExecutor ??= new Lazy<AnimationScriptExecutor>(() =>
+        {
+            // Resolve animation and audio paths
+            var baseDir = ResolveCommandRootDirectory();
+            if (string.IsNullOrWhiteSpace(baseDir))
+            {
+                LogEvent("[animation-script] Could not resolve base directory for animations");
+                return null;
+            }
+
+            var animationsPath = System.IO.Path.Combine(baseDir, "animations");
+            var audioPath = baseDir;  // Audio files in root
+
+            LogEvent($"[animation-script-init] Animations path: {animationsPath}");
+            LogEvent($"[animation-script-init] Audio path: {audioPath}");
+
+            var executor = new AnimationScriptExecutor(
+                animationsPath,
+                audioPath,
+                GetCrossPlatformAnimationDispatcher(),
+                GetCrossPlatformAudioPlayer(),
+                LogEvent);
+            
+            LogEvent("[animation-script-init] Animation script executor initialized");
+            return executor;
+        });
+        
+        var result = _lazyAnimationScriptExecutor.Value;
+        if (result == null)
+        {
+            LogEvent("[animation-script] Animation script executor is null!");
+        }
+        return result;
+    }
+
+    private static int? ExtractDelayFromAction(CommandAction action)
+    {
+        if (action == null || string.IsNullOrWhiteSpace(action.CommandToken))
+            return null;
+
+        // Try to extract a number from the command token
+        var token = action.CommandToken.Trim();
+        if (int.TryParse(token, out var value) && value > 0)
+            return value;
+        
+        return null;
+    }
+
+    private static bool IsSequentialCandidateTestingEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable("PAICOM_TRY_ALL_CANDIDATE_METHODS");
+        if (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Runtime-diagnostic sessions are explicitly test/investigation runs.
+        // Default to sequential candidate testing there so likely handlers are
+        // exercised without requiring extra launcher plumbing.
+        return IsRuntimeDiagnosticEnabled();
+    }
+
+    private static int GetSequentialCandidateLimit()
+    {
+        var value = Environment.GetEnvironmentVariable("PAICOM_CANDIDATE_METHOD_LIMIT");
+        if (int.TryParse(value, out var parsed) && parsed > 0)
+            return Math.Min(parsed, 100);
+
+        return SequentialCandidateDefaultLimit;
+    }
+
+    private static bool TryDispatchAcrossLikelyGameHandlers(CommandAction action, out string detail)
+    {
+        var limit = GetSequentialCandidateLimit();
+        var candidates = GetRankedGameHandlerCandidates(limit);
+        if (candidates.Length == 0)
+        {
+            detail = "No ranked game-handler candidates were discovered for sequential testing.";
+            return false;
+        }
+
+        var successCount = 0;
+        var firstSuccessDetail = string.Empty;
+
+        foreach (var candidate in candidates)
+        {
+            if (TryInvokeStringHandler(candidate.Target, candidate.Method, action.DispatchPhrase, out var attemptDetail))
+            {
+                successCount++;
+                if (string.IsNullOrEmpty(firstSuccessDetail))
+                    firstSuccessDetail = attemptDetail;
+                LogEvent($"[oww-sequential-handler] Success: {candidate.Method.DeclaringType?.FullName}.{candidate.Method.Name} (score={candidate.Score}) -> {attemptDetail}");
+            }
+            else
+            {
+                LogEvent($"[oww-sequential-handler] Failed: {candidate.Method.DeclaringType?.FullName}.{candidate.Method.Name} (score={candidate.Score}) -> {attemptDetail}");
+            }
+        }
+
+        if (successCount > 0)
+        {
+            detail = $"Sequential game-handler test completed: {successCount}/{candidates.Length} candidates invoked successfully. First success: {firstSuccessDetail}";
+            return true;
+        }
+
+        detail = $"Sequential game-handler test completed: 0/{candidates.Length} candidates succeeded.";
+        return false;
+    }
+
+    private static bool TryDispatchAcrossLikelyAnimationHandlers(CommandAction action, out string detail)
+    {
+        var limit = GetSequentialCandidateLimit();
+        var candidates = GetRankedAnimationHandlerCandidates(limit);
+        if (candidates.Length == 0)
+        {
+            detail = "No ranked animation-handler candidates were discovered for sequential testing.";
+            return false;
+        }
+
+        var successCount = 0;
+        var firstSuccessDetail = string.Empty;
+        var candidateArguments = BuildAnimationDispatchArguments(action);
+
+        foreach (var candidate in candidates)
+        {
+            var invoked = false;
+            foreach (var argument in candidateArguments)
+            {
+                if (TryInvokeStringHandler(candidate.Target, candidate.Method, argument, out var attemptDetail))
+                {
+                    successCount++;
+                    invoked = true;
+                    if (string.IsNullOrEmpty(firstSuccessDetail))
+                        firstSuccessDetail = attemptDetail;
+                    LogEvent($"[oww-sequential-animation] Success: {candidate.Method.DeclaringType?.FullName}.{candidate.Method.Name} (score={candidate.Score}) arg='{argument}' -> {attemptDetail}");
+                    break;
+                }
+            }
+
+            if (!invoked)
+            {
+                LogEvent($"[oww-sequential-animation] Failed: {candidate.Method.DeclaringType?.FullName}.{candidate.Method.Name} (score={candidate.Score})");
+            }
+        }
+
+        if (successCount > 0)
+        {
+            detail = $"Sequential animation-handler test completed: {successCount}/{candidates.Length} candidates invoked successfully. First success: {firstSuccessDetail}";
+            return true;
+        }
+
+        detail = $"Sequential animation-handler test completed: 0/{candidates.Length} candidates succeeded.";
+        return false;
+    }
+
+    private static ScoredMethodCandidate[] GetRankedGameHandlerCandidates(int limit)
+    {
+        var candidates = CollectRankedStringMethodCandidates(ScoreGameHandlerCandidate);
+        return candidates
+            .OrderByDescending(c => c.Score)
+            .ThenBy(c => c.Method.DeclaringType?.FullName, StringComparer.Ordinal)
+            .ThenBy(c => c.Method.Name, StringComparer.Ordinal)
+            .Take(limit)
+            .ToArray();
+    }
+
+    private static ScoredMethodCandidate[] GetRankedAnimationHandlerCandidates(int limit)
+    {
+        var candidates = CollectRankedStringMethodCandidates(ScoreAnimationHandlerCandidate);
+        return candidates
+            .OrderByDescending(c => c.Score)
+            .ThenBy(c => c.Method.DeclaringType?.FullName, StringComparer.Ordinal)
+            .ThenBy(c => c.Method.Name, StringComparer.Ordinal)
+            .Take(limit)
+            .ToArray();
+    }
+
+    private static List<ScoredMethodCandidate> CollectRankedStringMethodCandidates(Func<MethodInfo, int> scorer)
+    {
+        var results = new List<ScoredMethodCandidate>();
+
+        foreach (var form in GetOpenFormsSnapshot())
+        {
+            var methods = form.GetType()
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m =>
+                {
+                    if (m.IsSpecialName)
+                        return false;
+
+                    var parameters = m.GetParameters();
+                    return parameters.Length == 1 && parameters[0].ParameterType == typeof(string);
+                });
+
+            foreach (var method in methods)
+                results.Add(new ScoredMethodCandidate(form, method, scorer(method)));
+        }
+
+        foreach (var asm in GetCandidateAssembliesForDiscovery())
+        {
+            Type[] types;
+            try
+            {
+                types = asm.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(t => t != null).ToArray()!;
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var type in types)
+            {
+                if (type == null || type.Name.StartsWith("<", StringComparison.Ordinal))
+                    continue;
+
+                var hasCompilerGenerated = type.GetCustomAttributes(typeof(CompilerGeneratedAttribute), false).Length > 0;
+                if (hasCompilerGenerated)
+                    continue;
+
+                var methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                    .Where(m =>
+                    {
+                        if (m.IsSpecialName)
+                            return false;
+
+                        var parameters = m.GetParameters();
+                        return parameters.Length == 1 && parameters[0].ParameterType == typeof(string);
+                    });
+
+                foreach (var method in methods)
+                {
+                    object? target = null;
+                    if (!method.IsStatic && !TryFindTargetInstance(method.DeclaringType, out target))
+                        continue;
+
+                    results.Add(new ScoredMethodCandidate(target, method, scorer(method)));
+                }
+            }
+        }
+
+        return results
+            .GroupBy(c =>
+            {
+                var targetType = c.Target?.GetType().FullName ?? "<static>";
+                return $"{c.Method.DeclaringType?.FullName}.{c.Method.Name}|{targetType}|{c.Method.IsStatic}";
+            }, StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(c => c.Score).First())
+            .ToList();
+    }
+
+    private static bool TryInvokeStringHandler(object? target, MethodInfo method, string argument, out string detail)
+    {
+        try
+        {
+            if (target != null && TryInvokeOnUiThread(target, method, argument, out detail))
+                return true;
+
+            if (method.IsStatic)
+            {
+                method.Invoke(null, new object[] { argument });
+                detail = $"Invoked static {method.DeclaringType?.FullName}.{method.Name}(\"{argument}\").";
+                
+                // Log method test result if testing is enabled
+                if (_sequentialMethodTestMode && ShouldTestMethod(method))
+                {
+                    RecordMethodTestAttempt(method, true, detail);
+                }
+                
+                return true;
+            }
+
+            if (target != null)
+            {
+                method.Invoke(target, new object[] { argument });
+                detail = $"Invoked {method.DeclaringType?.FullName}.{method.Name}(\"{argument}\").";
+                
+                // Log method test result if testing is enabled
+                if (_sequentialMethodTestMode && ShouldTestMethod(method))
+                {
+                    RecordMethodTestAttempt(method, true, detail);
+                }
+                
+                return true;
+            }
+
+            detail = $"Skipping {method.DeclaringType?.FullName}.{method.Name}: no compatible target instance.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            detail = $"Invoke failed for {method.DeclaringType?.FullName}.{method.Name}: {ex.GetType().Name}: {ex.Message}";
+            
+            // Log method test failure if testing is enabled
+            if (_sequentialMethodTestMode && ShouldTestMethod(method))
+            {
+                RecordMethodTestAttempt(method, false, $"{ex.GetType().Name}: {ex.Message}");
+            }
+            
+            return false;
+        }
+    }
+
+    private sealed class SpeechEmulationCommandDispatcher : ICommandDispatcher
+    {
+        public string Name => "speech-emulation";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            return TryDispatchViaSpeechEmulation(action.DispatchPhrase, out detail);
+        }
+    }
+
+    private sealed class UiSimulationCommandDispatcher : ICommandDispatcher
+    {
+        public string Name => "ui-simulation";
+
+        public bool TryDispatch(CommandAction action, out string detail)
+        {
+            return TryDispatchViaUiSimulation(action.DispatchPhrase, out detail);
+        }
+    }
+
     /// <summary>
     /// Initialize OpenWakeWord runtime system.
     /// Called once by injected code before first audio processing.
@@ -306,6 +904,23 @@ public static class OpenWakeWordHelper
                     !Environment.Is64BitProcess)
                 {
                     LogEvent("reason.code=PROBE_STILL_32BIT");
+                }
+
+                // Force command manifest initialization during startup so runtime diagnostics
+                // can start immediately after commands are loaded.
+                try
+                {
+                    LogEvent("[oww-command] Initializing command manifest cache...");
+                    _ = KnownCommands.Value;
+                    LogEvent("[oww-command] Command manifest cache initialized.");
+                }
+                catch (Exception manifestEx)
+                {
+                    LogEvent($"[oww-command] Command manifest initialization failed: {manifestEx}");
+                    lock (_commandManifestLock)
+                    {
+                        KnownCommands = new Lazy<IReadOnlyList<CommandManifestEntry>>(CreateFallbackCommandManifest, true);
+                    }
                 }
                 
                 LogEvent($"Initialized with settings: {_settings}");
@@ -377,6 +992,9 @@ public static class OpenWakeWordHelper
                 }
                 
                 _initialized = true;
+                
+                // Initialize sequential method testing mode if enabled
+                InitializeMethodTestingMode();
             }
             catch (Exception ex)
             {
@@ -400,6 +1018,154 @@ public static class OpenWakeWordHelper
                 {
                     LogEvent("reason.code=PROBE_PLATFORM_NOT_SUPPORTED");
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Initialize sequential method testing mode for diagnostics.
+    /// Enables focused testing of method categories during handler discovery.
+    /// </summary>
+    private static void InitializeMethodTestingMode()
+    {
+        LogEvent($"[TRACE] InitializeMethodTestingMode() called");
+        lock (_methodTestLock)
+        {
+            var testModeVar = Environment.GetEnvironmentVariable("PAICOM_SEQUENTIAL_METHOD_TEST");
+            LogEvent($"[TRACE] testModeVar={testModeVar ?? "(null)"}");
+            
+            _sequentialMethodTestMode = string.Equals(testModeVar, "1", StringComparison.OrdinalIgnoreCase) ||
+                                       string.Equals(testModeVar, "true", StringComparison.OrdinalIgnoreCase);
+            
+            LogEvent($"[TRACE] _sequentialMethodTestMode={_sequentialMethodTestMode}");
+            
+            if (_sequentialMethodTestMode)
+            {
+                _testCategoryFilter = Environment.GetEnvironmentVariable("PAICOM_TEST_CATEGORY");
+                var testNum = Environment.GetEnvironmentVariable("PAICOM_METHOD_TEST_NUM");
+                
+                LogEvent($"[methodtest] Sequential method testing ENABLED");
+                if (!string.IsNullOrEmpty(_testCategoryFilter))
+                    LogEvent($"[methodtest] Category filter: {_testCategoryFilter}");
+                if (!string.IsNullOrEmpty(testNum))
+                    LogEvent($"[methodtest] Test number: {testNum}");
+            }
+        }
+
+        // Initialize live testing mode if enabled
+        lock (_liveTestLock)
+        {
+            var liveTestVar = Environment.GetEnvironmentVariable("PAICOM_LIVE_METHOD_TEST");
+            _liveMethodTestMode = string.Equals(liveTestVar, "1", StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(liveTestVar, "true", StringComparison.OrdinalIgnoreCase);
+            
+            if (_liveMethodTestMode)
+            {
+                _liveTestLogPath = Environment.GetEnvironmentVariable("PAICOM_LIVE_TEST_LOG");
+                LogEvent($"[livetest] Live method testing ENABLED");
+                if (!string.IsNullOrEmpty(_liveTestLogPath))
+                    LogEvent($"[livetest] Test log: {_liveTestLogPath}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get the category of a method for filtering in sequential testing.
+    /// </summary>
+    private static string GetMethodCategory(MethodInfo method)
+    {
+        var methodName = method.Name.ToLowerInvariant();
+        
+        if (methodName.Contains("paint") || methodName.Contains("render") || methodName.Contains("draw"))
+            return "render-methods";
+        if (methodName.Contains("audio") || methodName.Contains("sound"))
+            return "audio-methods";
+        if (methodName.Contains("animation"))
+            return "animation-methods";
+        if (methodName.Contains("click") || methodName.Contains("button"))
+            return "button-methods";
+        if (methodName.Contains("show") || methodName.Contains("hide") || methodName.Contains("visible"))
+            return "visibility-methods";
+        if (methodName.Contains("form") || methodName.Contains("window"))
+            return "form-methods";
+        if (methodName.Contains("text") || methodName.Contains("input") || methodName.Contains("textbox"))
+            return "input-methods";
+        if (methodName.Contains("event") || methodName.Contains("handler") && methodName.EndsWith("_"))
+            return "event-handlers";
+        
+        return "other-methods";
+    }
+
+    /// <summary>
+    /// Check if a method should be tested based on current category filter.
+    /// </summary>
+    private static bool ShouldTestMethod(MethodInfo method)
+    {
+        if (!_sequentialMethodTestMode || string.IsNullOrEmpty(_testCategoryFilter))
+            return true;
+        
+        var methodCategory = GetMethodCategory(method);
+        return methodCategory == _testCategoryFilter;
+    }
+
+    /// <summary>
+    /// Record a method test attempt for diagnostics.
+    /// </summary>
+    private static void RecordMethodTestAttempt(MethodInfo method, bool success, string detail = "")
+    {
+        lock (_methodTestLock)
+        {
+            if (!_sequentialMethodTestMode)
+                return;
+            
+            _testMethodCount++;
+            if (success)
+                _testMethodSuccessCount++;
+            else
+                _testMethodFailureCount++;
+            
+            var status = success ? "✓" : "✗";
+            var category = GetMethodCategory(method);
+            var sig = method.Name;
+            if (sig.Length > 40)
+                sig = sig.Substring(0, 37) + "...";
+            
+            LogEvent($"[methodtest] {status} [{category}] {method.DeclaringType?.Name}.{sig} {(success ? "SUCCESS" : "FAILED")}");
+            
+            if (!string.IsNullOrEmpty(detail))
+                LogEvent($"[methodtest] Detail: {detail}");
+        }
+
+        // Also log for live testing
+        RecordLiveTestAttempt(method, success, detail);
+    }
+
+    private static void RecordLiveTestAttempt(MethodInfo method, bool success, string detail = "")
+    {
+        lock (_liveTestLock)
+        {
+            if (!_liveMethodTestMode || string.IsNullOrEmpty(_liveTestLogPath))
+                return;
+            
+            var status = success ? "✓" : "✗";
+            var timestamp = DateTime.UtcNow.ToString("O");
+            var typeName = method.DeclaringType?.Name ?? "Unknown";
+            var methodName = method.Name;
+            
+            var logLine = $"[{timestamp}] {status} {typeName}.{methodName}";
+            if (!string.IsNullOrEmpty(detail))
+                logLine += $" - {detail}";
+            
+            logLine += "\n";
+            
+            try
+            {
+                // Append to live test log file (non-blocking, fire-and-forget)
+                System.IO.File.AppendAllText(_liveTestLogPath, logLine);
+            }
+            catch
+            {
+                // Silently ignore file write errors to avoid breaking real execution
             }
         }
     }
@@ -570,11 +1336,15 @@ public static class OpenWakeWordHelper
             var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "stable";
             var verifiedRuntime = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_VERIFIED_64BIT") ?? "unknown";
             var winePrefix = Environment.GetEnvironmentVariable("WINEPREFIX") ?? "<not-set>";
+            var runtimeDiagnosticMode = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_DIAGNOSTIC_MODE") ?? "<not-set>";
+            var runtimeDiagnosticDuration = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_DIAGNOSTIC_DURATION_SECONDS") ?? "<not-set>";
 
             LogEvent($"[startup-diag] process.bitness={processBitness}");
             LogEvent($"[startup-diag] migration.mode={migrationMode}");
             LogEvent($"[startup-diag] launcher.verified_64bit={verifiedRuntime}");
             LogEvent($"[startup-diag] wine.prefix={winePrefix}");
+            LogEvent($"[startup-diag] runtime.diagnostic.mode={runtimeDiagnosticMode}");
+            LogEvent($"[startup-diag] runtime.diagnostic.duration_seconds={runtimeDiagnosticDuration}");
             LogEvent($"[startup-diag] processor_count={Environment.ProcessorCount}");
 
             // Check for architecture mismatch conditions
@@ -807,6 +1577,8 @@ public static class OpenWakeWordHelper
         if (action == null)
             return null;
 
+        LogEvent($"[oww-command] Resolved action: MatchPhrase='{action.MatchPhrase}', Token='{action.CommandToken}', ScriptRef='{action.ScriptReference ?? "<null>"}'");
+
         if (!string.IsNullOrWhiteSpace(action.AssistantLine))
         {
             LogEvent($"[oww-command] Assistant line: {action.AssistantLine}");
@@ -815,6 +1587,35 @@ public static class OpenWakeWordHelper
         if (DispatchCommandAction(action, out var dispatchDetail))
         {
             LogEvent($"[oww-command] Dispatch succeeded: {dispatchDetail}");
+            LogEvent($"[oww-command] Command action: MatchPhrase='{action.MatchPhrase}', Token='{action.CommandToken}', ScriptRef='{action.ScriptReference ?? "<null>"}'");
+            
+            // Execute animation script if one is referenced
+            if (!string.IsNullOrWhiteSpace(action.ScriptReference))
+            {
+                LogEvent($"[oww-command] Queuing animation script execution: {action.ScriptReference}");
+                // Fire and forget on background thread
+                System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        ExecuteAnimationScriptAsync(action.ScriptReference).ContinueWith(task =>
+                        {
+                            if (task.IsFaulted)
+                            {
+                                LogEvent($"[oww-command] Animation script task faulted: {task.Exception?.InnerException?.Message}");
+                            }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        LogEvent($"[oww-command] Exception queueing animation script: {ex.GetType().Name}: {ex.Message}");
+                    }
+                }, null);
+            }
+            else
+            {
+                LogEvent($"[oww-command] No script reference set for this command");
+            }
         }
         else
         {
@@ -822,6 +1623,16 @@ public static class OpenWakeWordHelper
         }
 
         return action.AssistantLine;
+    }
+
+    /// <summary>
+    /// Test harness: Directly dispatch a command action without voice recognition.
+    /// For testing command handler discovery and invocation.
+    /// </summary>
+    internal static bool TestDispatchCommand(CommandAction action, out string detail)
+    {
+        LogEvent($"[oww-test] Dispatching test command: MatchPhrase='{action.MatchPhrase}', DispatchPhrase='{action.DispatchPhrase}'");
+        return DispatchCommandAction(action, out detail);
     }
 
     public static CommandAction? ResolveCommandAction(string? transcript)
@@ -879,6 +1690,34 @@ public static class OpenWakeWordHelper
         return ResolveCommandAction(transcript)?.AssistantLine;
     }
 
+    private static async System.Threading.Tasks.Task ExecuteAnimationScriptAsync(string scriptReference)
+    {
+        LogEvent($"[animation-script] ExecuteAnimationScriptAsync called with: {scriptReference}");
+        
+        var executor = GetAnimationScriptExecutor();
+        if (executor == null)
+        {
+            LogEvent("[animation-script-error] Animation script executor is null, cannot execute");
+            return;
+        }
+
+        try
+        {
+            LogEvent($"[animation-script] Starting async execution of {scriptReference}");
+            var (success, detail) = await executor.ExecuteScriptAsync(scriptReference);
+            LogEvent($"[animation-script] ExecuteScriptAsync returned: success={success}, detail={detail}");
+            
+            if (!success)
+            {
+                LogEvent($"[animation-script-error] Failed to execute {scriptReference}: {detail}");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogEvent($"[animation-script-error] Exception in ExecuteAnimationScriptAsync: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private static bool DispatchCommandAction(CommandAction action, out string detail)
     {
         foreach (var dispatcher in CommandDispatchers)
@@ -902,11 +1741,56 @@ public static class OpenWakeWordHelper
                 target = _cachedGameHandlerTarget;
                 method = _cachedGameHandlerMethod;
                 detail = $"Using cached handler {_cachedGameHandlerMethod.DeclaringType?.FullName}.{_cachedGameHandlerMethod.Name}.";
+                LogEvent($"[oww-handler-cache] {detail}");
                 return true;
             }
         }
 
-        var appType = Type.GetType("System.Windows.Forms.Application, System.Windows.Forms", throwOnError: false);
+        // Try Windows Forms first
+        if (TryGetGameCommandHandlerFromWinForms(out target, out method, out detail))
+        {
+            lock (_dispatcherLock)
+            {
+                _cachedGameHandlerTarget = target;
+                _cachedGameHandlerMethod = method;
+            }
+            return true;
+        }
+
+        LogEvent($"[oww-handler-discovery] Windows Forms path failed, trying assembly scan");
+
+        // Fallback: search all loaded assemblies for command handler methods
+        if (TryGetGameCommandHandlerFromAssemblies(out target, out method, out detail))
+        {
+            lock (_dispatcherLock)
+            {
+                _cachedGameHandlerTarget = target;
+                _cachedGameHandlerMethod = method;
+            }
+            return true;
+        }
+
+        target = null;
+        method = null;
+        detail = "No game command handler found in Windows Forms or assemblies.";
+        return false;
+    }
+
+    private static bool TryGetGameCommandHandlerFromWinForms(out object? target, out MethodInfo? method, out string detail)
+    {
+        var appType = Type.GetType("System.Windows.Forms.Application, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089", throwOnError: false);
+        if (appType == null)
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.GetName().Name == "System.Windows.Forms")
+                {
+                    appType = asm.GetType("System.Windows.Forms.Application");
+                    break;
+                }
+            }
+        }
+        
         if (appType == null)
         {
             target = null;
@@ -941,12 +1825,23 @@ public static class OpenWakeWordHelper
                         return false;
 
                     var parameters = m.GetParameters();
-                    return parameters.Length == 1 && parameters[0].ParameterType == typeof(string);
+                    if (parameters.Length != 1 || parameters[0].ParameterType != typeof(string))
+                        return false;
+
+                    // Apply category filter if sequential method testing is active
+                    if (_sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter))
+                    {
+                        var methodCategory = GetMethodCategory(m);
+                        return methodCategory == _testCategoryFilter;
+                    }
+
+                    return true;
                 });
 
             foreach (var candidate in candidates)
             {
                 var score = ScoreGameHandlerCandidate(candidate);
+                LogEvent($"[oww-handler-scan] Candidate: {candidate.Name}, Score: {score}");
                 if (score > bestScore)
                 {
                     bestScore = score;
@@ -956,24 +1851,461 @@ public static class OpenWakeWordHelper
             }
         }
 
-        if (bestTarget == null || bestMethod == null || bestScore < 10)
+        if (bestTarget == null || bestMethod == null || bestScore < 4)
         {
             target = null;
             method = null;
-            detail = "No high-confidence in-process command handler discovered.";
+            var filterInfo = _sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter)
+                ? $" [category filter active: {_testCategoryFilter}]"
+                : "";
+            detail = $"No high-confidence Windows Forms handler found (best score: {bestScore}){filterInfo}.";
             return false;
-        }
-
-        lock (_dispatcherLock)
-        {
-            _cachedGameHandlerTarget = bestTarget;
-            _cachedGameHandlerMethod = bestMethod;
         }
 
         target = bestTarget;
         method = bestMethod;
-        detail = $"Selected handler {bestMethod.DeclaringType?.FullName}.{bestMethod.Name} (score={bestScore}).";
+        detail = $"Selected Windows Forms handler {bestMethod.DeclaringType?.FullName}.{bestMethod.Name} (score={bestScore}).";
         return true;
+    }
+
+    private static bool TryGetGameCommandHandlerFromAssemblies(out object? target, out MethodInfo? method, out string detail)
+    {
+        target = null;
+        method = null;
+        var bestScore = int.MinValue;
+        MethodInfo? bestMethod = null;
+
+        try
+        {
+            var allAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+            LogEvent($"[oww-handler-discovery] Scanning {allAssemblies.Length} loaded assemblies");
+
+            // Also try the entry assembly (the main game exe)
+            var entryAsm = System.Reflection.Assembly.GetEntryAssembly();
+            if (entryAsm != null)
+            {
+                LogEvent($"[oww-handler-discovery] Will also scan entry assembly: {entryAsm.GetName().Name}");
+                // Add entry assembly to the list if not already there
+                var asmSet = new List<Assembly>(allAssemblies);
+                if (!asmSet.Any(a => a.FullName == entryAsm.FullName))
+                    asmSet.Add(entryAsm);
+                allAssemblies = asmSet.ToArray();
+            }
+
+            foreach (var asm in allAssemblies)
+            {
+                var asmName = asm.GetName().Name ?? "";
+                
+                // Skip framework assemblies (but not the game assembly)
+                if (asmName.StartsWith("System.") || asmName == "mscorlib" || asmName.StartsWith("MS.Internal") || 
+                    asmName.StartsWith("netstandard") || asmName.StartsWith("WindowsBase") || asmName == "PresentationCore")
+                {
+                    continue;
+                }
+
+                // Skip our own patcher
+                if (asmName.StartsWith("CrossPlatformPatcher"))
+                {
+                    continue;
+                }
+
+                LogEvent($"[oww-handler-discovery] Scanning assembly: {asmName}");
+
+                try
+                {
+                    Type[] types = null;
+                    try
+                    {
+                        types = asm.GetTypes();
+                    }
+                    catch (ReflectionTypeLoadException ex)
+                    {
+                        LogEvent($"[oww-handler-discovery]   (Partial load) Warning: {ex.Types?.Length ?? 0} types, {ex.LoaderExceptions?.Length ?? 0} loader errors");
+                        types = ex.Types.Where(t => t != null).ToArray();
+                    }
+
+                    LogEvent($"[oww-handler-discovery]   Found {types?.Length ?? 0} types in {asmName}");
+                    
+                    if (types != null)
+                    {
+                        foreach (var type in types)
+                        {
+                            if (type == null)
+                                continue;
+
+                            // Skip internal/compiler-generated types
+                            if (type.Name.StartsWith("<"))
+                                continue;
+                            
+                            // Check if type has CompilerGeneratedAttribute
+                            var hasCompilerGenerated = type.GetCustomAttributes(typeof(CompilerGeneratedAttribute), false).Length > 0;
+                            if (hasCompilerGenerated)
+                                continue;
+
+                            var methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                            foreach (var candidate in methods)
+                            {
+                                if (candidate.IsSpecialName)
+                                    continue;
+
+                                var parameters = candidate.GetParameters();
+                                if (parameters.Length != 1 || parameters[0].ParameterType != typeof(string))
+                                    continue;
+
+                                // Apply category filter if sequential method testing is active
+                                if (_sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter))
+                                {
+                                    var methodCategory = GetMethodCategory(candidate);
+                                    if (methodCategory != _testCategoryFilter)
+                                        continue;  // Skip methods that don't match the target category
+                                }
+
+                                var score = ScoreGameHandlerCandidate(candidate);
+                                if (score > bestScore)
+                                {
+                                    bestScore = score;
+                                    bestMethod = candidate;
+                                    var categoryInfo = _sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter)
+                                        ? $" [{GetMethodCategory(candidate)}]"
+                                        : "";
+                                    LogEvent($"[oww-handler-discovery] Better candidate found: {type.FullName}.{candidate.Name}{categoryInfo} (score={score})");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogEvent($"[oww-handler-discovery] Error scanning {asmName}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            detail = $"Error during assembly scan: {ex.Message}";
+            LogEvent($"[oww-handler-discovery] {detail}");
+            return false;
+        }
+
+        if (bestMethod == null || bestScore < 4)
+        {
+            var filterInfo = _sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter)
+                ? $" [category filter active: {_testCategoryFilter}]"
+                : "";
+            detail = $"No high-confidence handler found in assemblies (best score: {bestScore}){filterInfo}.";
+            return false;
+        }
+
+        target = null;
+        if (!bestMethod.IsStatic)
+        {
+            if (!TryFindTargetInstance(bestMethod.DeclaringType, out target))
+            {
+                detail = $"Selected assembly handler {bestMethod.DeclaringType?.FullName}.{bestMethod.Name} (score={bestScore}) but no compatible target instance was found.";
+                method = null;
+                return false;
+            }
+        }
+
+        method = bestMethod;
+        detail = $"Selected assembly handler {bestMethod.DeclaringType?.FullName}.{bestMethod.Name} (score={bestScore}).";
+        return true;
+    }
+
+    private static bool TryGetAnimationHandler(out object? target, out MethodInfo? method, out string detail)
+    {
+        lock (_dispatcherLock)
+        {
+            if (_cachedAnimationHandlerMethod != null)
+            {
+                target = _cachedAnimationHandlerTarget;
+                method = _cachedAnimationHandlerMethod;
+                detail = $"Using cached animation handler {_cachedAnimationHandlerMethod.DeclaringType?.FullName}.{_cachedAnimationHandlerMethod.Name}.";
+                return true;
+            }
+        }
+
+        if (TryGetAnimationHandlerFromWinForms(out target, out method, out detail) ||
+            TryGetAnimationHandlerFromAssemblies(out target, out method, out detail))
+        {
+            lock (_dispatcherLock)
+            {
+                _cachedAnimationHandlerTarget = target;
+                _cachedAnimationHandlerMethod = method;
+            }
+
+            return true;
+        }
+
+        target = null;
+        method = null;
+        return false;
+    }
+
+    private static bool TryGetAnimationHandlerFromWinForms(out object? target, out MethodInfo? method, out string detail)
+    {
+        target = null;
+        method = null;
+
+        var rawCandidates = GetOpenFormsSnapshot()
+            .SelectMany(form => form.GetType()
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m =>
+                {
+                    if (m.IsSpecialName)
+                        return false;
+
+                    var parameters = m.GetParameters();
+                    if (parameters.Length != 1 || parameters[0].ParameterType != typeof(string))
+                        return false;
+
+                    // Apply category filter if sequential method testing is active
+                    if (_sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter))
+                    {
+                        var methodCategory = GetMethodCategory(m);
+                        return methodCategory == _testCategoryFilter;
+                    }
+
+                    return true;
+                })
+                .Select(m => new ScoredMethodCandidate(form, m, score: 0)));
+
+        var best = FindBestScoredMethodCandidate(
+            rawCandidates,
+            candidate => ScoreAnimationHandlerCandidate(candidate.Method),
+            "oww-animation-discovery",
+            "winforms");
+
+        if (best == null || best.Score < 8)
+        {
+            var bestScore = best?.Score ?? int.MinValue;
+            var filterInfo = _sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter)
+                ? $" [category filter active: {_testCategoryFilter}]"
+                : "";
+            detail = $"No high-confidence WinForms animation handler found (best score: {bestScore}){filterInfo}.";
+            target = null;
+            method = null;
+            return false;
+        }
+
+        target = best.Target;
+        method = best.Method;
+        detail = $"Selected WinForms animation handler {method.DeclaringType?.FullName}.{method.Name} (score={best.Score}).";
+        return true;
+    }
+
+    private static bool TryGetAnimationHandlerFromAssemblies(out object? target, out MethodInfo? method, out string detail)
+    {
+        target = null;
+        method = null;
+        var candidates = new List<ScoredMethodCandidate>();
+
+        foreach (var asm in GetCandidateAssembliesForDiscovery())
+        {
+            var asmName = asm.GetName().Name ?? string.Empty;
+            try
+            {
+                Type[] types;
+                try
+                {
+                    types = asm.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(t => t != null).ToArray()!;
+                }
+
+                foreach (var type in types)
+                {
+                    if (type == null || type.Name.StartsWith("<", StringComparison.Ordinal))
+                        continue;
+
+                    var hasCompilerGenerated = type.GetCustomAttributes(typeof(CompilerGeneratedAttribute), false).Length > 0;
+                    if (hasCompilerGenerated)
+                        continue;
+
+                    var methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                    foreach (var candidate in methods)
+                    {
+                        if (candidate.IsSpecialName)
+                            continue;
+
+                        var parameters = candidate.GetParameters();
+                        if (parameters.Length != 1 || parameters[0].ParameterType != typeof(string))
+                            continue;
+
+                        // Apply category filter if sequential method testing is active
+                        if (_sequentialMethodTestMode && !string.IsNullOrEmpty(_testCategoryFilter))
+                        {
+                            var methodCategory = GetMethodCategory(candidate);
+                            if (methodCategory != _testCategoryFilter)
+                                continue;  // Skip methods that don't match the target category
+                        }
+
+                        candidates.Add(new ScoredMethodCandidate(target: null, candidate, score: 0));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent($"[oww-animation-discovery] Error scanning {asmName}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        var best = FindBestScoredMethodCandidate(
+            candidates,
+            candidate => ScoreAnimationHandlerCandidate(candidate.Method),
+            "oww-animation-discovery",
+            "assembly");
+
+        if (best == null || best.Score < 10)
+        {
+            var bestScore = best?.Score ?? int.MinValue;
+            detail = $"No high-confidence animation handler found in assemblies (best score: {bestScore}).";
+            return false;
+        }
+
+        method = best.Method;
+
+        if (!method.IsStatic && !TryFindTargetInstance(method.DeclaringType, out target))
+        {
+            detail = $"Selected animation handler {method.DeclaringType?.FullName}.{method.Name} (score={best.Score}) but no compatible target instance was found.";
+            method = null;
+            return false;
+        }
+
+        detail = $"Selected assembly animation handler {method.DeclaringType?.FullName}.{method.Name} (score={best.Score}).";
+        return true;
+    }
+
+    private static ScoredMethodCandidate? FindBestScoredMethodCandidate(
+        IEnumerable<ScoredMethodCandidate> candidates,
+        Func<ScoredMethodCandidate, int> scoreSelector,
+        string logPrefix,
+        string sourceLabel)
+    {
+        var scored = new List<ScoredMethodCandidate>();
+
+        foreach (var candidate in candidates)
+        {
+            var score = scoreSelector(candidate);
+            scored.Add(new ScoredMethodCandidate(candidate.Target, candidate.Method, score));
+        }
+
+        if (scored.Count == 0)
+        {
+            LogEvent($"[{logPrefix}] No candidate methods found from {sourceLabel} source.");
+            return null;
+        }
+
+        var ranked = scored
+            .OrderByDescending(c => c.Score)
+            .ThenBy(c => c.Method.DeclaringType?.FullName, StringComparer.Ordinal)
+            .ThenBy(c => c.Method.Name, StringComparer.Ordinal)
+            .ToArray();
+
+        LogEvent($"[{logPrefix}] Scored {ranked.Length} candidates from {sourceLabel} source.");
+
+        foreach (var top in ranked.Take(10))
+        {
+            LogEvent($"[{logPrefix}] Candidate: {top.Method.DeclaringType?.FullName}.{top.Method.Name} (score={top.Score})");
+        }
+
+        return ranked[0];
+    }
+
+    private static Assembly[] GetCandidateAssembliesForDiscovery()
+    {
+        var allAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+        var entryAsm = Assembly.GetEntryAssembly();
+        if (entryAsm == null)
+            return allAssemblies;
+
+        var asmSet = new List<Assembly>(allAssemblies);
+        if (!asmSet.Any(a => a.FullName == entryAsm.FullName))
+            asmSet.Add(entryAsm);
+
+        return asmSet
+            .Where(asm =>
+            {
+                var name = asm.GetName().Name ?? string.Empty;
+                if (name.StartsWith("System.", StringComparison.Ordinal) ||
+                    name == "mscorlib" ||
+                    name.StartsWith("MS.Internal", StringComparison.Ordinal) ||
+                    name.StartsWith("netstandard", StringComparison.Ordinal) ||
+                    name.StartsWith("WindowsBase", StringComparison.Ordinal) ||
+                    name == "PresentationCore")
+                {
+                    return false;
+                }
+
+                return !name.StartsWith("CrossPlatformPatcher", StringComparison.Ordinal);
+            })
+            .ToArray();
+    }
+
+    private static bool TryFindTargetInstance(Type? declaringType, out object? target)
+    {
+        target = null;
+        if (declaringType == null)
+            return false;
+
+        foreach (var form in GetOpenFormsSnapshot())
+        {
+            if (declaringType.IsInstanceOfType(form))
+            {
+                target = form;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static object[] GetOpenFormsSnapshot()
+    {
+        try
+        {
+            var appType = Type.GetType("System.Windows.Forms.Application, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089", throwOnError: false);
+            if (appType == null)
+            {
+                appType = AppDomain.CurrentDomain
+                    .GetAssemblies()
+                    .Where(a => string.Equals(a.GetName().Name, "System.Windows.Forms", StringComparison.Ordinal))
+                    .Select(a => a.GetType("System.Windows.Forms.Application"))
+                    .FirstOrDefault(t => t != null);
+            }
+
+            if (appType == null)
+                return Array.Empty<object>();
+
+            var openFormsProperty = appType.GetProperty("OpenForms", BindingFlags.Public | BindingFlags.Static);
+            var openForms = openFormsProperty?.GetValue(null) as IEnumerable;
+            if (openForms == null)
+                return Array.Empty<object>();
+
+            return openForms.Cast<object>().Where(f => f != null).ToArray();
+        }
+        catch
+        {
+            return Array.Empty<object>();
+        }
+    }
+
+    private static string[] BuildAnimationDispatchArguments(CommandAction action)
+    {
+        var token = action.CommandToken?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(token))
+            return new[] { action.DispatchPhrase };
+
+        return new[]
+        {
+            $"animations/{token}.txt",
+            $"custom-commands/{token}.txt",
+            $"{token}.txt",
+            token,
+            action.DispatchPhrase
+        };
     }
 
     private static int ScoreGameHandlerCandidate(MethodInfo method)
@@ -994,13 +2326,67 @@ public static class OpenWakeWordHelper
 
         try
         {
-            var ilSize = method.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0;
-            if (ilSize >= 32 && ilSize <= 4096)
+            var methodBody = method.GetMethodBody();
+            var ilSize = methodBody?.GetILAsByteArray()?.Length ?? 0;
+            if (ilSize >= 64 && ilSize <= 16384)
+                score += 8;
+            else if (ilSize >= 32)
                 score += 4;
+
+            var locals = methodBody?.LocalVariables.Count ?? 0;
+            if (locals >= 2)
+                score += 2;
+            if (locals >= 8)
+                score += 2;
+
+            var handlerCount = methodBody?.ExceptionHandlingClauses.Count ?? 0;
+            if (handlerCount > 0)
+                score += 1;
+
+            if (!method.IsStatic && method.DeclaringType != null)
+            {
+                if (method.DeclaringType.Name.IndexOf("Form", StringComparison.OrdinalIgnoreCase) >= 0)
+                    score += 4;
+                if (method.DeclaringType.Name.IndexOf("Main", StringComparison.OrdinalIgnoreCase) >= 0)
+                    score += 2;
+            }
         }
         catch
         {
             // Reflection can throw for dynamic/protected methods; keep score as-is.
+        }
+
+        return score;
+    }
+
+    private static int ScoreAnimationHandlerCandidate(MethodInfo method)
+    {
+        var score = ScoreGameHandlerCandidate(method);
+
+        var name = method.Name;
+        if (name.IndexOf("anim", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 12;
+        if (name.IndexOf("show", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 6;
+        if (name.IndexOf("hide", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 6;
+        if (name.IndexOf("react", StringComparison.OrdinalIgnoreCase) >= 0)
+            score += 5;
+
+        try
+        {
+            var methodBody = method.GetMethodBody();
+            var ilSize = methodBody?.GetILAsByteArray()?.Length ?? 0;
+            if (ilSize >= 256)
+                score += 6;
+            if (ilSize >= 1024)
+                score += 4;
+            if (ilSize >= 4096)
+                score += 2;
+        }
+        catch
+        {
+            // Keep score as-is if IL introspection fails.
         }
 
         return score;
@@ -1024,7 +2410,408 @@ public static class OpenWakeWordHelper
         Action invokeAction = () => method.Invoke(target, new object[] { phrase });
         beginInvoke.Invoke(target, new object[] { invokeAction });
         detail = $"Queued '{phrase}' via UI dispatcher {method.Name}.";
+        
+        // Log method test result if testing is enabled
+        if (_sequentialMethodTestMode && ShouldTestMethod(method))
+        {
+            RecordMethodTestAttempt(method, true, detail);
+        }
+        
         return true;
+    }
+
+    private static bool TryDispatchViaSpeechEmulation(string phrase, out string detail)
+    {
+        foreach (var form in GetOpenFormsSnapshot())
+        {
+            if (TryInvokeSpeechEngineOnObjectGraph(form, phrase, out detail))
+                return true;
+        }
+
+        detail = "No compatible speech engine instance found for emulation.";
+        return false;
+    }
+
+    private static bool TryDispatchViaUiSimulation(string phrase, out string detail)
+    {
+        foreach (var form in GetOpenFormsSnapshot())
+        {
+            if (TrySimulateTextAndClick(form, phrase, out detail))
+                return true;
+        }
+
+        detail = "No suitable text input/button path found for UI simulation.";
+        return false;
+    }
+
+    private static bool TryInvokeSpeechEngineOnObjectGraph(object root, string phrase, out string detail)
+    {
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<object>();
+        queue.Enqueue(root);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current == null || !visited.Add(current))
+                continue;
+
+            if (TryInvokeSpeechEngine(current, phrase, out detail))
+                return true;
+
+            foreach (var next in EnumerateChildObjects(current))
+            {
+                if (next != null)
+                    queue.Enqueue(next);
+            }
+        }
+
+        detail = "No speech engine object exposing EmulateRecognize* methods was found.";
+        return false;
+    }
+
+    private static bool TryInvokeSpeechEngine(object candidate, string phrase, out string detail)
+    {
+        var methods = candidate.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        var emulateAsync = methods.FirstOrDefault(m =>
+            string.Equals(m.Name, "EmulateRecognizeAsync", StringComparison.Ordinal) &&
+            m.GetParameters().Length == 1 &&
+            m.GetParameters()[0].ParameterType == typeof(string));
+
+        var emulateSync = methods.FirstOrDefault(m =>
+            string.Equals(m.Name, "EmulateRecognize", StringComparison.Ordinal) &&
+            m.GetParameters().Length == 1 &&
+            m.GetParameters()[0].ParameterType == typeof(string));
+
+        if (emulateAsync == null && emulateSync == null)
+        {
+            detail = "EmulateRecognize* methods were not found on candidate object.";
+            return false;
+        }
+
+        try
+        {
+            TryInvokeIfExists(candidate, "RecognizeAsyncCancel");
+            TryInvokeIfExists(candidate, "RecognizeAsyncStop");
+
+            if (emulateAsync != null)
+            {
+                emulateAsync.Invoke(candidate, new object[] { phrase });
+                TryInvokeIfExists(candidate, "RecognizeAsync");
+                detail = $"Speech emulation dispatched via {candidate.GetType().FullName}.EmulateRecognizeAsync(\"{phrase}\").";
+                return true;
+            }
+
+            emulateSync!.Invoke(candidate, new object[] { phrase });
+            TryInvokeIfExists(candidate, "RecognizeAsync");
+            detail = $"Speech emulation dispatched via {candidate.GetType().FullName}.EmulateRecognize(\"{phrase}\").";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            detail = $"Speech emulation failed on {candidate.GetType().FullName}: {ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static bool TrySimulateTextAndClick(object form, string phrase, out string detail)
+    {
+        var controlTree = EnumerateControlTree(form);
+        var controls = controlTree?.ToArray() ?? Array.Empty<object>();
+        if (controls.Length == 0)
+        {
+            detail = "No WinForms controls discovered for simulation.";
+            return false;
+        }
+
+        var textCandidates = controls.Where(IsTextInputControl).ToArray();
+        if (textCandidates.Length == 0)
+        {
+            detail = "No writable text-input controls found.";
+            return false;
+        }
+
+        var textControl = textCandidates
+            .OrderByDescending(ScoreInputControl)
+            .First();
+
+        if (!TrySetControlText(textControl, phrase, out detail))
+            return false;
+
+        var button = controls
+            .Where(IsClickableButtonControl)
+            .OrderByDescending(ScoreButtonControl)
+            .FirstOrDefault();
+
+        if (button != null && TryPerformClick(button, out detail))
+        {
+            detail = $"UI simulation dispatched phrase via {textControl.GetType().FullName} + {button.GetType().FullName}.";
+            return true;
+        }
+
+        if (TryRaiseEnterOnControl(textControl, out detail))
+        {
+            detail = $"UI simulation dispatched phrase via Enter key on {textControl.GetType().FullName}.";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<object> EnumerateControlTree(object root)
+    {
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<object>();
+        queue.Enqueue(root);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current == null || !visited.Add(current))
+                continue;
+
+            yield return current;
+
+            foreach (var child in EnumerateChildControls(current))
+                queue.Enqueue(child);
+        }
+    }
+
+    private static IEnumerable<object> EnumerateChildControls(object candidate)
+    {
+        var controlsProperty = candidate.GetType().GetProperty("Controls", BindingFlags.Instance | BindingFlags.Public);
+        if (controlsProperty?.GetValue(candidate) is not IEnumerable controls)
+            yield break;
+
+        foreach (var control in controls)
+        {
+            if (control != null)
+                yield return control;
+        }
+    }
+
+    private static IEnumerable<object> EnumerateChildObjects(object candidate)
+    {
+        foreach (var control in EnumerateChildControls(candidate))
+            yield return control;
+
+        var fields = candidate.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        foreach (var field in fields)
+        {
+            if (field.FieldType.IsPrimitive || field.FieldType == typeof(string))
+                continue;
+
+            object? value;
+            try
+            {
+                value = field.GetValue(candidate);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (value != null)
+                yield return value;
+        }
+    }
+
+    private static bool IsTextInputControl(object control)
+    {
+        var type = control.GetType();
+        var textProperty = type.GetProperty("Text", BindingFlags.Instance | BindingFlags.Public);
+        if (textProperty == null || !textProperty.CanWrite || textProperty.PropertyType != typeof(string))
+            return false;
+
+        var typeName = type.Name;
+        if (typeName.IndexOf("TextBox", StringComparison.OrdinalIgnoreCase) >= 0)
+            return true;
+
+        if (typeName.IndexOf("RichTextBox", StringComparison.OrdinalIgnoreCase) >= 0)
+            return true;
+
+        var readOnlyProperty = type.GetProperty("ReadOnly", BindingFlags.Instance | BindingFlags.Public);
+        if (readOnlyProperty?.PropertyType == typeof(bool) && readOnlyProperty.GetValue(control) is bool isReadOnly && isReadOnly)
+            return false;
+
+        return typeName.IndexOf("Input", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static int ScoreInputControl(object control)
+    {
+        var score = 0;
+        if (TryGetStringProperty(control, "Name", out var name))
+        {
+            if (name.IndexOf("command", StringComparison.OrdinalIgnoreCase) >= 0) score += 8;
+            if (name.IndexOf("input", StringComparison.OrdinalIgnoreCase) >= 0) score += 6;
+            if (name.IndexOf("text", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+        }
+
+        if (TryGetStringProperty(control, "PlaceholderText", out var placeholder))
+        {
+            if (placeholder.IndexOf("command", StringComparison.OrdinalIgnoreCase) >= 0) score += 6;
+            if (placeholder.IndexOf("say", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+        }
+
+        return score;
+    }
+
+    private static bool IsClickableButtonControl(object control)
+    {
+        var type = control.GetType();
+        if (type.Name.IndexOf("Button", StringComparison.OrdinalIgnoreCase) >= 0)
+            return true;
+
+        return type.GetMethod("PerformClick", BindingFlags.Instance | BindingFlags.Public) != null;
+    }
+
+    private static int ScoreButtonControl(object control)
+    {
+        var score = 0;
+        if (TryGetStringProperty(control, "Name", out var name))
+        {
+            if (name.IndexOf("send", StringComparison.OrdinalIgnoreCase) >= 0) score += 8;
+            if (name.IndexOf("submit", StringComparison.OrdinalIgnoreCase) >= 0) score += 8;
+            if (name.IndexOf("command", StringComparison.OrdinalIgnoreCase) >= 0) score += 6;
+            if (name.IndexOf("enter", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+            if (name.IndexOf("button", StringComparison.OrdinalIgnoreCase) >= 0) score += 2;
+        }
+
+        if (TryGetStringProperty(control, "Text", out var text))
+        {
+            if (text.IndexOf("send", StringComparison.OrdinalIgnoreCase) >= 0) score += 8;
+            if (text.IndexOf("ok", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+            if (text.IndexOf("run", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+            if (text.IndexOf("enter", StringComparison.OrdinalIgnoreCase) >= 0) score += 4;
+        }
+
+        return score;
+    }
+
+    private static bool TrySetControlText(object control, string text, out string detail)
+    {
+        try
+        {
+            var textProperty = control.GetType().GetProperty("Text", BindingFlags.Instance | BindingFlags.Public);
+            if (textProperty == null || !textProperty.CanWrite)
+            {
+                detail = "Candidate text control does not expose writable Text property.";
+                return false;
+            }
+
+            textProperty.SetValue(control, text);
+            detail = $"Set UI text on {control.GetType().FullName}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            detail = $"Setting UI text failed: {ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static bool TryPerformClick(object control, out string detail)
+    {
+        try
+        {
+            var performClick = control.GetType().GetMethod("PerformClick", BindingFlags.Instance | BindingFlags.Public);
+            if (performClick == null)
+            {
+                detail = "PerformClick is unavailable on selected control.";
+                return false;
+            }
+
+            performClick.Invoke(control, Array.Empty<object>());
+            detail = $"Performed click on {control.GetType().FullName}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            detail = $"PerformClick failed: {ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static bool TryRaiseEnterOnControl(object control, out string detail)
+    {
+        try
+        {
+            var focusMethod = control.GetType().GetMethod("Focus", BindingFlags.Instance | BindingFlags.Public);
+            focusMethod?.Invoke(control, Array.Empty<object>());
+
+            var keyEventArgsType = Type.GetType("System.Windows.Forms.KeyEventArgs, System.Windows.Forms", throwOnError: false);
+            var keysType = Type.GetType("System.Windows.Forms.Keys, System.Windows.Forms", throwOnError: false);
+            if (keyEventArgsType == null || keysType == null)
+            {
+                detail = "System.Windows.Forms KeyEventArgs/Keys unavailable for Enter simulation.";
+                return false;
+            }
+
+            var enterValue = Enum.Parse(keysType, "Enter", ignoreCase: true);
+            var ctor = keyEventArgsType.GetConstructor(new[] { typeof(int) });
+            if (ctor == null)
+            {
+                detail = "KeyEventArgs constructor not found.";
+                return false;
+            }
+
+            var args = ctor.Invoke(new object[] { (int)enterValue });
+            var onKeyDown = control.GetType().GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (onKeyDown == null)
+            {
+                detail = "OnKeyDown not available for Enter simulation.";
+                return false;
+            }
+
+            onKeyDown.Invoke(control, new[] { args });
+            detail = $"Raised Enter key on {control.GetType().FullName}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            detail = $"Enter key simulation failed: {ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static bool TryGetStringProperty(object target, string propertyName, out string value)
+    {
+        value = string.Empty;
+        try
+        {
+            var property = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+            if (property?.PropertyType != typeof(string))
+                return false;
+
+            value = property.GetValue(target) as string ?? string.Empty;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryInvokeIfExists(object target, string methodName)
+    {
+        try
+        {
+            var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            method?.Invoke(target, Array.Empty<object>());
+        }
+        catch
+        {
+            // Best-effort compatibility call.
+        }
+    }
+
+    private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
+    {
+        public static ReferenceEqualityComparer Instance { get; } = new();
+
+        public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
     }
 
     private static IReadOnlyList<CommandManifestEntry> LoadKnownCommands()
@@ -1033,9 +2820,7 @@ public static class OpenWakeWordHelper
         if (manifestPath == null)
         {
             LogEvent("[oww-command] Command manifest not found; fuzzy matching limited to built-in responses.");
-            return CommandResponses.Keys
-                .Select(responseKey => new CommandManifestEntry(responseKey, responseKey, responseKey, null))
-                .ToArray();
+            return CreateFallbackCommandManifest();
         }
 
         try
@@ -1054,15 +2839,21 @@ public static class OpenWakeWordHelper
             }
 
             LogEvent($"[oww-command] Loaded {commandsByPhrase.Count} commands from {manifestPath}");
+            EnsureRuntimeDiagnosticStarted($"commands-loaded:{commandsByPhrase.Count}");
             return commandsByPhrase.Values.ToArray();
         }
         catch (Exception ex)
         {
-            LogEvent($"[oww-command] Failed to load command manifest '{manifestPath}': {ex.GetType().Name}: {ex.Message}");
-            return CommandResponses.Keys
-                .Select(responseKey => new CommandManifestEntry(responseKey, responseKey, responseKey, null))
-                .ToArray();
+            LogEvent($"[oww-command] Failed to load command manifest '{manifestPath}': {ex}");
+            return CreateFallbackCommandManifest();
         }
+    }
+
+    private static IReadOnlyList<CommandManifestEntry> CreateFallbackCommandManifest()
+    {
+        return CommandResponses.Keys
+            .Select(responseKey => new CommandManifestEntry(responseKey, responseKey, responseKey, null))
+            .ToArray();
     }
 
     private static CommandManifestEntry? ParseCommandLine(string? line)
@@ -1278,12 +3069,426 @@ public static class OpenWakeWordHelper
         }
     }
 
+    private static void EnsureRuntimeDiagnosticStarted(string trigger)
+    {
+        if (!IsRuntimeDiagnosticEnabled())
+            return;
+
+        lock (_runtimeDiagnosticLock)
+        {
+            if (_runtimeDiagnosticStarted)
+                return;
+
+            _runtimeDiagnosticStarted = true;
+            _runtimeDiagnosticCompleted = false;
+            _runtimeDiagnosticStartedUtc = DateTime.UtcNow;
+            _runtimeDiagnosticLastRawFlushUtc = DateTime.MinValue;
+            _runtimeDiagnosticLastSummaryWriteUtc = DateTime.MinValue;
+            _runtimeDiagnosticPendingLines.Clear();
+            _runtimeDiagnosticSeenEntries.Clear();
+            _runtimeDiagnosticScannedTypes.Clear();
+            _runtimeDiagnosticCategoryCounts.Clear();
+            _runtimeDiagnosticLikelyScores.Clear();
+
+            var root = ResolveCommandRootDirectory() ?? AppDomain.CurrentDomain.BaseDirectory;
+            var dir = Path.Combine(root, "diagnostics");
+            Directory.CreateDirectory(dir);
+
+            var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            _runtimeDiagnosticRawPath = Path.Combine(dir, $"runtime-diagnostics-raw-{stamp}.log");
+            _runtimeDiagnosticSummaryPath = Path.Combine(dir, $"runtime-diagnostics-summary-{stamp}.log");
+
+            File.WriteAllText(_runtimeDiagnosticRawPath, $"# Runtime diagnostics raw log\n# start={DateTime.UtcNow:O}\n# trigger={trigger}\n");
+            File.WriteAllText(_runtimeDiagnosticSummaryPath, $"# Runtime diagnostics summary\n# start={DateTime.UtcNow:O}\n# trigger={trigger}\n");
+        }
+
+        LogEvent($"[oww-runtime-diag] Diagnostic mode enabled. Raw log: {_runtimeDiagnosticRawPath}");
+        LogEvent($"[oww-runtime-diag] Summary log: {_runtimeDiagnosticSummaryPath}");
+
+        _ = System.Threading.Tasks.Task.Run(RunRuntimeDiagnosticSnapshotLoop);
+    }
+
+    private static bool IsRuntimeDiagnosticEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_DIAGNOSTIC_MODE");
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetRuntimeDiagnosticDurationSeconds()
+    {
+        var value = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_DIAGNOSTIC_DURATION_SECONDS");
+        if (int.TryParse(value, out var seconds) && seconds > 0)
+            return Math.Min(seconds, 1800);
+
+        return 180;
+    }
+
+    private static void RunRuntimeDiagnosticSnapshotLoop()
+    {
+        try
+        {
+            var duration = TimeSpan.FromSeconds(GetRuntimeDiagnosticDurationSeconds());
+            var stopAt = DateTime.UtcNow.Add(duration);
+            var iteration = 0;
+
+            while (DateTime.UtcNow < stopAt)
+            {
+                iteration++;
+                CollectRuntimeDiagnosticSnapshot(iteration);
+                FlushRuntimeDiagnosticRaw(force: false);
+                WriteRuntimeDiagnosticSummary(force: false);
+                System.Threading.Thread.Sleep(RuntimeDiagnosticSnapshotIntervalMs);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogEvent($"[oww-runtime-diag] Snapshot loop failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            FlushRuntimeDiagnosticRaw(force: true);
+            WriteRuntimeDiagnosticSummary(force: true);
+            LogRuntimeDiagnosticCompletionNotice();
+        }
+    }
+
+    private static void CollectRuntimeDiagnosticSnapshot(int iteration)
+    {
+        var forms = GetOpenFormsSnapshot();
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+        QueueRuntimeDiagnosticLine("snapshot", $"iteration:{iteration}", $"forms={forms.Length};assemblies={assemblies.Length}");
+
+        foreach (var asm in assemblies)
+        {
+            var name = asm.GetName().Name ?? "<unknown>";
+            QueueRuntimeDiagnosticLine("assembly", name, asm.FullName ?? string.Empty);
+        }
+
+        foreach (var form in forms)
+        {
+            QueueRuntimeDiagnosticObjectGraph(form);
+
+            foreach (var control in EnumerateControlTree(form).Take(800))
+            {
+                var controlType = control.GetType();
+                QueueRuntimeDiagnosticLine("control-type", controlType.FullName ?? controlType.Name, string.Empty);
+
+                var controlKey = $"{controlType.FullName ?? controlType.Name}#{RuntimeHelpers.GetHashCode(control)}";
+                var controlName = TryGetStringProperty(control, "Name", out var name) ? name : string.Empty;
+                var controlText = TryGetStringProperty(control, "Text", out var text) ? text : string.Empty;
+                var visible = TryGetBoolProperty(control, "Visible", out var isVisible) ? isVisible.ToString() : "?";
+                var enabled = TryGetBoolProperty(control, "Enabled", out var isEnabled) ? isEnabled.ToString() : "?";
+
+                QueueRuntimeDiagnosticLine(
+                    "control",
+                    controlKey,
+                    $"name='{TrimDiagnosticText(controlName)}';text='{TrimDiagnosticText(controlText)}';visible={visible};enabled={enabled}");
+
+                QueueRuntimeDiagnosticTypeMethods(controlType);
+                QueueRuntimeDiagnosticFields(control);
+            }
+        }
+    }
+
+    private static void QueueRuntimeDiagnosticObjectGraph(object root)
+    {
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<object>();
+        queue.Enqueue(root);
+        var nodes = 0;
+
+        while (queue.Count > 0 && nodes < 1000)
+        {
+            var current = queue.Dequeue();
+            if (current == null || !visited.Add(current))
+                continue;
+
+            nodes++;
+            var type = current.GetType();
+            var key = $"{type.FullName ?? type.Name}#{RuntimeHelpers.GetHashCode(current)}";
+            QueueRuntimeDiagnosticLine("object", key, string.Empty);
+            QueueRuntimeDiagnosticLine("object-type", type.FullName ?? type.Name, string.Empty);
+
+            QueueRuntimeDiagnosticTypeMethods(type);
+            QueueRuntimeDiagnosticFields(current);
+
+            foreach (var child in EnumerateChildObjects(current).Take(48))
+            {
+                if (child != null)
+                    queue.Enqueue(child);
+            }
+        }
+    }
+
+    private static void QueueRuntimeDiagnosticTypeMethods(Type type)
+    {
+        var typeName = type.FullName ?? type.Name;
+        if (!_runtimeDiagnosticScannedTypes.Add(typeName))
+            return;
+
+        MethodInfo[] methods;
+        try
+        {
+            methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var method in methods.Take(600))
+        {
+            var parameters = method.GetParameters();
+            var signature = string.Join(",", parameters.Select(p => p.ParameterType.Name));
+            var methodKey = $"{typeName}.{method.Name}";
+            QueueRuntimeDiagnosticLine("method", methodKey, $"returns={method.ReturnType.Name};params=({signature});static={method.IsStatic}");
+        }
+    }
+
+    private static void QueueRuntimeDiagnosticFields(object target)
+    {
+        FieldInfo[] fields;
+        try
+        {
+            fields = target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var field in fields.Take(120))
+        {
+            var fieldKey = $"{target.GetType().FullName}.{field.Name}";
+            var detail = $"fieldType={field.FieldType.FullName ?? field.FieldType.Name}";
+
+            try
+            {
+                var value = field.GetValue(target);
+                if (value != null)
+                {
+                    detail += $";valueType={value.GetType().FullName ?? value.GetType().Name}";
+                }
+            }
+            catch
+            {
+                // Ignore field read failures in diagnostics.
+            }
+
+            QueueRuntimeDiagnosticLine("field", fieldKey, detail);
+        }
+    }
+
+    private static void QueueRuntimeDiagnosticLine(string category, string key, string detail)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return;
+
+        var entry = $"{category}|{key}|{detail}";
+        lock (_runtimeDiagnosticLock)
+        {
+            if (!_runtimeDiagnosticStarted || _runtimeDiagnosticCompleted)
+                return;
+
+            if (!_runtimeDiagnosticSeenEntries.Add(entry))
+                return;
+
+            _runtimeDiagnosticPendingLines.Add($"{DateTime.UtcNow:O} {entry}");
+            if (!_runtimeDiagnosticCategoryCounts.TryAdd(category, 1))
+                _runtimeDiagnosticCategoryCounts[category]++;
+
+            var score = ScoreDiagnosticEntry(entry);
+            if (score > 0)
+                _runtimeDiagnosticLikelyScores[entry] = score;
+        }
+    }
+
+    private static int ScoreDiagnosticEntry(string entry)
+    {
+        var lower = entry.ToLowerInvariant();
+        var score = 0;
+        foreach (var keyword in RuntimeDiagnosticLikelyKeywords)
+        {
+            if (lower.Contains(keyword, StringComparison.Ordinal))
+                score += 1;
+        }
+
+        return score;
+    }
+
+    private static void FlushRuntimeDiagnosticRaw(bool force)
+    {
+        List<string>? batch = null;
+        string? rawPath;
+
+        lock (_runtimeDiagnosticLock)
+        {
+            if (!_runtimeDiagnosticStarted || string.IsNullOrWhiteSpace(_runtimeDiagnosticRawPath))
+                return;
+
+            if (!force)
+            {
+                var elapsedMs = (DateTime.UtcNow - _runtimeDiagnosticLastRawFlushUtc).TotalMilliseconds;
+                if (elapsedMs < RuntimeDiagnosticRawFlushMs && _runtimeDiagnosticPendingLines.Count < RuntimeDiagnosticMaxLinesPerFlush)
+                    return;
+            }
+
+            if (_runtimeDiagnosticPendingLines.Count == 0)
+                return;
+
+            var take = force
+                ? _runtimeDiagnosticPendingLines.Count
+                : Math.Min(RuntimeDiagnosticMaxLinesPerFlush, _runtimeDiagnosticPendingLines.Count);
+
+            batch = _runtimeDiagnosticPendingLines.Take(take).ToList();
+            _runtimeDiagnosticPendingLines.RemoveRange(0, take);
+            _runtimeDiagnosticLastRawFlushUtc = DateTime.UtcNow;
+            rawPath = _runtimeDiagnosticRawPath;
+        }
+
+        if (batch == null || batch.Count == 0 || string.IsNullOrWhiteSpace(rawPath))
+            return;
+
+        try
+        {
+            File.AppendAllLines(rawPath, batch);
+        }
+        catch
+        {
+            // Avoid impacting runtime behavior if diagnostics file write fails.
+        }
+
+        if (force)
+        {
+            FlushRuntimeDiagnosticRaw(force: true);
+        }
+    }
+
+    private static void WriteRuntimeDiagnosticSummary(bool force)
+    {
+        string? summaryPath;
+        DateTime startedUtc;
+        Dictionary<string, int> categoryCounts;
+        Dictionary<string, int> likelyScores;
+        int uniqueCount;
+
+        lock (_runtimeDiagnosticLock)
+        {
+            if (!_runtimeDiagnosticStarted || string.IsNullOrWhiteSpace(_runtimeDiagnosticSummaryPath))
+                return;
+
+            if (!force &&
+                (DateTime.UtcNow - _runtimeDiagnosticLastSummaryWriteUtc).TotalMilliseconds < RuntimeDiagnosticSummaryWriteMs)
+            {
+                return;
+            }
+
+            summaryPath = _runtimeDiagnosticSummaryPath;
+            startedUtc = _runtimeDiagnosticStartedUtc;
+            uniqueCount = _runtimeDiagnosticSeenEntries.Count;
+            categoryCounts = new Dictionary<string, int>(_runtimeDiagnosticCategoryCounts, StringComparer.OrdinalIgnoreCase);
+            likelyScores = new Dictionary<string, int>(_runtimeDiagnosticLikelyScores, StringComparer.Ordinal);
+            _runtimeDiagnosticLastSummaryWriteUtc = DateTime.UtcNow;
+        }
+
+        if (string.IsNullOrWhiteSpace(summaryPath))
+            return;
+
+        var lines = new List<string>
+        {
+            $"# Runtime diagnostics summary",
+            $"generated={DateTime.UtcNow:O}",
+            $"started={startedUtc:O}",
+            $"unique_entries={uniqueCount}",
+            string.Empty,
+            "[counts-by-category]"
+        };
+
+        foreach (var pair in categoryCounts.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+            lines.Add($"{pair.Key}: {pair.Value}");
+
+        lines.Add(string.Empty);
+        lines.Add("[likely-objects-top-200]");
+        foreach (var candidate in likelyScores
+                     .OrderByDescending(p => p.Value)
+                     .ThenBy(p => p.Key, StringComparer.Ordinal)
+                     .Take(200))
+        {
+            lines.Add($"score={candidate.Value} | {candidate.Key}");
+        }
+
+        try
+        {
+            File.WriteAllLines(summaryPath, lines);
+        }
+        catch
+        {
+            // Avoid impacting runtime behavior if summary write fails.
+        }
+    }
+
+    private static void LogRuntimeDiagnosticCompletionNotice()
+    {
+        string? rawPath;
+        string? summaryPath;
+
+        lock (_runtimeDiagnosticLock)
+        {
+            if (!_runtimeDiagnosticStarted || _runtimeDiagnosticCompleted)
+                return;
+
+            _runtimeDiagnosticCompleted = true;
+            rawPath = _runtimeDiagnosticRawPath;
+            summaryPath = _runtimeDiagnosticSummaryPath;
+        }
+
+        LogEvent($"[oww-runtime-diag] Diagnostics complete. Raw diagnostics located in: {rawPath}");
+        LogEvent($"[oww-runtime-diag] Summarized diagnostics located in: {summaryPath}");
+    }
+
+    private static bool TryGetBoolProperty(object target, string propertyName, out bool value)
+    {
+        value = false;
+        try
+        {
+            var property = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+            if (property?.PropertyType != typeof(bool))
+                return false;
+
+            value = (bool)(property.GetValue(target) ?? false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string TrimDiagnosticText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return normalized.Length <= 120 ? normalized : normalized.Substring(0, 120) + "...";
+    }
+
     /// <summary>
     /// Graceful shutdown (called on app exit or cleanup).
     /// Stops background inference, flushes queues.
     /// </summary>
     public static void Shutdown()
     {
+        FlushRuntimeDiagnosticRaw(force: true);
+        WriteRuntimeDiagnosticSummary(force: true);
+        LogRuntimeDiagnosticCompletionNotice();
+
         _voskListening = false;
         lock (_initLock)
         {
@@ -1312,6 +3517,8 @@ public static class OpenWakeWordHelper
         {
             _cachedGameHandlerMethod = null;
             _cachedGameHandlerTarget = null;
+            _cachedAnimationHandlerMethod = null;
+            _cachedAnimationHandlerTarget = null;
         }
 
         lock (_commandManifestLock)

@@ -14,6 +14,11 @@ VERBOSE=0
 SHOW_BUILD_OUTPUT=0
 NO_LAUNCH=0
 BUILD_LOG_FILE=""
+TEST_COMMANDS=0
+TEST_INTERVAL="1000"
+TEST_DURATION=""
+RUNTIME_DIAGNOSTIC=0
+RUNTIME_DIAGNOSTIC_DURATION=""
 
 usage() {
     cat <<'EOF'
@@ -22,7 +27,12 @@ Usage:
 
 Options:
   --rid <runtime-identifier>   Override the detected publish target.
-    --migration-mode <mode>      Launcher migration mode: stable, probe, or full.
+  --migration-mode <mode>      Launcher migration mode: stable, probe, or full.
+  --test-commands              Run in command injection test mode (auto-launch game).
+  --test-interval <ms>         Interval between test commands in ms (default: 1000).
+  --test-duration <seconds>    Run tests for N seconds, then auto-stop (default: infinite).
+    --runtime-diagnostic         Enable runtime diagnostics in launched game process.
+    --runtime-diagnostic-duration <seconds>  Runtime diagnostics snapshot duration.
   --verbose                    Show all executed commands (set -x mode).
   --show-build-output          Display full build/publish command output.
   --no-launch                  Skip launching the patched game.
@@ -32,7 +42,10 @@ Options:
 Examples:
   ./build-patch-and-launch.sh
   ./build-patch-and-launch.sh --rid osx-arm64
-    ./build-patch-and-launch.sh --migration-mode probe
+  ./build-patch-and-launch.sh --migration-mode probe
+  ./build-patch-and-launch.sh --test-commands
+  ./build-patch-and-launch.sh --test-commands --test-duration 30 --test-interval 500
+    ./build-patch-and-launch.sh --test-commands --runtime-diagnostic --runtime-diagnostic-duration 120
   ./build-patch-and-launch.sh --verbose --show-build-output
   ./build-patch-and-launch.sh --build-log build.log --no-launch
 EOF
@@ -146,6 +159,30 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2
             ;;
+        --test-commands)
+            TEST_COMMANDS=1
+            NO_LAUNCH=1
+            shift
+            ;;
+        --test-interval)
+            [[ $# -ge 2 ]] || die "--test-interval requires a value"
+            TEST_INTERVAL="$2"
+            shift 2
+            ;;
+        --test-duration)
+            [[ $# -ge 2 ]] || die "--test-duration requires a value"
+            TEST_DURATION="$2"
+            shift 2
+            ;;
+        --runtime-diagnostic)
+            RUNTIME_DIAGNOSTIC=1
+            shift
+            ;;
+        --runtime-diagnostic-duration)
+            [[ $# -ge 2 ]] || die "--runtime-diagnostic-duration requires a value"
+            RUNTIME_DIAGNOSTIC_DURATION="$2"
+            shift 2
+            ;;
         --show-build-output)
             SHOW_BUILD_OUTPUT=1
             shift
@@ -226,7 +263,54 @@ printf '    %s -> %s\n' "$PUBLISHED_PATCHER" "$PLAYER_PATCHER"
 run_step "Patching PAIcom.exe" \
     "$PLAYER_PATCHER" "$PLAYER_EXE" --out "$PATCHED_EXE" --migration-mode "$MIGRATION_MODE"
 
-if (( NO_LAUNCH )); then
+# Export test environment variables early so they're available in all launch paths
+# (test-commands, no-launch, and normal launch)
+PAICOM_MIGRATION_MODE="$MIGRATION_MODE"
+if [[ -n "${PAICOM_SEQUENTIAL_METHOD_TEST:-}" ]]; then
+    export PAICOM_SEQUENTIAL_METHOD_TEST
+fi
+if [[ -n "${PAICOM_TEST_CATEGORY:-}" ]]; then
+    export PAICOM_TEST_CATEGORY
+fi
+if [[ -n "${PAICOM_METHOD_TEST_NUM:-}" ]]; then
+    export PAICOM_METHOD_TEST_NUM
+fi
+if [[ -n "${PAICOM_LIVE_METHOD_TEST:-}" ]]; then
+    export PAICOM_LIVE_METHOD_TEST
+fi
+if [[ -n "${PAICOM_LIVE_TEST_LOG:-}" ]]; then
+    export PAICOM_LIVE_TEST_LOG
+fi
+export PAICOM_MIGRATION_MODE
+
+if (( TEST_COMMANDS )); then
+    printf '\n==> Launching command injection test mode\n'
+    printf '    Interval: %sms\n' "$TEST_INTERVAL"
+    if [[ -n "$TEST_DURATION" ]]; then
+        printf '    Duration: %s seconds\n' "$TEST_DURATION"
+    fi
+    if (( RUNTIME_DIAGNOSTIC )); then
+        printf '    Runtime diagnostics: enabled\n'
+        if [[ -n "$RUNTIME_DIAGNOSTIC_DURATION" ]]; then
+            printf '    Runtime diagnostics duration: %s seconds\n' "$RUNTIME_DIAGNOSTIC_DURATION"
+        fi
+    fi
+    
+    # Build command line arguments
+    TEST_ARGS=("$PATCHED_EXE" "--interval" "$TEST_INTERVAL")
+    if [[ -n "$TEST_DURATION" ]]; then
+        TEST_ARGS+=("--duration" "$TEST_DURATION")
+    fi
+    if (( RUNTIME_DIAGNOSTIC )); then
+        TEST_ARGS+=("--runtime-diagnostic")
+        if [[ -n "$RUNTIME_DIAGNOSTIC_DURATION" ]]; then
+            TEST_ARGS+=("--runtime-diagnostic-duration" "$RUNTIME_DIAGNOSTIC_DURATION")
+        fi
+    fi
+    
+    printf '\n==> Running command injection tests\n'
+    exec "$PLAYER_PATCHER" --test-commands "${TEST_ARGS[@]}"
+elif (( NO_LAUNCH )); then
     printf '\n==> Build completed successfully\n'
     printf 'Skipping launch (--no-launch flag was set)\n'
     if [[ -n "$BUILD_LOG_FILE" ]]; then
@@ -234,5 +318,5 @@ if (( NO_LAUNCH )); then
     fi
 else
     printf '\n==> Launching patched game\n'
-    PAICOM_MIGRATION_MODE="$MIGRATION_MODE" exec sh "$PLAYER_DIR/setup-wizard.sh" --launch
+    exec sh "$PLAYER_DIR/setup-wizard.sh" --launch
 fi
