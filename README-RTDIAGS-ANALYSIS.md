@@ -162,10 +162,10 @@ static void SetPictureBoxMode(PictureBox box, PictureBoxSizeMode mode)
 ## 📂 Deliverables
 
 ### Test Files
-- **AudioAnimationMethodTests.cs** - 11-test suite validating all methods
-  - Uses reflection to identify methods at runtime
-  - Platform-agnostic (handles different OS environments)
-  - Graceful fallbacks when types unavailable
+- Historical animation-method test suite has been removed from active tests.
+- Active validation now focuses on:
+  - `LIVE-TESTING.md` for live runtime behavior
+  - `TEST_COMMANDS.md` for command injection validation
 
 ### Analysis Tools
 - **test-rtdiags-methods.py** - Python diagnostic analyzer
@@ -175,7 +175,7 @@ static void SetPictureBoxMode(PictureBox box, PictureBoxSizeMode mode)
   - Produces test recommendations
 
 ### Documentation
-- **RTDIAGS-TEST-REPORT.md** - Comprehensive test report
+- **docs/archive/RTDIAGS-TEST-REPORT.md** - Archived comprehensive test report
   - Test execution results
   - Method categorization
   - Testing recommendations
@@ -302,9 +302,10 @@ Utilities:           6+ additional
 
 ## 🔗 Related Files
 
-- **Test Suite:** `CrossPlatformPatcher.Tests/AudioAnimationMethodTests.cs`
+- **Live Testing Guide:** `LIVE-TESTING.md`
+- **Command Injection Guide:** `TEST_COMMANDS.md`
 - **Analyzer:** `test-rtdiags-methods.py`
-- **Test Report:** `RTDIAGS-TEST-REPORT.md`
+- **Archived Test Report:** `docs/archive/RTDIAGS-TEST-REPORT.md`
 - **Method Reference:** `RTDIAGS-METHOD-REFERENCE.md`
 - **This Document:** `README-RTDIAGS-ANALYSIS.md`
 
@@ -343,5 +344,5 @@ Successfully completed comprehensive analysis of PAIcom runtime diagnostics to i
 
 ### Entry Points for Further Work
 - See `RTDIAGS-METHOD-REFERENCE.md` for detailed method signatures
-- See `RTDIAGS-TEST-REPORT.md` for testing strategies
-- See `AudioAnimationMethodTests.cs` for test implementation
+- See `docs/archive/RTDIAGS-TEST-REPORT.md` for historical testing strategies
+- Use `LIVE-TESTING.md` and `TEST_COMMANDS.md` for active workflow validation

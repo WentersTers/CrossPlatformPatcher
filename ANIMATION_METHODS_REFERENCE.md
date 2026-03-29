@@ -372,5 +372,19 @@ TryExecuteAnimationScriptAsync()
 
 ---
 
+## Workflow Reference
+
+Use the canonical patch/build workflow when validating animation behavior:
+
+```bash
+./build-patch-and-launch.sh --migration-mode full
+```
+
+Use these docs for focused testing:
+- `LIVE-TESTING.md`
+- `TEST_COMMANDS.md`
+
+---
+
 **Last Updated:** March 28, 2026  
 **Version:** 1.0
