@@ -48,12 +48,12 @@ sh publish-all.sh
 For an end-to-end build, publish, patch, and launch flow from the repo root on macOS or Linux, use:
 
 ```sh
-./build-patch-and-launch.sh
+./build-patch-and-launch.sh --migration-mode full
 ```
 
 The wrapper script supports additional flags:
 - `--rid <runtime-identifier>` (override auto-detected target)
-- `--migration-mode <stable|probe|full>` (launcher migration mode, default `stable`)
+- `--migration-mode <stable|probe|full>` (launcher migration mode, default `stable`; recommended `full` for active runtime testing)
 - `--verbose` (print each invoked command)
 - `--show-build-output` (don’t suppress `dotnet` output)
 - `--no-launch` (build/publish/patch only, do not run setup-wizard)
@@ -63,8 +63,12 @@ If you want to force a specific runtime identifier, pass `--rid`:
 
 ```sh
 ./build-patch-and-launch.sh --rid osx-arm64
-./build-patch-and-launch.sh --migration-mode probe --no-launch
+./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
+
+Active test workflows:
+- live runtime testing: `LIVE-TESTING.md`
+- command injection testing: `TEST_COMMANDS.md`
 
 This script:
 - builds the patcher in Release
@@ -339,7 +343,7 @@ Use the checked-in patcher sources to rebuild the project from scratch:
 ```sh
 dotnet build CrossPlatformPatcher.csproj -c Release
 dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release
-./build-patch-and-launch.sh --migration-mode probe --no-launch
+./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
 ### Migration Verification Checklist
