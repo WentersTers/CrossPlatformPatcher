@@ -83,6 +83,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="InstallerWizard\**\*.cs" />
+    <EmbeddedResource Remove="InstallerWizard\**\*" />
+    <None Remove="InstallerWizard\**\*" />
     <Compile Remove="CrossPlatformPatcher.Tests\**\*.cs" />
     <EmbeddedResource Remove="CrossPlatformPatcher.Tests\**\*" />
     <None Remove="CrossPlatformPatcher.Tests\**\*" />

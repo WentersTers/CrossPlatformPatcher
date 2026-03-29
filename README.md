@@ -85,6 +85,13 @@ Build, patch, and launcher logs stream to the terminal that started the script. 
 > - Linux x64: `CrossPlatformPatcher-L-x64`
 > - macOS x64: `CrossPlatformPatcher-M-x64`
 > - macOS ARM64: `CrossPlatformPatcher-M-Arm`
+>
+> They also publish the GUI installer wizard from `InstallerWizard/InstallerWizard.csproj`
+> into `publish/SetupWizard/<RID>/`:
+> - Windows x64: `SetupWizard.exe`
+> - Linux x64: `SetupWizard`
+> - macOS x64: `SetupWizard`
+> - macOS ARM64: `SetupWizard`
 
 ### Use the Patcher
 
@@ -96,13 +103,13 @@ Build, patch, and launcher logs stream to the terminal that started the script. 
 3. The patcher generates:
    - `PAIcom_patched.exe` — the patched game
    - `run.sh` / `run.bat` / `launch.command` — OS-specific launchers
-   - `setup-wizard.sh` / `setup.command` — guided smart setup wizard (Linux/macOS)
+  - `setup-wizard.sh` / `setup.command` — setup entry points (prefer GUI `SetupWizard` when present)
    - `SETUP_LINUX.md` / `SETUP_MAC.md` — setup instructions
 
 4. To run the patched game:
    - **Windows:** Double-click `PAIcom_patched.exe` or `run.bat`
-   - **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
-   - **macOS:** Double-click `setup.command` once, then `launch.command`
+  - **Linux:** Run `./SetupWizard` (or `sh setup-wizard.sh`) once, then `sh run.sh`
+  - **macOS:** Run `./SetupWizard` (or double-click `setup.command`) once, then `launch.command`
 
 On macOS, the setup wizard can download/install Homebrew when missing, then install Whisky.
 

@@ -4,11 +4,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_FILE="$SCRIPT_DIR/CrossPlatformPatcher.csproj"
+SETUP_PROJECT_FILE="$SCRIPT_DIR/InstallerWizard/InstallerWizard.csproj"
 PLAYER_DIR="$SCRIPT_DIR/PAIcom_Player_Folder"
 PLAYER_EXE="$PLAYER_DIR/PAIcom.exe"
 PATCHED_EXE="$PLAYER_DIR/PAIcom_patched.exe"
 PUBLISH_ROOT="$SCRIPT_DIR/publish/build-patch-and-launch"
 PATCHER_NAME="CrossPlatformPatcher"
+SETUP_WIZARD_NAME="SetupWizard"
 CURRENT_PID=""
 VERBOSE=0
 SHOW_BUILD_OUTPUT=0
@@ -224,13 +226,17 @@ fi
 
 if [[ "$RID" == win-* ]]; then
     PATCHER_FILE="$PATCHER_NAME.exe"
+    SETUP_WIZARD_FILE="$SETUP_WIZARD_NAME.exe"
 else
     PATCHER_FILE="$PATCHER_NAME"
+    SETUP_WIZARD_FILE="$SETUP_WIZARD_NAME"
 fi
 
 PUBLISH_DIR="$PUBLISH_ROOT/$RID"
 PUBLISHED_PATCHER="$PUBLISH_DIR/$PATCHER_FILE"
 PLAYER_PATCHER="$PLAYER_DIR/$PATCHER_FILE"
+PUBLISHED_SETUP_WIZARD="$PUBLISH_DIR/$SETUP_WIZARD_FILE"
+PLAYER_SETUP_WIZARD="$PLAYER_DIR/$SETUP_WIZARD_FILE"
 
 printf 'Detected runtime identifier: %s\n' "$RID"
 printf 'Migration mode: %s\n' "$MIGRATION_MODE"
@@ -254,11 +260,25 @@ run_step "Publishing self-contained patcher for $RID" \
     -p:AssemblyName="$PATCHER_NAME" \
     -o "$PUBLISH_DIR"
 
+run_step "Publishing GUI setup wizard for $RID" \
+    dotnet publish "$SETUP_PROJECT_FILE" \
+    -c Release \
+    -r "$RID" \
+    --self-contained true \
+    -p:PublishSingleFile=true \
+    -p:AssemblyName="$SETUP_WIZARD_NAME" \
+    -o "$PUBLISH_DIR"
+
 cp "$PUBLISHED_PATCHER" "$PLAYER_PATCHER"
 chmod +x "$PLAYER_PATCHER" 2>/dev/null || true
 
+cp "$PUBLISHED_SETUP_WIZARD" "$PLAYER_SETUP_WIZARD"
+chmod +x "$PLAYER_SETUP_WIZARD" 2>/dev/null || true
+
 printf '\n==> Copying published patcher to player folder\n'
 printf '    %s -> %s\n' "$PUBLISHED_PATCHER" "$PLAYER_PATCHER"
+printf '\n==> Copying GUI setup wizard to player folder\n'
+printf '    %s -> %s\n' "$PUBLISHED_SETUP_WIZARD" "$PLAYER_SETUP_WIZARD"
 
 run_step "Patching PAIcom.exe" \
     "$PLAYER_PATCHER" "$PLAYER_EXE" --out "$PATCHED_EXE" --migration-mode "$MIGRATION_MODE"
