@@ -2,6 +2,8 @@
 
 Quick-start guide for testing command dispatching with the running game.
 
+For live voice/method testing, use `LIVE-TESTING.md`.
+
 ## Usage
 
 The patcher includes a test mode (`--test-commands`) that:
@@ -11,14 +13,18 @@ The patcher includes a test mode (`--test-commands`) that:
 - **Auto-stops** with Ctrl+C, duration limit, or manual shutdown
 
 
+Run:
+
+```sh
+./build-patch-and-launch.sh --migration-mode full --test-commands --test-duration 30
+```
+
 The patcher will:
 1. Launch PAIcom.exe automatically
 2. Wait 3 seconds for the game to start
 3. Begin injecting commands every 1 second
 4. Show results in the console
 5. Clean up the process when done
-
-./build-patch-and-launch.sh --migration-mode full --test-commands --test-duration 30
 
 ### Stop The Test
 

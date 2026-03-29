@@ -388,6 +388,10 @@ Run a voice command to trigger animation:
 # Game opens, then say: "Hey PAIcom, open the browser"
 ```
 
+For focused testing workflows, use:
+- `LIVE-TESTING.md` for live runtime method testing
+- `TEST_COMMANDS.md` for command injection validation
+
 Expected behavior:
 1. Command recognized at ~87-100% confidence
 2. UI dispatch succeeds (TextBox + Button simulation)
