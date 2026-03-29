@@ -97,7 +97,7 @@ public static class LauncherGenerator
             verify_runtime_bitness() {
                 runtime_bin="$1"
                 set +e
-                BITNESS_LINE="$($runtime_bin cmd /c "echo PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE%" 2>> "$RUNTIME_LOG" | tr -d '\r' | tail -n 1)"
+                BITNESS_LINE="$("$runtime_bin" cmd /c "echo PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE%" 2>> "$RUNTIME_LOG" | tr -d '\r' | tail -n 1)"
                 RC=$?
                 set -e
                 if [ "$RC" -eq 0 ]; then
@@ -278,6 +278,14 @@ public static class LauncherGenerator
             }
 
             launch_probe_or_full() {
+                # Ensure Whisky environment is set up before choosing runtime
+                # This makes wine64 available in PATH when Whisky is installed
+                if [ -n "$WHISKY_CMD" ]; then
+                    if ! prepare_whisky_env; then
+                        log "WARNING: Whisky environment setup failed; attempting to continue"
+                    fi
+                fi
+
                 runtime64="$(choose_probe_runtime)"
                 if [ -z "$runtime64" ]; then
                     log "reason.code=PROBE_PRECONDITION_RUNTIME_MISSING"
