@@ -1,0 +1,53 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="SetupWizard.MainWindow"
+        Width="860"
+        Height="600"
+        MinWidth="720"
+        MinHeight="520"
+        Title="PAIcom Setup Wizard"
+        Background="#11161B"
+        Foreground="#F4F4F2">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="22">
+    <Border Grid.Row="0" Padding="18" CornerRadius="14" Background="#1B2734">
+      <StackPanel Spacing="6">
+        <TextBlock Text="PAIcom Setup Wizard" FontSize="28" FontWeight="SemiBold" />
+        <TextBlock x:Name="SummaryText"
+                   Text="Detecting your operating system and setup requirements..."
+                   Opacity="0.85"
+                   FontSize="14" />
+      </StackPanel>
+    </Border>
+
+    <StackPanel Grid.Row="1" Spacing="8">
+      <ProgressBar x:Name="SetupProgress" Minimum="0" Maximum="100" Height="18" Value="0" />
+      <TextBlock x:Name="ProgressLabel" Text="Ready" Opacity="0.85" />
+    </StackPanel>
+
+    <Border Grid.Row="2" CornerRadius="12" Padding="12" Background="#17202A">
+      <TextBox x:Name="StatusLog"
+               IsReadOnly="True"
+               AcceptsReturn="True"
+               TextWrapping="Wrap"
+               ScrollViewer.VerticalScrollBarVisibility="Auto"
+               ScrollViewer.HorizontalScrollBarVisibility="Auto"
+               FontFamily="Consolas, Menlo, monospace"
+               FontSize="13"
+               Background="#0D1217"
+               Foreground="#D6DCE2" />
+    </Border>
+
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+      <TextBlock x:Name="FooterText"
+                 Grid.Column="0"
+                 VerticalAlignment="Center"
+                 Text="Installer is ready."
+                 Opacity="0.85" />
+
+      <Button Grid.Column="1" x:Name="DiagnoseButton" Content="Run Diagnostics" Width="130" Height="36" Margin="0,0,10,0" />
+      <Button Grid.Column="2" x:Name="InstallButton" Content="Install Required Files" Width="164" Height="36" Margin="0,0,10,0" />
+      <Button Grid.Column="3" x:Name="LaunchButton" Content="Launch PAIcom" Width="120" Height="36" Margin="0,0,10,0" />
+      <Button Grid.Column="4" x:Name="ExitButton" Content="Exit" Width="84" Height="36" />
+    </Grid>
+  </Grid>
+</Window>

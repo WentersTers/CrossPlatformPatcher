@@ -8,8 +8,8 @@ namespace CrossPlatformPatcher.Core;
 /// Generated files:
 ///   run.sh         - Linux/Mac shell launcher (bundled Wine -> system Wine -> Mono)
 ///   launch.command — Mac Finder double-click wrapper (wraps run.sh)
-///   setup-wizard.sh - Interactive smart installer/setup wizard (Linux/Mac)
-///   setup.command  - Mac Finder double-click wrapper for setup-wizard.sh
+///   setup-wizard.sh - GUI-first setup wizard launcher with shell fallback
+///   setup.command  - Mac Finder double-click wrapper for the setup wizard
 ///   run.bat        — Windows batch launcher (direct exe start)
 ///   SETUP_LINUX.md — Wine + audio setup instructions for Linux
 ///   SETUP_MAC.md   — Wine + audio setup instructions for macOS
@@ -421,6 +421,9 @@ public static class LauncherGenerator
             DEFAULT_MIGRATION_MODE="__MIGRATION_MODE__"
             TARGET_PE_MACHINE="__TARGET_PE_MACHINE__"
             LOG_FILE="$SCRIPT_DIR/setup-wizard.log"
+            GUI_WIZARD="$SCRIPT_DIR/SetupWizard"
+            GUI_WIZARD_APP="$SCRIPT_DIR/SetupWizard.app/Contents/MacOS/SetupWizard"
+            GUI_WIZARD_EXE="$SCRIPT_DIR/SetupWizard.exe"
 
             migration_mode="${PAICOM_MIGRATION_MODE:-$DEFAULT_MIGRATION_MODE}"
             case "$migration_mode" in
@@ -445,6 +448,32 @@ public static class LauncherGenerator
             log "Script dir: $SCRIPT_DIR"
             log "Target exe: $EXE"
             log "Whisky bottle: $WHISKY_BOTTLE"
+
+            launch_gui_wizard_if_available() {
+                if [ -x "$GUI_WIZARD" ]; then
+                    log "Launching GUI setup wizard: $GUI_WIZARD"
+                    "$GUI_WIZARD" "$@"
+                    exit $?
+                fi
+
+                if [ -x "$GUI_WIZARD_APP" ]; then
+                    log "Launching GUI setup wizard: $GUI_WIZARD_APP"
+                    "$GUI_WIZARD_APP" "$@"
+                    exit $?
+                fi
+
+                if [ -f "$GUI_WIZARD_EXE" ] && command -v dotnet >/dev/null 2>&1; then
+                    log "Launching GUI setup wizard with dotnet: $GUI_WIZARD_EXE"
+                    dotnet "$GUI_WIZARD_EXE" "$@"
+                    exit $?
+                fi
+
+                log "GUI setup wizard not found. Falling back to shell wizard."
+            }
+
+            if [ "x$1" != "x--no-gui" ] && [ "x$1" != "x--launch" ] && [ "x$1" != "x--diagnose" ]; then
+                launch_gui_wizard_if_available "$@"
+            fi
 
             detect_brew_cmd() {
                 if command -v brew >/dev/null 2>&1; then
@@ -949,9 +978,18 @@ public static class LauncherGenerator
         var path = Path.Combine(dir, "setup.command");
         File.WriteAllText(path, $"""
             #!/usr/bin/env sh
-            # Mac Finder double-click setup launcher - opens the setup wizard
+            # Mac Finder double-click setup launcher - prefers GUI setup wizard
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-            sh "$SCRIPT_DIR/setup-wizard.sh" "$@"
+
+            if [ -x "$SCRIPT_DIR/SetupWizard" ]; then
+                exec "$SCRIPT_DIR/SetupWizard" "$@"
+            fi
+
+            if [ -x "$SCRIPT_DIR/SetupWizard.app/Contents/MacOS/SetupWizard" ]; then
+                exec "$SCRIPT_DIR/SetupWizard.app/Contents/MacOS/SetupWizard" "$@"
+            fi
+
+            sh "$SCRIPT_DIR/setup-wizard.sh" --no-gui "$@"
             """, Utf8NoBom);
 
         TryChmod(path, "755");
@@ -992,6 +1030,13 @@ public static class LauncherGenerator
                      "if not defined PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450\r\n" +
                      "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000\r\n" +
                      "\r\n" +
+                     "if /I \"%~1\"==\"--setup\" (\r\n" +
+                     "  if exist \"%~dp0SetupWizard.exe\" (\r\n" +
+                     "    start \"\" \"%~dp0SetupWizard.exe\"\r\n" +
+                     "    exit /b 0\r\n" +
+                     "  )\r\n" +
+                     ")\r\n" +
+                     "\r\n" +
                      "start \"\" \"%~dp0" + exe + "\" %*\r\n";
         File.WriteAllText(path, content, System.Text.Encoding.ASCII);
         Console.WriteLine($"  [launcher] run.bat written.");
@@ -1010,6 +1055,12 @@ public static class LauncherGenerator
             ## Recommended: Smart Setup Wizard
 
             Run:
+
+            ```sh
+            ./SetupWizard
+            ```
+
+            Fallback entry point:
 
             ```sh
             sh setup-wizard.sh
@@ -1103,7 +1154,13 @@ public static class LauncherGenerator
 
             ## Recommended: Smart Setup Wizard
 
-            Double-click `setup.command`, or run:
+            Run the GUI wizard:
+
+            ```sh
+            ./SetupWizard
+            ```
+
+            Fallback entry point:
 
             ```sh
             sh setup-wizard.sh
