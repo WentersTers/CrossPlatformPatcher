@@ -70,7 +70,7 @@ public sealed class OpenWakeWordSettings
         int audioSampleRate = 16000,
         bool enableVerboseLogging = false,
         int microphoneBufferMilliseconds = 200,
-        float fuzzyMatchMinConfidence = 0.80f,
+        float fuzzyMatchMinConfidence = 0.65f,
         int postWakeSilenceGraceMilliseconds = 450,
         int speechSilenceCutoffMilliseconds = 1000)
     {
@@ -128,7 +128,7 @@ public sealed class OpenWakeWordSettings
     /// - SampleRate: 16000 Hz
     /// - VerboseLog: false
     /// - MicBufferMs: 200
-    /// - FuzzyMatchMinConfidence: 0.80
+    /// - FuzzyMatchMinConfidence: 0.65
     /// - PostWakeSilenceGraceMs: 450
     /// - SpeechSilenceCutoffMs: 1000
     /// </summary>

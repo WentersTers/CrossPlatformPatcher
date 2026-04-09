@@ -13,14 +13,23 @@ namespace CrossPlatformPatcher.Core;
 /// Directly injects CommandAction objects into the OpenWakeWord dispatcher
 /// to test if the command handler discovery and invocation works.
 /// 
+/// Two modes:
+///   INTERACTIVE: Enter full voice commands at a prompt (e.g., "hey paicom open the browser")
+///   AUTO:        Cycle through commands at fixed intervals (for automated testing)
+///
 /// Usage:
+///   dotnet run --test-commands <paicom-path> --interactive
 ///   dotnet run --test-commands <paicom-path> [--interval 1000] [--duration 60] [--command "phrase1" "phrase2" ...]
 ///   
 /// Examples:
-///   dotnet run --test-commands "/path/to/PAIcom.exe"                              # Loads real commands, runs until Ctrl+C
-///   dotnet run --test-commands "/path/to/PAIcom.exe" --duration 30                # Stops after 30 seconds
-///   dotnet run --test-commands "/path/to/PAIcom.exe" --interval 2000              # Every 2 seconds
-///   dotnet run --test-commands "/path/to/PAIcom.exe" --command "open the browser" # Test specific command
+///   # Interactive: type commands like you would speak them
+///   dotnet run --test-commands "/path/to/PAIcom.exe" --interactive
+///   
+///   # Auto: test specific commands every 2 seconds
+///   dotnet run --test-commands "/path/to/PAIcom.exe" --command "open the browser" "play music" --interval 2000
+///   
+///   # Auto: load and cycle through all commands for 30 seconds
+///   dotnet run --test-commands "/path/to/PAIcom.exe" --duration 30
 /// </summary>
 public class TestCommandInjection
 {
@@ -45,6 +54,7 @@ public class TestCommandInjection
         string[] testPhrases = Array.Empty<string>();
         var enableRuntimeDiagnostics = false;
         int? runtimeDiagnosticDurationSeconds = null;
+        var interactiveMode = false;
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -65,6 +75,9 @@ public class TestCommandInjection
                         customPhrases.Add(args[++i]);
                     if (customPhrases.Count > 0)
                         testPhrases = customPhrases.ToArray();
+                    break;
+                case "--interactive":
+                    interactiveMode = true;
                     break;
                 case "--runtime-diagnostic":
                     enableRuntimeDiagnostics = true;
@@ -88,16 +101,24 @@ public class TestCommandInjection
         }
 
         Console.WriteLine($"[TEST] PAIcom Path: {paicomPath}");
-        Console.WriteLine($"[TEST] Interval: {interval}ms");
-        Console.WriteLine($"[TEST] Duration: {(duration.HasValue ? duration + "s" : "infinite (Ctrl+C to stop)")}");
+        Console.WriteLine($"[TEST] Mode: {(interactiveMode ? "INTERACTIVE" : "AUTO")}");
+        if (!interactiveMode)
+        {
+            Console.WriteLine($"[TEST] Interval: {interval}ms");
+            Console.WriteLine($"[TEST] Duration: {(duration.HasValue ? duration + "s" : "infinite (Ctrl+C to stop)")}");
+        }
         Console.WriteLine($"[TEST] Runtime diagnostics: {(enableRuntimeDiagnostics ? "enabled" : "disabled")}");
         if (runtimeDiagnosticDurationSeconds.HasValue)
             Console.WriteLine($"[TEST] Runtime diagnostic duration: {runtimeDiagnosticDurationSeconds.Value}s");
-        Console.WriteLine($"[TEST] Test phrases ({testPhrases.Length}):");
-        for (int i = 0; i < Math.Min(5, testPhrases.Length); i++)
-            Console.WriteLine($"  - {testPhrases[i]}");
-        if (testPhrases.Length > 5)
-            Console.WriteLine($"  ... and {testPhrases.Length - 5} more");
+        
+        if (testPhrases.Length > 0)
+        {
+            Console.WriteLine($"[TEST] Test phrases ({testPhrases.Length}):");
+            for (int i = 0; i < Math.Min(5, testPhrases.Length); i++)
+                Console.WriteLine($"  - {testPhrases[i]}");
+            if (testPhrases.Length > 5)
+                Console.WriteLine($"  ... and {testPhrases.Length - 5} more");
+        }
 
         Console.WriteLine("\n[TEST] Launching PAIcom.exe...");
         if (!LaunchGame(paicomPath, enableRuntimeDiagnostics, runtimeDiagnosticDurationSeconds))
@@ -109,21 +130,36 @@ public class TestCommandInjection
         Console.WriteLine("[TEST] Waiting 35 seconds for game UI to fully render and assemblies to load...");
         Thread.Sleep(35000);
 
-        Console.WriteLine("[TEST] Starting command injection (in-game IPC mode)...");
-        if (duration.HasValue)
-            Console.WriteLine($"[TEST] Will run for {duration} seconds. Press Ctrl+C to stop early.\n");
-        else
-            Console.WriteLine("[TEST] Press Ctrl+C to stop.\n");
-
-        // Set up Ctrl+C handler
-        _cancellationTokenSource = new CancellationTokenSource();
-        Console.CancelKeyPress += (s, e) =>
+        if (interactiveMode)
         {
-            e.Cancel = true;
-            _cancellationTokenSource?.Cancel();
-        };
+            Console.WriteLine("[TEST] Starting INTERACTIVE command injection mode...");
+            RunInteractiveCommandInput();
+        }
+        else
+        {
+            if (testPhrases.Length == 0)
+            {
+                Console.WriteLine("[TEST] ERROR: No commands to inject in auto mode. Use --command or --interactive.");
+                KillGame();
+                return;
+            }
 
-        RunCommandLoop(testPhrases, interval, duration);
+            Console.WriteLine("[TEST] Starting AUTO command injection mode (round-robin)...");
+            if (duration.HasValue)
+                Console.WriteLine($"[TEST] Will run for {duration} seconds. Press Ctrl+C to stop early.\n");
+            else
+                Console.WriteLine("[TEST] Press Ctrl+C to stop.\n");
+
+            // Set up Ctrl+C handler
+            _cancellationTokenSource = new CancellationTokenSource();
+            Console.CancelKeyPress += (s, e) =>
+            {
+                e.Cancel = true;
+                _cancellationTokenSource?.Cancel();
+            };
+
+            RunCommandLoop(testPhrases, interval, duration);
+        }
 
         // Cleanup
         Console.WriteLine("\n[TEST] Cleaning up...");
@@ -135,19 +171,29 @@ public class TestCommandInjection
     {
         Console.WriteLine("Usage: dotnet run --test-commands <paicom-path> [options]");
         Console.WriteLine();
+        Console.WriteLine("Modes:");
+        Console.WriteLine("  --interactive            Interactive mode: enter commands at prompt");
+        Console.WriteLine("  (default)                Auto mode: cycle through commands at fixed interval");
+        Console.WriteLine();
         Console.WriteLine("Options:");
-        Console.WriteLine("  --interval <ms>          Time between command injections (default: 1000)");
-        Console.WriteLine("  --duration <seconds>     How long to run (default: infinite)");
-        Console.WriteLine("  --command <phrases...>   Custom command phrases to test");
+        Console.WriteLine("  --interval <ms>          Time between command injections in auto mode (default: 1000)");
+        Console.WriteLine("  --duration <seconds>     How long to run in auto mode (default: infinite)");
+        Console.WriteLine("  --command <phrases...>   Custom command phrases to test in auto mode");
         Console.WriteLine("  --runtime-diagnostic     Enable runtime diagnostic mode in the launched game process");
         Console.WriteLine("  --runtime-diagnostic-duration <seconds>  Runtime diagnostic snapshot duration (default: 180)");
         Console.WriteLine();
         Console.WriteLine("Examples:");
-        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe");
+        Console.WriteLine("  # Interactive mode: enter full phrases like 'hey paicom open the browser'");
+        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --interactive");
+        Console.WriteLine();
+        Console.WriteLine("  # Auto mode: cycle through specific commands every 2 seconds");
+        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --command \"open the browser\" \"play music\" --interval 2000");
+        Console.WriteLine();
+        Console.WriteLine("  # Auto mode: run for 30 seconds (loads commands from commands.txt)");
         Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --duration 30");
-        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --interval 500");
-        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --command \"open the browser\" \"play some music\"");
-        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --runtime-diagnostic --runtime-diagnostic-duration 120");
+        Console.WriteLine();
+        Console.WriteLine("  # Interactive mode with runtime diagnostics");
+        Console.WriteLine("  dotnet run --test-commands /path/to/PAIcom.exe --interactive --runtime-diagnostic");
     }
 
     private static string[] LoadCommandsFromFile()
@@ -388,6 +434,91 @@ public class TestCommandInjection
             if (ex.InnerException != null)
                 Console.WriteLine($"[TEST] Inner: {ex.InnerException.Message}");
         }
+    }
+
+    private static void RunInteractiveCommandInput()
+    {
+        Console.WriteLine("\n════════════════════════════════════════════════════════════════");
+        Console.WriteLine("   INTERACTIVE COMMAND INJECTION MODE");
+        Console.WriteLine("════════════════════════════════════════════════════════════════");
+        Console.WriteLine();
+        Console.WriteLine("Enter voice commands exactly as PAIcom would recognize them.");
+        Console.WriteLine("Examples:");
+        Console.WriteLine("  hey paicom open the browser");
+        Console.WriteLine("  hey paicom play some music");
+        Console.WriteLine("  hey paicom volume up");
+        Console.WriteLine("  hey paicom open the steam chat");
+        Console.WriteLine();
+        Console.WriteLine("Commands: 'help' for command list, 'exit' or Ctrl+C to quit");
+        Console.WriteLine("════════════════════════════════════════════════════════════════\n");
+
+        _cancellationTokenSource = new CancellationTokenSource();
+        Console.CancelKeyPress += (s, e) =>
+        {
+            e.Cancel = true;
+            _cancellationTokenSource?.Cancel();
+        };
+
+        int commandCount = 0;
+        while (_cancellationTokenSource == null || !_cancellationTokenSource.Token.IsCancellationRequested)
+        {
+            try
+            {
+                Console.Write(">> ");
+                var input = Console.ReadLine()?.Trim();
+
+                if (string.IsNullOrEmpty(input))
+                    continue;
+
+                if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) ||
+                    input.Equals("quit", StringComparison.OrdinalIgnoreCase) ||
+                    input.Equals("q", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine("\n[TEST] Exiting interactive mode...");
+                    break;
+                }
+
+                if (input.Equals("help", StringComparison.OrdinalIgnoreCase) ||
+                    input.Equals("?", StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowCommandHelp();
+                    continue;
+                }
+
+                InjectCommand(input);
+                commandCount++;
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("\n[TEST] Interrupted by user.");
+                break;
+            }
+        }
+
+        Console.WriteLine($"\n[TEST] Interactive session completed. {commandCount} commands injected.");
+    }
+
+    private static void ShowCommandHelp()
+    {
+        Console.WriteLine("\n─────────────────────────────────────────────");
+        Console.WriteLine("Available Voice Commands (examples):");
+        Console.WriteLine("─────────────────────────────────────────────");
+        Console.WriteLine("Browser:     hey paicom open the browser");
+        Console.WriteLine("Music:       hey paicom play some music");
+        Console.WriteLine("Volume:      hey paicom volume up");
+        Console.WriteLine("             hey paicom volume down");
+        Console.WriteLine("Steam:       hey paicom open the steam chat");
+        Console.WriteLine("             hey paicom open my steam library");
+        Console.WriteLine("             hey paicom show my steam friends");
+        Console.WriteLine("             hey paicom hide my online status on steam");
+        Console.WriteLine("             hey paicom put my steam status online");
+        Console.WriteLine("Task Mgr:    hey paicom open task manager");
+        Console.WriteLine("VR Mode:     hey paicom start the steam vr mode");
+        Console.WriteLine("Discord:     hey paicom open discord");
+        Console.WriteLine("YouTube:     hey paicom open youtube");
+        Console.WriteLine("─────────────────────────────────────────────");
+        Console.WriteLine("Hint: Type the full phrase starting with 'hey paicom' or just the command part.");
+        Console.WriteLine("─────────────────────────────────────────────\n");
     }
 }
 

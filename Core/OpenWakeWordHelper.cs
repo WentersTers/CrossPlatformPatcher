@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using CrossPlatformPatcher.Core.Audio;
 using CrossPlatformPatcher.Core.Animation;
 
@@ -64,19 +65,56 @@ public static class OpenWakeWordHelper
     private static string? _liveTestLogPath;
     private static readonly object _liveTestLock = new();
 
+    // File-based command input mode (read from input-command.txt)
+    private static bool _fileCommandInputEnabled;
+    private static string? _fileCommandInputPath;
+    private static bool _fileCommandInputThreadStarted;
+    private static readonly object _fileCommandInputLock = new();
+
     private static readonly object _commandManifestLock = new();
     private static Lazy<IReadOnlyList<CommandManifestEntry>> KnownCommands = new(LoadKnownCommands, true);
     private static readonly object _dispatcherLock = new();
     private static readonly ICommandDispatcher[] CommandDispatchers =
+        BuildCommandDispatcherPipeline();
+
+    /// <summary>
+    /// Builds the command dispatcher pipeline, optimizing for the current platform.
+    /// On Unix systems, ProcessFallback runs before Reflection to prefer native commands
+    /// over trying to dispatch into the Wine-running game.
+    /// </summary>
+    private static ICommandDispatcher[] BuildCommandDispatcherPipeline()
     {
-        new SpeechEmulationCommandDispatcher(),
-        new UiSimulationCommandDispatcher(),
-        new CrossPlatformAnimationCommandDispatcher(),
-        new CrossPlatformAudioCommandDispatcher(),
-        new ReflectionCommandDispatcher(),
-        new AnimationReflectionDispatcher(),
-        new ProcessFallbackCommandDispatcher()
-    };
+        var commonDispatchers = new ICommandDispatcher[]
+        {
+            new SpeechEmulationCommandDispatcher(),
+            new UiSimulationCommandDispatcher(),
+            new CrossPlatformAnimationCommandDispatcher(),
+            new CrossPlatformAudioCommandDispatcher(),
+        };
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // Windows: try game reflection first, then fall back to processes
+            return commonDispatchers.Concat(new ICommandDispatcher[]
+            {
+                new ReflectionCommandDispatcher(),
+                new AnimationReflectionDispatcher(),
+                new ProcessFallbackCommandDispatcher()
+            }).ToArray();
+        }
+        else
+        {
+            // Unix (macOS/Linux): try native process commands BEFORE game reflection
+            // This ensures commands like "show steam friends" or "open task manager"
+            // execute natively instead of trying to call into the Wine-running game
+            return commonDispatchers.Concat(new ICommandDispatcher[]
+            {
+                new ProcessFallbackCommandDispatcher(),
+                new ReflectionCommandDispatcher(),
+                new AnimationReflectionDispatcher(),
+            }).ToArray();
+        }
+    }
     private static MethodInfo? _cachedGameHandlerMethod;
     private static object? _cachedGameHandlerTarget;
     private static MethodInfo? _cachedAnimationHandlerMethod;
@@ -247,12 +285,18 @@ public static class OpenWakeWordHelper
 
     private sealed class ProcessFallbackCommandDispatcher : ICommandDispatcher
     {
-        private static readonly string[] ScriptExtensions = { ".sh", ".command", ".bat", ".cmd", ".exe", ".ps1" };
-
         public string Name => "process-fallback";
 
         public bool TryDispatch(CommandAction action, out string detail)
         {
+            // First, try to handle common commands natively on Unix systems
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (TryDispatchNativeCommand(action, out detail))
+                    return true;
+            }
+
+            // Fall back to script execution
             if (TryResolveScriptPath(action.CommandToken, out var scriptPath))
             {
                 if (TryStartScript(scriptPath!, out detail))
@@ -265,6 +309,267 @@ public static class OpenWakeWordHelper
             return false;
         }
 
+        /// <summary>
+        /// Handles common commands natively on macOS/Linux without requiring script files.
+        /// </summary>
+        private static bool TryDispatchNativeCommand(CommandAction action, out string detail)
+        {
+            var token = action.CommandToken.ToLowerInvariant();
+            
+            try
+            {
+                // Browser commands
+                if (token.Contains("browser") || token.Contains("web") || token == "open the browser")
+                {
+                    return ExecuteNativeCommand("open-default-browser", out detail);
+                }
+                
+                // Task Manager / Activity Monitor
+                if (token.Contains("task") && (token.Contains("manager") || token.Contains("monitor")))
+                {
+                    return ExecuteNativeCommand("open-task-manager", out detail);
+                }
+                
+                // Steam commands
+                if (token.Contains("steam"))
+                {
+                    // Check for steam chat specifically
+                    if (token.Contains("chat"))
+                    {
+                        return ExecuteNativeCommand("steam-chat", out detail);
+                    }
+                    
+                    // Check for status-related commands (invisible, offline, hide status)
+                    if (token.Contains("invisible") ||
+                        token.Contains("offline") ||
+                        (token.Contains("hide") && token.Contains("status")) ||
+                        (token.Contains("appear") && token.Contains("offline")))
+                    {
+                        return ExecuteNativeCommand("steam-set-invisible", out detail);
+                    }
+                    if (token.Contains("online") ||
+                        token.Contains("active") ||
+                        (token.Contains("show") && token.Contains("status")))
+                    {
+                        return ExecuteNativeCommand("steam-set-online", out detail);
+                    }
+                    if (token.Contains("friend"))
+                    {
+                        return ExecuteNativeCommand("steam-friends", out detail);
+                    }
+                    if (token.Contains("library"))
+                    {
+                        return ExecuteNativeCommand("steam-library", out detail);
+                    }
+                    if (token.Contains("overlay"))
+                    {
+                        return ExecuteNativeCommand("steam-overlay", out detail);
+                    }
+                    // Generic steam command - open Steam
+                    return ExecuteNativeCommand("steam-launch", out detail);
+                }
+                
+                detail = "Not a native command token.";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Native command execution failed: {ex.Message}";
+                LogEvent($"[oww-native-command-error] {detail}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Executes a native platform command.
+        /// </summary>
+        private static bool ExecuteNativeCommand(string commandType, out string detail)
+        {
+            try
+            {
+                ProcessStartInfo? psi = null;
+                
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                {
+                    psi = commandType switch
+                    {
+                        "open-default-browser" => new ProcessStartInfo
+                        {
+                            FileName = "open",
+                            Arguments = "-a Safari https://",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "open-task-manager" => new ProcessStartInfo
+                        {
+                            FileName = "open",
+                            Arguments = "-a 'Activity Monitor'",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-friends" => new ProcessStartInfo
+                        {
+                            FileName = "open",
+                            Arguments = "steam://friends",
+                            UseShellExecute = true
+                        },
+                        "steam-chat" => new ProcessStartInfo
+                        {
+                            FileName = "osascript",
+                            Arguments = "-e 'tell application \"Steam\" to activate' -e 'delay 0.5' -e 'tell application \"System Events\" to tell process \"Steam\"' -e 'set frontmost to true' -e 'end tell' -e 'delay 0.3' -e 'tell application \"System Events\"' -e 'keystroke \"`\" using {control down, shift down}' -e 'delay 0.3' -e 'keystroke \"open steam://open/friends\"' -e 'key code 36' -e 'end tell' 2>/dev/null || open 'steam://open/friends'",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-library" => new ProcessStartInfo
+                        {
+                            FileName = "open",
+                            Arguments = "steam://nav/main",
+                            UseShellExecute = true
+                        },
+                        "steam-overlay" => new ProcessStartInfo
+                        {
+                            FileName = "open",
+                            Arguments = "steam://open/settings",
+                            UseShellExecute = true
+                        },
+                        "steam-launch" => new ProcessStartInfo
+                        {
+                            FileName = "open",
+                            Arguments = "-a Steam",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-set-invisible" => new ProcessStartInfo
+                        {
+                            FileName = "osascript",
+                            Arguments = "-e 'tell application \"Steam\" to activate' -e 'delay 0.5' -e 'tell application \"System Events\" to tell process \"Steam\"' -e 'set frontmost to true' -e 'end tell' -e 'delay 0.3' -e 'tell application \"System Events\"' -e 'keystroke \"`\" using {control down, shift down}' -e 'delay 0.3' -e 'keystroke \"friends status invisible\"' -e 'key code 36' -e 'end tell' 2>/dev/null || open 'steam://friends'",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-set-online" => new ProcessStartInfo
+                        {
+                            FileName = "osascript",
+                            Arguments = "-e 'tell application \"Steam\" to activate' -e 'delay 0.5' -e 'tell application \"System Events\" to tell process \"Steam\"' -e 'set frontmost to true' -e 'end tell' -e 'delay 0.3' -e 'tell application \"System Events\"' -e 'keystroke \"`\" using {control down, shift down}' -e 'delay 0.3' -e 'keystroke \"friends status online\"' -e 'key code 36' -e 'end tell' 2>/dev/null || open 'steam://friends'",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        _ => null
+                    };
+                }
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                {
+                    psi = commandType switch
+                    {
+                        "open-default-browser" => new ProcessStartInfo
+                        {
+                            FileName = "xdg-open",
+                            Arguments = "https://",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "open-task-manager" => new ProcessStartInfo
+                        {
+                            FileName = "bash",
+                            Arguments = "-c \"gnome-system-monitor || mate-system-monitor || xterm -e htop || htop\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-friends" => new ProcessStartInfo
+                        {
+                            FileName = "xdg-open",
+                            Arguments = "steam://friends",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-chat" => new ProcessStartInfo
+                        {
+                            FileName = "bash",
+                            Arguments = "-c \"(command -v steam >/dev/null 2>&1 && steam 'steam://open/friends' || xdg-open 'steam://open/friends') 2>/dev/null\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-library" => new ProcessStartInfo
+                        {
+                            FileName = "xdg-open",
+                            Arguments = "steam://nav/main",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-overlay" => new ProcessStartInfo
+                        {
+                            FileName = "xdg-open",
+                            Arguments = "steam://open/settings",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-launch" => new ProcessStartInfo
+                        {
+                            FileName = "bash",
+                            Arguments = "-c \"command -v steam >/dev/null 2>&1 && steam || xdg-open steam://open/main\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-set-invisible" => new ProcessStartInfo
+                        {
+                            FileName = "bash",
+                            Arguments = "-c \"steam +opensteamweb +friends_status_invisible 2>/dev/null || (xdg-open 'steam://friends' && echo 'Steam friends opened - manually set to invisible')\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        "steam-set-online" => new ProcessStartInfo
+                        {
+                            FileName = "bash",
+                            Arguments = "-c \"steam +opensteamweb +friends_status_online 2>/dev/null || (xdg-open 'steam://friends' && echo 'Steam friends opened - manually set to online')\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        },
+                        _ => null
+                    };
+                }
+                
+                if (psi != null)
+                {
+                    LogEvent($"[oww-native-command] Executing: {psi.FileName} {psi.Arguments}");
+                    Process.Start(psi);
+                    detail = $"Executed native command: {psi.FileName} {psi.Arguments}";
+                    return true;
+                }
+                
+                detail = $"No native command handler for: {commandType}";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Failed to execute native command: {ex.Message}";
+                LogEvent($"[oww-native-command-error] {detail}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Returns script file extensions in platform-specific priority order.
+        /// Prefers native scripts for the current OS to avoid Wine/compatibility overhead.
+        /// </summary>
+        private static string[] GetPlatformSpecificScriptExtensions()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // Windows: prefer batch files, then PS1, then fall back to .exe/.sh
+                return new[] { ".bat", ".cmd", ".ps1", ".exe", ".sh", ".command" };
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                // macOS: prefer .command (Finder double-click wrapper) and .sh (shell script)
+                // Fall back to .exe/.bat only after Unix-native options exhausted
+                return new[] { ".command", ".sh", ".exe", ".bat", ".cmd", ".ps1" };
+            }
+            else
+            {
+                // Linux: prefer .sh shell scripts, fall back to .exe/.bat with Wine
+                return new[] { ".sh", ".exe", ".bat", ".cmd", ".ps1", ".command" };
+            }
+        }
+
         private static bool TryResolveScriptPath(string commandToken, out string? scriptPath)
         {
             scriptPath = null;
@@ -274,14 +579,17 @@ public static class OpenWakeWordHelper
 
             var searchRoots = new[]
             {
+                System.IO.Path.Combine(baseDirectory!, "files"),
                 System.IO.Path.Combine(baseDirectory!, "custom-commands"),
                 System.IO.Path.Combine(baseDirectory!, "animations"),
                 baseDirectory!
             };
 
+            var platformExtensions = GetPlatformSpecificScriptExtensions();
+
             foreach (var root in searchRoots)
             {
-                foreach (var extension in ScriptExtensions)
+                foreach (var extension in platformExtensions)
                 {
                     var candidate = System.IO.Path.Combine(root, commandToken + extension);
                     if (System.IO.File.Exists(candidate))
@@ -300,11 +608,14 @@ public static class OpenWakeWordHelper
             try
             {
                 var extension = System.IO.Path.GetExtension(scriptPath);
+                LogEvent($"[batch-converter-diag] TryStartScript called: path={scriptPath}, extension={extension}, isWindows={RuntimeInformation.IsOSPlatform(OSPlatform.Windows)}");
+                
                 ProcessStartInfo startInfo;
 
                 if (string.Equals(extension, ".sh", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(extension, ".command", StringComparison.OrdinalIgnoreCase))
                 {
+                    LogEvent($"[batch-converter-diag] Executing as shell script: {extension}");
                     startInfo = new ProcessStartInfo
                     {
                         FileName = "sh",
@@ -317,19 +628,41 @@ public static class OpenWakeWordHelper
                 else if (string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase) ||
                          string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase))
                 {
-                    startInfo = new ProcessStartInfo
+                    // Check if we're actually on Windows or running under Wine on Unix
+                    bool actuallyWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+                    bool isWine = IsRunningUnderWine();
+                    
+                    LogEvent($"[batch-converter-diag] Batch file detected: actuallyWindows={actuallyWindows}, isWine={isWine}");
+                    
+                    if (actuallyWindows && !isWine)
                     {
-                        FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "wine",
-                        Arguments = Environment.OSVersion.Platform == PlatformID.Win32NT
-                            ? $"/c {QuoteArgument(scriptPath)}"
-                            : $"cmd /c {QuoteArgument(scriptPath)}",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WorkingDirectory = System.IO.Path.GetDirectoryName(scriptPath)
-                    };
+                        LogEvent($"[batch-converter-diag] Executing batch directly on Windows");
+                        startInfo = new ProcessStartInfo
+                        {
+                            FileName = "cmd.exe",
+                            Arguments = $"/c {QuoteArgument(scriptPath)}",
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            WorkingDirectory = System.IO.Path.GetDirectoryName(scriptPath)
+                        };
+                    }
+                    else
+                    {
+                        // On Unix or Wine on Unix, translate the batch file to shell syntax and execute
+                        LogEvent($"[batch-converter-diag] Translating batch file for Unix (Wine={isWine})");
+                        if (!TryTranslateAndExecuteBatch(scriptPath, out detail))
+                        {
+                            LogEvent($"[batch-converter-diag] Batch translation failed: {detail}");
+                            return false;
+                        }
+
+                        LogEvent($"[batch-converter-diag] Batch translation succeeded");
+                        return true;
+                    }
                 }
                 else
                 {
+                    LogEvent($"[batch-converter-diag] Executing as generic file: {extension}");
                     startInfo = new ProcessStartInfo
                     {
                         FileName = scriptPath,
@@ -348,8 +681,164 @@ public static class OpenWakeWordHelper
             catch (Exception ex)
             {
                 detail = $"Failed to launch fallback script '{scriptPath}': {ex.GetType().Name}: {ex.Message}";
+                LogEvent($"[batch-converter-error] {detail}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Detects if code is running under Wine/Whisky by checking for Wine environment variables
+        /// or by attempting to invoke Unix commands.
+        /// </summary>
+        private static bool IsRunningUnderWine()
+        {
+            // Check environment variables that Wine sets
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WINEPREFIX")))
+                return true;
+            
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WINE")))
+                return true;
+
+            // Check if we can successfully invoke a Unix shell
+            try
+            {
+                var testProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "sh",
+                        Arguments = "-c \"echo 1\"",
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }
+                };
+                testProcess.Start();
+                testProcess.WaitForExit(500); // 500ms timeout
+                
+                // If we got here, sh is available (Unix-like environment)
+                return testProcess.ExitCode == 0 || testProcess.HasExited;
+            }
+            catch
+            {
+                // sh not available or failed (true Windows)
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Translates a batch file to shell syntax and executes it on Unix.
+        /// Supports development mode (PAICOM_BATCH_TO_SHELL_MODE=generate-and-test) to generate/validate .sh files.
+        /// </summary>
+        private static bool TryTranslateAndExecuteBatch(string batchFilePath, out string detail)
+        {
+            detail = "";
+
+            try
+            {
+                // Read batch file content
+                if (!System.IO.File.Exists(batchFilePath))
+                {
+                    detail = $"Batch file not found: '{batchFilePath}'";
+                    return false;
+                }
+
+                var batchContent = System.IO.File.ReadAllText(batchFilePath);
+                var translatedContent = BatchFileTranslator.TranslateBatchContent(batchContent);
+
+                if (string.IsNullOrWhiteSpace(translatedContent))
+                {
+                    detail = $"Batch file produced no executable commands after translation: '{batchFilePath}'";
+                    return false;
+                }
+
+                // Check if we're in generate-and-test mode
+                var converterMode = Environment.GetEnvironmentVariable("PAICOM_BATCH_TO_SHELL_MODE") ?? "internal";
+                var isGenerateAndTest = converterMode.Equals("generate-and-test", StringComparison.OrdinalIgnoreCase);
+
+                // In generate-and-test mode, write the .sh file and validate it
+                if (isGenerateAndTest)
+                {
+                    if (BatchFileTranslator.TryGenerateShellEquivalent(batchFilePath, translatedContent, out var generatedPath, LogEvent))
+                    {
+                        // Validate syntax
+                        var (isValid, error) = BatchFileTranslator.ValidateShellSyntax(translatedContent);
+                        if (!isValid)
+                        {
+                            LogEvent($"[batch-converter-warning] Generated shell script has syntax issues: {error}");
+                        }
+                        else
+                        {
+                            LogEvent($"[batch-converter] Shell equivalent validated successfully: {generatedPath}");
+                        }
+                    }
+                }
+
+                // Convert Wine path to Unix path if needed
+                var unixWorkingDir = ConvertWinePathToUnix(System.IO.Path.GetDirectoryName(batchFilePath) ?? ".");
+                LogEvent($"[batch-converter] Working directory: Wine='{System.IO.Path.GetDirectoryName(batchFilePath)}' -> Unix='{unixWorkingDir}'");
+                
+                // Execute the translated content via shell
+                LogEvent($"[batch-converter] Executing translated command: {translatedContent}");
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "sh",
+                    Arguments = "-c " + QuoteArgument(translatedContent),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = unixWorkingDir
+                };
+
+                var process = Process.Start(startInfo);
+                if (process == null)
+                {
+                    detail = $"Failed to start shell process for translated batch file: '{batchFilePath}'";
+                    return false;
+                }
+
+                process.WaitForExit();
+                
+                detail = process.ExitCode == 0
+                    ? $"Translated and executed batch file: '{batchFilePath}'"
+                    : $"Translated batch file executed with exit code {process.ExitCode}: '{batchFilePath}'";
+
+                LogEvent($"[batch-converter] Executed translated batch: {batchFilePath} (exit code: {process.ExitCode})");
+                return process.ExitCode == 0;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Failed to translate and execute batch file '{batchFilePath}': {ex.GetType().Name}: {ex.Message}";
+                LogEvent($"[batch-converter-error] {detail}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Converts a Wine path (e.g., Z:\Users\...) to a Unix path.
+        /// Wine typically maps Z:\ to the actual filesystem root.
+        /// </summary>
+        private static string ConvertWinePathToUnix(string winePath)
+        {
+            if (string.IsNullOrEmpty(winePath))
+                return ".";
+            
+            // Replace backslashes with forward slashes
+            var unixPath = winePath.Replace('\\', '/');
+            
+            // If it starts with Z:/, remove it (Z: is Wine's root mapping)
+            if (unixPath.StartsWith("Z:/", StringComparison.OrdinalIgnoreCase))
+            {
+                unixPath = unixPath.Substring(2); // Remove "Z:"
+            }
+            
+            // If path doesn't exist or is just a drive letter, use current directory
+            if (!System.IO.Directory.Exists(unixPath) && !System.IO.Directory.Exists(winePath))
+            {
+                LogEvent($"[batch-converter-diag] Path doesn't exist: {unixPath}, using '.'");
+                return ".";
+            }
+            
+            return unixPath;
         }
 
         private static string QuoteArgument(string argument)
@@ -1067,6 +1556,135 @@ public static class OpenWakeWordHelper
                     LogEvent($"[livetest] Test log: {_liveTestLogPath}");
             }
         }
+
+        // Initialize file-based command input if enabled
+        lock (_fileCommandInputLock)
+        {
+            var fileInputVar = Environment.GetEnvironmentVariable("PAICOM_FILE_COMMAND_INPUT");
+            _fileCommandInputEnabled = string.Equals(fileInputVar, "1", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(fileInputVar, "true", StringComparison.OrdinalIgnoreCase);
+            
+            if (_fileCommandInputEnabled)
+            {
+                _fileCommandInputPath = Environment.GetEnvironmentVariable("PAICOM_FILE_COMMAND_INPUT_PATH");
+                if (string.IsNullOrWhiteSpace(_fileCommandInputPath))
+                {
+                    _fileCommandInputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "input-command.txt");
+                }
+
+                LogEvent($"[fileinput] File-based command input ENABLED");
+                LogEvent($"[fileinput] Input file path: {_fileCommandInputPath}");
+
+                // Create the input file if it doesn't exist
+                try
+                {
+                    if (!File.Exists(_fileCommandInputPath))
+                    {
+                        File.WriteAllText(_fileCommandInputPath, string.Empty);
+                        LogEvent($"[fileinput] Created input file: {_fileCommandInputPath}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogEvent($"[fileinput-error] Failed to create input file: {ex.Message}");
+                    _fileCommandInputEnabled = false;
+                }
+
+                // Start the file monitoring thread if enabled
+                if (_fileCommandInputEnabled && !_fileCommandInputThreadStarted)
+                {
+                    _fileCommandInputThreadStarted = true;
+                    var monitorThread = new Thread(() => MonitorFileCommandInput()) 
+                    { 
+                        IsBackground = true, 
+                        Name = "FileCommandInputMonitor"
+                    };
+                    monitorThread.Start();
+                    LogEvent($"[fileinput] File monitoring thread started");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Background thread that monitors input-command.txt for new commands.
+    /// Reads command, processes it through animation pipeline, and clears file.
+    /// </summary>
+    private static void MonitorFileCommandInput()
+    {
+        const int checkIntervalMs = 500;
+        
+        while (_fileCommandInputEnabled && !string.IsNullOrEmpty(_fileCommandInputPath))
+        {
+            try
+            {
+                Thread.Sleep(checkIntervalMs);
+
+                if (!File.Exists(_fileCommandInputPath))
+                    continue;
+
+                var content = File.ReadAllText(_fileCommandInputPath).Trim();
+                
+                if (string.IsNullOrWhiteSpace(content))
+                    continue;
+
+                // Found a command - process it
+                LogEvent($"[fileinput] Received command: {content}");
+                
+                // Resolve and dispatch the command through the animation pipeline
+                var action = ResolveCommandAction(content);
+                if (action != null)
+                {
+                    var success = DispatchCommandAction(action, out var detail);
+                    LogEvent($"[fileinput] Dispatch result: {(success ? "SUCCESS" : "FAILED")} - {detail}");
+                    
+                    // Queue animation script execution if one is referenced (same as voice path)
+                    if (success && !string.IsNullOrWhiteSpace(action.ScriptReference))
+                    {
+                        LogEvent($"[fileinput] Queuing animation script execution: {action.ScriptReference}");
+                        System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                        {
+                            try
+                            {
+                                ExecuteAnimationScriptAsync(action.ScriptReference).ContinueWith(task =>
+                                {
+                                    if (task.IsFaulted)
+                                    {
+                                        LogEvent($"[fileinput] Animation script task faulted: {task.Exception?.InnerException?.Message}");
+                                    }
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                LogEvent($"[fileinput] Exception queueing animation script: {ex.GetType().Name}: {ex.Message}");
+                            }
+                        }, null);
+                    }
+                }
+                else
+                {
+                    LogEvent($"[fileinput] Command not recognized: {content}");
+                }
+
+                // Clear the file for next command
+                try
+                {
+                    File.WriteAllText(_fileCommandInputPath, string.Empty);
+                    LogEvent($"[fileinput] Input file cleared, ready for next command");
+                }
+                catch (Exception ex)
+                {
+                    LogEvent($"[fileinput-error] Failed to clear input file: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent($"[fileinput-error] Exception in file input monitor: {ex.GetType().Name}: {ex.Message}");
+                Thread.Sleep(1000); // Back off on error
+            }
+        }
+
+        LogEvent($"[fileinput] File command input monitor thread exiting");
     }
 
     /// <summary>
@@ -1720,16 +2338,37 @@ public static class OpenWakeWordHelper
 
     private static bool DispatchCommandAction(CommandAction action, out string detail)
     {
-        foreach (var dispatcher in CommandDispatchers)
-        {
-            if (dispatcher.TryDispatch(action, out detail))
-                return true;
+        var results = new List<string>();
+        var anySucceeded = false;
 
-            LogEvent($"[oww-command] Dispatcher '{dispatcher.Name}' skipped: {detail}");
+        LogEvent($"[oww-dispatch] Starting dispatch for command token: '{action.CommandToken}'");
+        LogEvent($"[oww-dispatch] Dispatchers will be tried in order: {string.Join(", ", CommandDispatchers.Select(d => d.Name))}");
+
+        // Try all dispatchers (don't stop on first success) so animations and batch files both execute
+        for (int i = 0; i < CommandDispatchers.Length; i++)
+        {
+            var dispatcher = CommandDispatchers[i];
+            LogEvent($"[oww-dispatch] Trying dispatcher [{i+1}/{CommandDispatchers.Length}]: {dispatcher.Name}");
+            
+            if (dispatcher.TryDispatch(action, out var dispatchDetail))
+            {
+                anySucceeded = true;
+                results.Add($"[{dispatcher.Name}] {dispatchDetail}");
+                LogEvent($"[oww-dispatch-success] Dispatcher '{dispatcher.Name}' succeeded: {dispatchDetail}");
+            }
+            else
+            {
+                results.Add($"[{dispatcher.Name}] skipped: {dispatchDetail}");
+                LogEvent($"[oww-dispatch-skip] Dispatcher '{dispatcher.Name}' skipped: {dispatchDetail}");
+            }
         }
 
-        detail = "No dispatcher could execute the command.";
-        return false;
+        detail = anySucceeded
+            ? $"Command executed: {string.Join("; ", results.Where(r => !r.Contains("skipped")))}"
+            : "No dispatcher could execute the command.";
+
+        LogEvent($"[oww-dispatch-final] Result: {(anySucceeded ? "SUCCESS" : "FAILED")} - {detail}");
+        return anySucceeded;
     }
 
     private static bool TryGetGameCommandHandler(out object? target, out MethodInfo? method, out string detail)

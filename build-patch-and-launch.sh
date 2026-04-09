@@ -21,6 +21,7 @@ TEST_INTERVAL="1000"
 TEST_DURATION=""
 RUNTIME_DIAGNOSTIC=0
 RUNTIME_DIAGNOSTIC_DURATION=""
+FILE_COMMAND_INPUT=0
 
 usage() {
     cat <<'EOF'
@@ -33,6 +34,7 @@ Options:
   --test-commands              Run in command injection test mode (auto-launch game).
   --test-interval <ms>         Interval between test commands in ms (default: 1000).
   --test-duration <seconds>    Run tests for N seconds, then auto-stop (default: infinite).
+  --file-command-input         Enable file-based command input (read from input-command.txt).
     --runtime-diagnostic         Enable runtime diagnostics in launched game process.
     --runtime-diagnostic-duration <seconds>  Runtime diagnostics snapshot duration.
   --verbose                    Show all executed commands (set -x mode).
@@ -45,6 +47,7 @@ Examples:
   ./build-patch-and-launch.sh
   ./build-patch-and-launch.sh --rid osx-arm64
   ./build-patch-and-launch.sh --migration-mode probe
+  ./build-patch-and-launch.sh --file-command-input  # Enable input-command.txt monitoring
   ./build-patch-and-launch.sh --test-commands
   ./build-patch-and-launch.sh --test-commands --test-duration 30 --test-interval 500
     ./build-patch-and-launch.sh --test-commands --runtime-diagnostic --runtime-diagnostic-duration 120
@@ -185,6 +188,10 @@ while [[ $# -gt 0 ]]; do
             RUNTIME_DIAGNOSTIC_DURATION="$2"
             shift 2
             ;;
+        --file-command-input)
+            FILE_COMMAND_INPUT=1
+            shift
+            ;;
         --show-build-output)
             SHOW_BUILD_OUTPUT=1
             shift
@@ -302,6 +309,11 @@ if [[ -n "${PAICOM_LIVE_TEST_LOG:-}" ]]; then
     export PAICOM_LIVE_TEST_LOG
 fi
 export PAICOM_MIGRATION_MODE
+
+if (( FILE_COMMAND_INPUT )); then
+    export PAICOM_FILE_COMMAND_INPUT=1
+    export PAICOM_FILE_COMMAND_INPUT_PATH="$PLAYER_DIR/input-command.txt"
+fi
 
 if (( TEST_COMMANDS )); then
     printf '\n==> Launching command injection test mode\n'
