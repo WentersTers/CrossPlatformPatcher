@@ -554,7 +554,7 @@ run.bat
 - `PAICOM_OWW_AUDIO_SAMPLE_RATE` (int, default 16000)
 - `PAICOM_OWW_VERBOSE_LOG` (bool, default false)
 - `PAICOM_OWW_MIC_BUFFER_MS` (int, default 200)
-- `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.80)
+- `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.65)
 - `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450)
 - `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000)
 
@@ -652,6 +652,30 @@ If the in-process handler is not available yet, runtime will emit an explicit fa
 1. Increase `PAICOM_OWW_AUDIO_CHUNK_SIZE` (e.g., 2048) to reduce inference frequency
 2. Lower `PAICOM_OWW_INFERENCE_THREAD_SCALE` (e.g., 0.5) to single-thread inference
 3. Move background task to lower-priority queue (OS-dependent)
+
+## Testing and Debugging
+
+### Command Injection (File-Based)
+
+Test voice commands without using your microphone. Write commands to a file and PAIcom processes them automatically through the animation and dispatch pipeline:
+
+```bash
+# Terminal 1: Launch game with file input enabled
+./build-patch-and-launch.sh --file-command-input
+
+# Terminal 2 (while game runs): Send commands
+echo "hey paicom open the browser" > PAIcom_Player_Folder/input-command.txt
+sleep 1
+echo "hey paicom volume up" > PAIcom_Player_Folder/input-command.txt
+```
+
+The command goes through the **same animation dispatch path** as voice recognition would, so animations, scripts, and handlers all execute normally.
+
+**Full guide:** See [COMMAND_INJECTION_GUIDE.md](COMMAND_INJECTION_GUIDE.md)
+
+### Live Testing
+
+For runtime behavior analysis and method testing against a live game instance, see [LIVE-TESTING.md](LIVE-TESTING.md).
 
 ## License
 

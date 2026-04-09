@@ -11,8 +11,10 @@ public static class ProcessStartCompatibilityPatcher
 {
     public static int Patch(ModuleDefMD module, Action<string>? log = null)
     {
-        var rewritten = 0;
+        var rewrittenString = 0;
+        var rewrittenPsi = 0;
         MethodDef? safeStartMethod = null;
+        MethodDef? safeStartPsiMethod = null;
 
         // Snapshot methods first because we may inject a helper type during patching,
         // and mutating module.Types while iterating module.GetTypes() triggers dnlib
@@ -36,19 +38,29 @@ public static class ProcessStartCompatibilityPatcher
                 if (instr.Operand is not IMethod target)
                     continue;
 
-                if (!IsProcessStartStringOverload(target))
+                if (!IsProcessStartMethod(target))
                     continue;
 
-                safeStartMethod ??= EnsureSafeProcessStartMethod(module, target);
-
-                instr.OpCode = OpCodes.Call;
-                instr.Operand = safeStartMethod;
-                rewritten++;
+                if (IsProcessStartStringOverload(target))
+                {
+                    safeStartMethod ??= EnsureSafeProcessStartMethod(module, target);
+                    instr.OpCode = OpCodes.Call;
+                    instr.Operand = safeStartMethod;
+                    rewrittenString++;
+                }
+                else if (IsProcessStartPsiOverload(target))
+                {
+                    safeStartPsiMethod ??= EnsureSafeProcessStartPsiMethod(module, target);
+                    instr.OpCode = OpCodes.Call;
+                    instr.Operand = safeStartPsiMethod;
+                    rewrittenPsi++;
+                }
             }
         }
 
-        log?.Invoke($"Process.Start(string) rewrites applied: {rewritten}");
-        return rewritten;
+        log?.Invoke($"Process.Start(string) rewrites applied: {rewrittenString}");
+        log?.Invoke($"Process.Start(ProcessStartInfo) rewrites applied: {rewrittenPsi}");
+        return rewrittenString + rewrittenPsi;
     }
 
     private static bool IsProcessStartStringOverload(IMethod target)
@@ -60,6 +72,36 @@ public static class ProcessStartCompatibilityPatcher
             return false;
 
         if (target.MethodSig.Params[0].GetElementType() != ElementType.String)
+            return false;
+
+        var declaringTypeName = target.DeclaringType?.FullName;
+        return string.Equals(declaringTypeName, "System.Diagnostics.Process", StringComparison.Ordinal);
+    }
+
+    private static bool IsProcessStartMethod(IMethod target)
+    {
+        if (target.Name != "Start")
+            return false;
+
+        var declaringTypeName = target.DeclaringType?.FullName;
+        if (!string.Equals(declaringTypeName, "System.Diagnostics.Process", StringComparison.Ordinal))
+            return false;
+
+        return target.MethodSig is not null && target.MethodSig.Params.Count == 1;
+    }
+
+    private static bool IsProcessStartPsiOverload(IMethod target)
+    {
+        if (target.Name != "Start")
+            return false;
+
+        if (target.MethodSig is null || target.MethodSig.Params.Count != 1)
+            return false;
+
+        // Check if parameter is ProcessStartInfo
+        var paramType = target.MethodSig.Params[0];
+        var paramFullName = paramType?.FullName;
+        if (!string.Equals(paramFullName, "System.Diagnostics.ProcessStartInfo", StringComparison.Ordinal))
             return false;
 
         var declaringTypeName = target.DeclaringType?.FullName;
@@ -81,6 +123,38 @@ public static class ProcessStartCompatibilityPatcher
         var processType = originalProcessStart.DeclaringType;
         var processSig = new ClassSig(processType);
         var methodSig = MethodSig.CreateStatic(processSig, module.CorLibTypes.String);
+
+        var method = new MethodDefUser(
+            helperMethodName,
+            methodSig,
+            MethodImplAttributes.IL | MethodImplAttributes.Managed,
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+
+        method.Body = BuildSafeStartBody(module, originalProcessStart, processSig);
+
+        helperType.Methods.Add(method);
+        return method;
+    }
+
+    private static MethodDef EnsureSafeProcessStartPsiMethod(ModuleDefMD module, IMethod originalProcessStart)
+    {
+        const string helperTypeName = "CrossPlatformPatcherCompat";
+        const string helperMethodName = "SafeProcessStartPsi";
+
+        var helperType = module.Types.FirstOrDefault(t => t.Name == helperTypeName)
+            ?? CreateHelperType(module, helperTypeName);
+
+        var existing = helperType.Methods.FirstOrDefault(m => m.Name == helperMethodName);
+        if (existing is not null)
+            return existing;
+
+        var processType = originalProcessStart.DeclaringType;
+        var processSig = new ClassSig(processType);
+        
+        // Find ProcessStartInfo type
+        var psiTypeRef = module.CorLibTypes.GetTypeRef("System.Diagnostics", "ProcessStartInfo");
+        var psiTypeSig = psiTypeRef.ToTypeSig();
+        var methodSig = MethodSig.CreateStatic(processSig, psiTypeSig);
 
         var method = new MethodDefUser(
             helperMethodName,
