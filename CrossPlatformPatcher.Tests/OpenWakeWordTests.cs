@@ -26,7 +26,7 @@ public class OpenWakeWordSettingsTests
         Assert.Equal(16000, settings.AudioSampleRate);
         Assert.False(settings.EnableVerboseLogging);
         Assert.Equal(200, settings.MicrophoneBufferMilliseconds);
-        Assert.Equal(0.80f, settings.FuzzyMatchMinConfidence);
+        Assert.Equal(0.65f, settings.FuzzyMatchMinConfidence);
         Assert.Equal(450, settings.PostWakeSilenceGraceMilliseconds);
         Assert.Equal(1000, settings.SpeechSilenceCutoffMilliseconds);
     }
