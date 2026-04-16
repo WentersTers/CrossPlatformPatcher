@@ -95,6 +95,12 @@
     <Compile Remove="dumper\**\*.cs" />
     <EmbeddedResource Remove="dumper\**\*" />
     <None Remove="dumper\**\*" />
+    <Compile Remove="FormAnalyzer\**\*.cs" />
+    <EmbeddedResource Remove="FormAnalyzer\**\*" />
+    <None Remove="FormAnalyzer\**\*" />
+    <Compile Remove=".tmp-deps\**\*.cs" />
+    <EmbeddedResource Remove=".tmp-deps\**\*" />
+    <None Remove=".tmp-deps\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordMicrophoneCapture.cs" />
