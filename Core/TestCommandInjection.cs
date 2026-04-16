@@ -212,7 +212,7 @@ public class TestCommandInjection
             }
 
             var phrases = File.ReadAllLines(commandsFile)
-                .Select(line => line.Trim())
+                .Select(line => line.Trim().Replace("\r", ""))  // Remove Windows line endings
                 .Where(line => !string.IsNullOrEmpty(line) && line.Contains('('))
                 .Select(line =>
                 {
