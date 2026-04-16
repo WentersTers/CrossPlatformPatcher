@@ -8,12 +8,20 @@ namespace CrossPlatformPatcher.Core;
 /// Fuzzy matching utility for command recognition.
 /// Calculates Levenshtein distance (edit distance) between strings
 /// and finds the closest match among a set of known commands.
+/// 
+/// Enhanced with keyword-based matching for hard-to-pronounce words
+/// (roblox, spotify, aliexpress, vinted, furaffinity, etc.)
 /// </summary>
 public sealed class FuzzyMatcher
 {
     /// <summary>
     /// Find the best matching command from a set of known commands.
-    /// 
+    ///
+    /// Uses a multi-stage matching pipeline:
+    /// 1. Keyword matching (if a unique keyword like "roblox" is found)
+    /// 2. Levenshtein distance (fuzzy string matching)
+    /// 3. Word overlap bonus
+    ///
     /// Returns a match result containing the best match and similarity score.
     /// If no match meets the minimum confidence threshold, returns null.
     /// </summary>
@@ -30,36 +38,294 @@ public sealed class FuzzyMatcher
             return null;
 
         var inputNormalized = NormalizeString(input);
+        inputNormalized = NormalizePhoneticAliases(inputNormalized);
+        var inputWords = inputNormalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         var inputLength = inputNormalized.Length;
 
-        // Calculate similarity score for each known command
-        var scores = new List<(string command, float confidence)>();
-        
+        // Build keyword index for unique word detection
+        var keywordIndex = BuildKeywordIndex(knownCommands);
+        logger?.Invoke($"[oww-fuzzy] Built keyword index with {keywordIndex.Count} unique keywords");
+
+        // Stage 1: Try exact keyword match first
+        var keywordMatch = TryKeywordMatch(inputNormalized, inputWords, keywordIndex, knownCommands, logger);
+        if (keywordMatch != null)
+        {
+            logger?.Invoke($"[oww-fuzzy] KEYWORD MATCH: '{input}' -> '{keywordMatch.Value.command}' via keyword '{keywordMatch.Value.keyword}'");
+            return new FuzzyMatchResult(keywordMatch.Value.command, keywordMatch.Value.confidence);
+        }
+
+        // Stage 2: Calculate similarity score for each known command
+        var scores = new List<(string command, float confidence, bool hasKeywordBonus)>();
+
         foreach (var command in knownCommands)
         {
             var commandNormalized = NormalizeString(command);
+            var commandWords = commandNormalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var distance = LevenshteinDistance(inputNormalized, commandNormalized);
-            
+
             // Convert distance to similarity confidence
             // confidence = 1 - (distance / max_length)
             var maxLen = Math.Max(inputLength, commandNormalized.Length);
             var confidence = maxLen > 0 ? 1.0f - (distance / (float)maxLen) : 1.0f;
-            
-            scores.Add((command, confidence));
+
+            // Stage 3: Bonus for word overlap (if any input word appears in command)
+            var hasKeywordBonus = inputWords.Any(w => commandWords.Contains(w));
+            if (hasKeywordBonus)
+            {
+                // Boost by 15% if any word matches
+                confidence = Math.Min(1.0f, confidence * 1.15f);
+            }
+
+            scores.Add((command, confidence, hasKeywordBonus));
         }
 
         // Get the best match
         var best = scores.OrderByDescending(s => s.confidence).FirstOrDefault();
-        
+
         if (best.confidence >= minConfidence)
         {
-            logger?.Invoke($"[oww-fuzzy] Matched '{input}' to '{best.command}' (confidence: {best.confidence:P1})");
+            var bonusNote = best.hasKeywordBonus ? " [word bonus]" : "";
+            logger?.Invoke($"[oww-fuzzy] Matched '{input}' to '{best.command}' (confidence: {best.confidence:P1}{bonusNote})");
             return new FuzzyMatchResult(best.command, best.confidence);
         }
 
         logger?.Invoke($"[oww-fuzzy] No match found for '{input}' (best: {best.command} at {best.confidence:P1}, threshold: {minConfidence:P0})");
         return null;
     }
+
+    /// <summary>
+    /// Normalizes common phonetic aliases back to the command spellings used by the matcher.
+    /// This helps when Vosk hears a spoken phrase like "road blocks" instead of "roblox".
+    /// </summary>
+    public static string NormalizePhoneticAliases(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return string.Empty;
+
+        var normalized = NormalizeString(input);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return normalized;
+
+        var words = normalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0)
+            return normalized;
+
+        var rewritten = new List<string>(words.Length);
+        for (var index = 0; index < words.Length;)
+        {
+            if (TryMatchPhoneticAlias(words, index, out var canonical, out var consumed))
+            {
+                rewritten.Add(canonical);
+                index += consumed;
+                continue;
+            }
+
+            rewritten.Add(words[index]);
+            index++;
+        }
+
+        return string.Join(" ", rewritten);
+    }
+
+    /// <summary>
+    /// Returns the alias vocabulary terms that should be fed into Vosk grammar mode.
+    /// </summary>
+    public static IReadOnlyList<string> GetPhoneticGrammarTerms()
+    {
+        return _phoneticAliases
+            .SelectMany(pair => new[] { pair.Key, pair.Value })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Builds an index of unique keywords across all commands.
+    /// Only includes words that appear in exactly ONE command (unique identifiers).
+    /// </summary>
+    private static Dictionary<string, string> BuildKeywordIndex(IEnumerable<string> commands)
+    {
+        var wordToCommand = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var wordCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Count how many commands each word appears in
+        foreach (var command in commands)
+        {
+            var words = NormalizeString(command).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var uniqueWords = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var word in uniqueWords)
+            {
+                // Skip common filler words
+                if (IsStopWord(word))
+                    continue;
+
+                wordCounts[word] = wordCounts.ContainsKey(word) ? wordCounts[word] + 1 : 1;
+            }
+        }
+
+        // Only keep words that appear in exactly ONE command
+        foreach (var command in commands)
+        {
+            var words = NormalizeString(command).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var uniqueWords = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var word in uniqueWords)
+            {
+                if (IsStopWord(word))
+                    continue;
+
+                if (wordCounts[word] == 1)
+                {
+                    wordToCommand[word] = command;
+                }
+            }
+        }
+
+        return wordToCommand;
+    }
+
+    /// <summary>
+    /// Tries to find a unique keyword match in the input.
+    /// If a keyword like "roblox", "spotify", "aliexpress" appears in input
+    /// and only belongs to ONE command, return that command immediately.
+    /// </summary>
+    private static (string command, string keyword, float confidence)? TryKeywordMatch(
+        string input,
+        string[] inputWords,
+        Dictionary<string, string> keywordIndex,
+        IEnumerable<string> commands,
+        Action<string>? logger)
+    {
+        foreach (var word in inputWords)
+        {
+            if (keywordIndex.TryGetValue(word, out var command))
+            {
+                // Found a unique keyword - return this command with high confidence
+                return (command, word, 0.95f);
+            }
+        }
+
+        // Also try partial matches: check if any keyword contains or is contained by input words
+        foreach (var word in inputWords)
+        {
+            foreach (var kvp in keywordIndex)
+            {
+                var keyword = kvp.Key;
+                var cmd = kvp.Value;
+                // Check if word is similar to keyword (handles typos/misrecognitions)
+                if (word.Length >= 3 && keyword.Length >= 3)
+                {
+                    var similarity = CalculateWordSimilarity(word, keyword);
+                    if (similarity >= 0.85f)
+                    {
+                        logger?.Invoke($"[oww-fuzzy] Keyword similarity: '{word}' ~ '{keyword}' ({similarity:P0})");
+                        return (cmd, keyword, 0.90f);
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryMatchPhoneticAlias(string[] words, int startIndex, out string canonical, out int consumed)
+    {
+        foreach (var alias in _phoneticAliasPatterns)
+        {
+            if (startIndex + alias.AliasWords.Length > words.Length)
+                continue;
+
+            var matched = true;
+            for (var i = 0; i < alias.AliasWords.Length; i++)
+            {
+                if (!string.Equals(words[startIndex + i], alias.AliasWords[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (!matched)
+                continue;
+
+            canonical = alias.Canonical;
+            consumed = alias.AliasWords.Length;
+            return true;
+        }
+
+        canonical = string.Empty;
+        consumed = 1;
+        return false;
+    }
+
+    /// <summary>
+    /// Calculate similarity between two individual words.
+    /// Uses character overlap + length ratio for fast comparison.
+    /// </summary>
+    private static float CalculateWordSimilarity(string word1, string word2)
+    {
+        var s1 = word1.ToLowerInvariant();
+        var s2 = word2.ToLowerInvariant();
+
+        if (s1 == s2)
+            return 1.0f;
+
+        // If one contains the other, high similarity
+        if (s1.Contains(s2) || s2.Contains(s1))
+            return 0.90f;
+
+        // Use character bigram overlap for short words
+        if (s1.Length >= 3 && s2.Length >= 3)
+        {
+            var bigrams1 = GetBigrams(s1);
+            var bigrams2 = GetBigrams(s2);
+            var intersection = bigrams1.Intersect(bigrams2).Count();
+            var union = bigrams1.Union(bigrams2).Count();
+            return union > 0 ? (float)intersection / union : 0.0f;
+        }
+
+        return 0.0f;
+    }
+
+    /// <summary>
+    /// Get character bigrams from a string.
+    /// </summary>
+    private static HashSet<string> GetBigrams(string s)
+    {
+        var bigrams = new HashSet<string>();
+        for (int i = 0; i < s.Length - 1; i++)
+        {
+            bigrams.Add(s.Substring(i, 2));
+        }
+        return bigrams;
+    }
+
+    /// <summary>
+    /// Check if a word is a common stop word that shouldn't be used for matching.
+    /// </summary>
+    private static bool IsStopWord(string word)
+    {
+        return word.Length <= 2 || _stopWords.Contains(word.ToLowerInvariant());
+    }
+
+    private static readonly HashSet<string> _stopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "need", "dare", "ought",
+        "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above", "below",
+        "between", "out", "off", "over", "under", "again", "further", "then",
+        "once", "here", "there", "when", "where", "why", "how", "all", "both",
+        "each", "few", "more", "most", "other", "some", "such", "no", "nor",
+        "not", "only", "own", "same", "so", "than", "too", "very", "just",
+        "don't", "doesn't", "didn't", "won't", "wouldn't", "shouldn't", "couldn't",
+        "i", "i'm", "i'm", "me", "my", "myself", "we", "our", "ours", "ourselves",
+        "you", "your", "yours", "yourself", "yourselves", "he", "him", "his",
+        "himself", "she", "her", "hers", "herself", "it", "its", "itself",
+        "they", "them", "their", "theirs", "themselves", "what", "which", "who",
+        "whom", "this", "that", "these", "those", "am", "about"
+    };
 
     /// <summary>
     /// Calculate Levenshtein distance (edit distance) between two strings.
@@ -100,6 +366,44 @@ public sealed class FuzzyMatcher
     {
         return (s ?? string.Empty).ToLowerInvariant().Trim();
     }
+
+    private static readonly Dictionary<string, string> _phoneticAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["road blocks"] = "roblox",
+        ["roadblocks"] = "roblox",
+        ["rob locks"] = "roblox",
+        ["robloks"] = "roblox",
+        ["spot if i"] = "spotify",
+        ["spot a fi"] = "spotify",
+        ["spotifiy"] = "spotify",
+        ["spotifie"] = "spotify",
+        ["ali express"] = "aliexpress",
+        ["allie express"] = "aliexpress",
+        ["reddit"] = "redit",
+        ["twitter"] = "twiter",
+        ["instagram"] = "insta grem",
+        ["insta gram"] = "insta grem",
+        ["furaffinity"] = "fur affinity",
+        ["fur affinity"] = "fur affinity",
+        ["furry affinity"] = "fur affinity",
+        ["vrchat"] = "viarchat",
+        ["v r chat"] = "viarchat",
+        ["vee are chat"] = "viarchat",
+        ["newgrounds"] = "new grounds",
+        ["bluesky"] = "blue sky",
+        ["boykisser"] = "boy kisser",
+        ["chatgpt"] = "chat gi bi ti",
+        ["chat g p t"] = "chat gi bi ti",
+        ["fiverr"] = "fiver",
+        ["pin terest"] = "pinterest",
+        ["vin tid"] = "vinted"
+    };
+
+    private static readonly (string[] AliasWords, string Canonical)[] _phoneticAliasPatterns = _phoneticAliases
+        .Select(pair => (AliasWords: pair.Key.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), Canonical: pair.Value))
+        .OrderByDescending(alias => alias.AliasWords.Length)
+        .ThenByDescending(alias => alias.AliasWords.Sum(word => word.Length))
+        .ToArray();
 }
 
 /// <summary>

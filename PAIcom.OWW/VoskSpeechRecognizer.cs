@@ -128,16 +128,29 @@ public class VoskSpeechRecognizer : IDisposable
                     return false;
                 }
 
+                var grammarTerms = LoadGrammarTerms(modelPath!);
+                if (grammarTerms.Length > 0)
+                {
+                    LogEvent($"[vosk-speech] Loaded {grammarTerms.Length} grammar term(s) from model vocabulary");
+                }
+                else
+                {
+                    grammarTerms = FuzzyMatcher.GetPhoneticGrammarTerms().ToArray();
+                    LogEvent($"[vosk-speech] Using built-in phonetic grammar fallback with {grammarTerms.Length} term(s)");
+                }
+
                 // Create recognizer
                 try
                 {
-                    _voskRecognizer = Activator.CreateInstance(recognizerType, _voskModel, 16000.0f);
+                    _voskRecognizer = CreateRecognizerInstance(recognizerType, _voskModel!, grammarTerms);
                     if (_voskRecognizer == null)
                     {
                         LogEvent("[vosk-speech] Failed to create Vosk recognizer instance");
                         return false;
                     }
-                    LogEvent("[vosk-speech] Vosk recognizer instance created successfully");
+                    LogEvent(grammarTerms.Length > 0
+                        ? "[vosk-speech] Vosk recognizer instance created successfully with grammar"
+                        : "[vosk-speech] Vosk recognizer instance created successfully");
                 }
                 catch (Exception recEx)
                 {
@@ -409,6 +422,84 @@ public class VoskSpeechRecognizer : IDisposable
         return Directory.Exists(Path.Combine(path, "am")) &&
                Directory.Exists(Path.Combine(path, "conf")) &&
                Directory.Exists(Path.Combine(path, "graph"));
+    }
+
+    private string[] LoadGrammarTerms(string modelPath)
+    {
+        var grammarFilePath = FindGrammarFilePath(modelPath);
+        if (string.IsNullOrWhiteSpace(grammarFilePath) || !File.Exists(grammarFilePath))
+            return Array.Empty<string>();
+
+        try
+        {
+            var terms = File.ReadLines(grammarFilePath)
+                .Select(line => line.Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith("#", StringComparison.Ordinal))
+                .Select(line => string.Join(" ", line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return terms;
+        }
+        catch (Exception ex)
+        {
+            LogEvent($"[vosk-speech] Failed to load grammar file '{grammarFilePath}': {ex.Message}");
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string? FindGrammarFilePath(string modelPath)
+    {
+        var searchDirectories = new[]
+        {
+            modelPath,
+            Path.Combine(modelPath, "graph"),
+            Path.Combine(modelPath, "conf")
+        };
+
+        var fileNames = new[]
+        {
+            "vosk-grammar.txt",
+            "grammar.txt",
+            "vocabulary.txt"
+        };
+
+        foreach (var directory in searchDirectories)
+        {
+            if (!Directory.Exists(directory))
+                continue;
+
+            foreach (var fileName in fileNames)
+            {
+                var candidate = Path.Combine(directory, fileName);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private object? CreateRecognizerInstance(Type recognizerType, object model, string[] grammarTerms)
+    {
+        if (grammarTerms.Length > 0)
+        {
+            try
+            {
+                var grammarRecognizer = Activator.CreateInstance(recognizerType, model, 16000.0f, grammarTerms);
+                if (grammarRecognizer != null)
+                    return grammarRecognizer;
+
+                LogEvent("[vosk-speech] Grammar recognizer constructor returned null; falling back to open recognizer");
+            }
+            catch (Exception grammarEx)
+            {
+                LogEvent($"[vosk-speech] Grammar recognizer constructor unavailable: {grammarEx.Message}");
+            }
+        }
+
+        return Activator.CreateInstance(recognizerType, model, 16000.0f);
     }
 
     private void LogEvent(string message)
