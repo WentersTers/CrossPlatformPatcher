@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 
 namespace CrossPlatformPatcher.Core;
 
@@ -120,20 +121,24 @@ public sealed class OpenWakeWordSettings
 
     /// <summary>
     /// Create default settings:
-    /// - Threshold: 0.7
-    /// - Lock: 3000 ms
-    /// - ChunkSize: 1024 samples
-    /// - ThreadScale: 1.0
-    /// - Model: "oww.model.hey_pie_com.quant.onnx"
-    /// - SampleRate: 16000 Hz
-    /// - VerboseLog: false
-    /// - MicBufferMs: 200
-    /// - FuzzyMatchMinConfidence: 0.65
-    /// - PostWakeSilenceGraceMs: 450
-    /// - SpeechSilenceCutoffMs: 1000
+    /// - General profile: lock=3000ms, chunk=1024, mic=200ms, silence grace/cutoff=450/1000
+    /// - arm64 profile: lock=3200ms, chunk=960, mic=160ms, silence grace/cutoff=350/850
+    /// Other defaults remain the same across architectures.
     /// </summary>
-    public static OpenWakeWordSettings CreateDefault() =>
-        new();
+    public static OpenWakeWordSettings CreateDefault()
+    {
+        if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            return new(
+                lockDurationMs: 3200,
+                audioChunkSize: 960,
+                microphoneBufferMilliseconds: 160,
+                postWakeSilenceGraceMilliseconds: 350,
+                speechSilenceCutoffMilliseconds: 850);
+        }
+
+        return new();
+    }
 
     /// <summary>
     /// Create settings from environment variables with PAICOM_OWW_* prefix.

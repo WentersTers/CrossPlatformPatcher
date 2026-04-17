@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -39,15 +40,24 @@ public static class OpenWakeWordHelper
     private static readonly object _voskLockQueueLock = new();
     private static int _voskLockAudioQueuedCount;
     private static int _voskLockAudioDequeuedCount;
+    private static int _voskLockAudioDroppedCount;
     private static int _enqueueAudioCallCount;  // Track total EnqueueAudio calls to diagnose if it's being called during lock
     
     private static int _unsupportedAudioArgLogCount;
     private static int _enqueueDropCount;
     private static int _enqueueSuccessCount;
+    private static int _audioClipLogCount;
+    private static int _pcmClipLogCount;
     private static bool _voskInitAttempted;
     private static bool _voskListening;
+    private static long _wakeSequenceCounter;
+    private static long _activeWakeSequenceId;
+    private static long _firstQueuedAudioMarkerWakeId;
 
     private const float SilenceAmplitudeThreshold = 0.01f;
+    private const int MaxVoskLockQueueChunks = 96;
+    private const int DefaultFallbackScriptTimeoutMs = 8000;
+    private static readonly Stopwatch TimingStopwatch = Stopwatch.StartNew();
 
     // Sequential method testing (for diagnostics and compatibility testing)
     private static bool _sequentialMethodTestMode;
@@ -114,30 +124,46 @@ public static class OpenWakeWordHelper
     {
         try
         {
-            // Wine typically sets these environment variables
-            var winePrefix = Environment.GetEnvironmentVariable("WINEPREFIX");
-            var wineLoader = Environment.GetEnvironmentVariable("WINELOADER");
-            var wineDebug = Environment.GetEnvironmentVariable("WINEDEBUG");
-            
-            if (!string.IsNullOrEmpty(winePrefix) || !string.IsNullOrEmpty(wineLoader))
-                return true;
+            if (TryParseBooleanEnvironmentVariable("PAICOM_RUNTIME_FORCE_WINE", out var forcedWine))
+                return forcedWine;
 
-            // Also check for Wine-specific registry paths or system files
-            // Wine creates these files in the Windows system directory
-            var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
-            if (!string.IsNullOrEmpty(systemRoot))
+            var hostOs = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_HOST_OS");
+            if (!string.IsNullOrWhiteSpace(hostOs))
             {
-                var wineSystemFile = System.IO.Path.Combine(systemRoot, "system32", "wineboot.exe");
-                if (System.IO.File.Exists(wineSystemFile))
+                if (string.Equals(hostOs, "windows", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                     return true;
             }
 
-            // Check if we're on a Unix-like filesystem but reporting as Windows
-            // Wine drive mappings typically start with Z:\ for the Unix root
-            var currentDir = Directory.GetCurrentDirectory();
-            if (currentDir.StartsWith("Z:\\", StringComparison.OrdinalIgnoreCase) || 
-                currentDir.StartsWith("Z:/", StringComparison.OrdinalIgnoreCase))
+            var winePrefix = Environment.GetEnvironmentVariable("WINEPREFIX");
+            var wineLoader = Environment.GetEnvironmentVariable("WINELOADER");
+            var wineDllPath = Environment.GetEnvironmentVariable("WINEDLLPATH");
+            var wineVar = Environment.GetEnvironmentVariable("WINE");
+            if (!string.IsNullOrWhiteSpace(winePrefix) ||
+                !string.IsNullOrWhiteSpace(wineLoader) ||
+                !string.IsNullOrWhiteSpace(wineDllPath) ||
+                !string.IsNullOrWhiteSpace(wineVar))
                 return true;
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return false;
+
+            var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
+            if (!string.IsNullOrWhiteSpace(systemRoot))
+            {
+                var wineSystemFile = Path.Combine(systemRoot, "system32", "wineboot.exe");
+                if (File.Exists(wineSystemFile))
+                    return true;
+            }
+
+            var currentDir = Directory.GetCurrentDirectory();
+            if (currentDir.StartsWith("Z:\\", StringComparison.OrdinalIgnoreCase) ||
+                currentDir.StartsWith("Z:/", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
 
             return false;
         }
@@ -145,6 +171,165 @@ public static class OpenWakeWordHelper
         {
             return false;
         }
+    }
+
+    private static bool TryParseBooleanEnvironmentVariable(string name, out bool value)
+    {
+        value = false;
+        var raw = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        switch (raw.Trim().ToLowerInvariant())
+        {
+            case "1":
+            case "true":
+            case "yes":
+            case "on":
+                value = true;
+                return true;
+            case "0":
+            case "false":
+            case "no":
+            case "off":
+                value = false;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsVerboseAudioLoggingEnabled()
+    {
+        if (_settings?.EnableVerboseLogging == true)
+            return true;
+
+        return TryParseBooleanEnvironmentVariable("PAICOM_OWW_VERBOSE_LOG", out var enabled) && enabled;
+    }
+
+    private static int GetFallbackScriptTimeoutMs()
+    {
+        var configured = Environment.GetEnvironmentVariable("PAICOM_FALLBACK_SCRIPT_TIMEOUT_MS");
+        if (!string.IsNullOrWhiteSpace(configured) && int.TryParse(configured, out var parsed))
+            return parsed < 1000 ? 1000 : (parsed > 120000 ? 120000 : parsed);
+
+        return DefaultFallbackScriptTimeoutMs;
+    }
+
+    private static void LogTimingMarker(string marker, long wakeId, string? detail = null)
+    {
+        var prefix = $"[oww-timing] wake.id={wakeId} marker={marker} t.ms={TimingStopwatch.ElapsedMilliseconds}";
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            LogEvent(prefix);
+            return;
+        }
+
+        LogEvent($"{prefix} detail={detail}");
+    }
+
+    private static bool TryNormalizeCommandToken(string rawToken, out string normalizedToken, out string reason)
+    {
+        normalizedToken = string.Empty;
+        reason = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rawToken))
+        {
+            reason = "token is empty";
+            return false;
+        }
+
+        var token = rawToken.Trim();
+        if (token.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+            token = token.Substring(0, token.Length - 4);
+
+        token = token.Trim();
+        if (token.Length == 0)
+        {
+            reason = "token is empty after trim";
+            return false;
+        }
+
+        if (Path.IsPathRooted(token))
+        {
+            reason = "absolute paths are not allowed";
+            return false;
+        }
+
+        if (token.IndexOf("..", StringComparison.Ordinal) >= 0)
+        {
+            reason = "path traversal sequence '..' is not allowed";
+            return false;
+        }
+
+        if (token.IndexOf('/') >= 0 || token.IndexOf('\\') >= 0)
+        {
+            reason = "path separators are not allowed";
+            return false;
+        }
+
+        if (token.StartsWith("~", StringComparison.Ordinal))
+        {
+            reason = "home-directory shorthand is not allowed";
+            return false;
+        }
+
+        if (token.IndexOfAny(new[] { ';', '&', '|', '`', '>', '<', '\r', '\n', '\t', '\0', ':' }) >= 0)
+        {
+            reason = "shell metacharacters are not allowed";
+            return false;
+        }
+
+        normalizedToken = token;
+        return true;
+    }
+
+    private static void SanitizeAudioChunk(float[] chunk, out int clippedSamples)
+    {
+        clippedSamples = 0;
+        for (var i = 0; i < chunk.Length; i++)
+        {
+            var sample = chunk[i];
+            if (float.IsNaN(sample) || float.IsInfinity(sample))
+            {
+                chunk[i] = 0f;
+                clippedSamples++;
+                continue;
+            }
+
+            if (sample > 1f)
+            {
+                chunk[i] = 1f;
+                clippedSamples++;
+            }
+            else if (sample < -1f)
+            {
+                chunk[i] = -1f;
+                clippedSamples++;
+            }
+        }
+    }
+
+    private static short FloatToPcm16(float sample, ref int clippedSamples)
+    {
+        if (float.IsNaN(sample) || float.IsInfinity(sample))
+        {
+            clippedSamples++;
+            return 0;
+        }
+
+        if (sample > 1f)
+        {
+            clippedSamples++;
+            sample = 1f;
+        }
+        else if (sample < -1f)
+        {
+            clippedSamples++;
+            sample = -1f;
+        }
+
+        return (short)Math.Round(sample * 32767f);
     }
     private static MethodInfo? _cachedGameHandlerMethod;
     private static object? _cachedGameHandlerTarget;
@@ -286,8 +471,6 @@ public static class OpenWakeWordHelper
 
     private sealed class ProcessFallbackCommandDispatcher : ICommandDispatcher
     {
-        private static readonly string[] ScriptExtensions = { ".sh", ".command", ".bat", ".cmd", ".exe", ".ps1" };
-
         public string Name => "process-fallback";
 
         public bool TryDispatch(CommandAction action, out string detail)
@@ -627,28 +810,63 @@ public static class OpenWakeWordHelper
             }
         }
 
+        private static string[] GetPlatformSpecificScriptExtensions()
+        {
+            var isWine = IsRunningUnderWine();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !isWine)
+            {
+                return new[] { ".bat", ".cmd", ".ps1", ".exe", ".sh", ".command" };
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || isWine)
+            {
+                return new[] { ".command", ".sh", ".exe", ".bat", ".cmd", ".ps1" };
+            }
+
+            return new[] { ".sh", ".exe", ".bat", ".cmd", ".ps1", ".command" };
+        }
+
         private static bool TryResolveScriptPath(string commandToken, out string? scriptPath)
         {
             scriptPath = null;
+            if (!TryNormalizeCommandToken(commandToken, out var sanitizedToken, out var reason))
+            {
+                LogEvent($"[oww-command] Skipping unsafe command token '{commandToken}': {reason}");
+                return false;
+            }
+
             var baseDirectory = ResolveCommandRootDirectory();
             if (string.IsNullOrWhiteSpace(baseDirectory))
                 return false;
 
             var searchRoots = new[]
             {
+                System.IO.Path.Combine(baseDirectory!, "files"),
                 System.IO.Path.Combine(baseDirectory!, "custom-commands"),
                 System.IO.Path.Combine(baseDirectory!, "animations"),
                 baseDirectory!
             };
 
+            var extensions = GetPlatformSpecificScriptExtensions();
+
             foreach (var root in searchRoots)
             {
-                foreach (var extension in ScriptExtensions)
+                var fullRoot = System.IO.Path.GetFullPath(root);
+                var normalizedRoot = fullRoot.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+                var rootPrefix = normalizedRoot + System.IO.Path.DirectorySeparatorChar;
+                foreach (var extension in extensions)
                 {
-                    var candidate = System.IO.Path.Combine(root, commandToken + extension);
-                    if (System.IO.File.Exists(candidate))
+                    var candidate = System.IO.Path.Combine(root, sanitizedToken + extension);
+                    var fullCandidate = System.IO.Path.GetFullPath(candidate);
+                    if (!fullCandidate.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(fullCandidate, fullRoot, StringComparison.OrdinalIgnoreCase))
                     {
-                        scriptPath = candidate;
+                        continue;
+                    }
+
+                    if (System.IO.File.Exists(fullCandidate))
+                    {
+                        scriptPath = fullCandidate;
                         return true;
                     }
                 }
@@ -662,6 +880,7 @@ public static class OpenWakeWordHelper
             try
             {
                 var extension = System.IO.Path.GetExtension(scriptPath);
+                var timeoutMs = GetFallbackScriptTimeoutMs();
                 ProcessStartInfo startInfo;
 
                 if (string.Equals(extension, ".sh", StringComparison.OrdinalIgnoreCase) ||
@@ -679,12 +898,17 @@ public static class OpenWakeWordHelper
                 else if (string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase) ||
                          string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase))
                 {
+                    var isWine = IsRunningUnderWine();
+                    var realWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !isWine;
+                    if (!realWindows)
+                    {
+                        return TryTranslateAndExecuteBatch(scriptPath, timeoutMs, out detail);
+                    }
+
                     startInfo = new ProcessStartInfo
                     {
-                        FileName = Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "wine",
-                        Arguments = Environment.OSVersion.Platform == PlatformID.Win32NT
-                            ? $"/c {QuoteArgument(scriptPath)}"
-                            : $"cmd /c {QuoteArgument(scriptPath)}",
+                        FileName = "cmd.exe",
+                        Arguments = $"/c {QuoteArgument(scriptPath)}",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         WorkingDirectory = System.IO.Path.GetDirectoryName(scriptPath)
@@ -701,15 +925,147 @@ public static class OpenWakeWordHelper
                 }
 
                 var process = Process.Start(startInfo);
-                detail = process == null
-                    ? $"Process launch returned null for script '{scriptPath}'."
-                    : $"Launched fallback script '{scriptPath}'.";
+                if (process == null)
+                {
+                    detail = $"Process launch returned null for script '{scriptPath}'.";
+                    return false;
+                }
 
-                return process != null;
+                // Keep fallback commands bounded; if they run long, treat as background and avoid hangs.
+                if (WaitForProcessExit(process, timeoutMs, killOnTimeout: false, out var timedOut))
+                {
+                    detail = process.ExitCode == 0
+                        ? $"Fallback script completed: '{scriptPath}'."
+                        : $"Fallback script exited with code {process.ExitCode}: '{scriptPath}'.";
+                    return process.ExitCode == 0;
+                }
+
+                if (timedOut)
+                {
+                    LogEvent($"[oww-command] Script still running after {timeoutMs}ms; leaving background process active: {scriptPath}");
+                    detail = $"Fallback script launched and left running after timeout budget ({timeoutMs}ms): '{scriptPath}'.";
+                    return true;
+                }
+
+                detail = $"Fallback script launched: '{scriptPath}'.";
+                return true;
             }
             catch (Exception ex)
             {
                 detail = $"Failed to launch fallback script '{scriptPath}': {ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool TryTranslateAndExecuteBatch(string batchFilePath, int timeoutMs, out string detail)
+        {
+            detail = string.Empty;
+
+            try
+            {
+                if (!System.IO.File.Exists(batchFilePath))
+                {
+                    detail = $"Batch file not found: '{batchFilePath}'";
+                    return false;
+                }
+
+                var batchContent = System.IO.File.ReadAllText(batchFilePath);
+                var translatedContent = BatchFileTranslator.TranslateBatchContent(batchContent);
+                if (string.IsNullOrWhiteSpace(translatedContent))
+                {
+                    detail = $"Batch file produced no executable commands after translation: '{batchFilePath}'";
+                    return false;
+                }
+
+                var converterMode = Environment.GetEnvironmentVariable("PAICOM_BATCH_TO_SHELL_MODE") ?? "internal";
+                if (converterMode.Equals("generate-and-test", StringComparison.OrdinalIgnoreCase) &&
+                    BatchFileTranslator.TryGenerateShellEquivalent(batchFilePath, translatedContent, out var generatedPath, LogEvent))
+                {
+                    var (isValid, error) = BatchFileTranslator.ValidateShellSyntax(translatedContent);
+                    if (!isValid)
+                        LogEvent($"[batch-converter-warning] Generated shell script has syntax issues: {error}");
+                    else
+                        LogEvent($"[batch-converter] Shell equivalent validated successfully: {generatedPath}");
+                }
+
+                var unixWorkingDir = ConvertWinePathToUnix(System.IO.Path.GetDirectoryName(batchFilePath) ?? ".");
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "sh",
+                    Arguments = "-c " + QuoteArgument(translatedContent),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = unixWorkingDir
+                };
+
+                var process = Process.Start(startInfo);
+                if (process == null)
+                {
+                    detail = $"Failed to start translated batch process: '{batchFilePath}'";
+                    return false;
+                }
+
+                if (!WaitForProcessExit(process, timeoutMs, killOnTimeout: true, out var timedOut))
+                {
+                    detail = timedOut
+                        ? $"Translated batch timed out after {timeoutMs}ms and was terminated: '{batchFilePath}'"
+                        : $"Translated batch did not complete cleanly: '{batchFilePath}'";
+                    return false;
+                }
+
+                detail = process.ExitCode == 0
+                    ? $"Translated and executed batch file: '{batchFilePath}'"
+                    : $"Translated batch exited with code {process.ExitCode}: '{batchFilePath}'";
+                return process.ExitCode == 0;
+            }
+            catch (Exception ex)
+            {
+                detail = $"Failed to translate and execute batch file '{batchFilePath}': {ex.GetType().Name}: {ex.Message}";
+                LogEvent($"[batch-converter-error] {detail}");
+                return false;
+            }
+        }
+
+        private static string ConvertWinePathToUnix(string winePath)
+        {
+            if (string.IsNullOrEmpty(winePath))
+                return ".";
+
+            var unixPath = winePath.Replace('\\', '/');
+            if (unixPath.StartsWith("Z:/", StringComparison.OrdinalIgnoreCase))
+                unixPath = unixPath.Substring(2);
+
+            if (!System.IO.Directory.Exists(unixPath) && !System.IO.Directory.Exists(winePath))
+                return ".";
+
+            return unixPath;
+        }
+
+        private static bool WaitForProcessExit(Process process, int timeoutMs, bool killOnTimeout, out bool timedOut)
+        {
+            timedOut = false;
+            try
+            {
+                if (process.WaitForExit(timeoutMs))
+                    return true;
+
+                timedOut = true;
+                if (killOnTimeout)
+                {
+                    try
+                    {
+                        process.Kill();
+                    }
+                    catch
+                    {
+                        // Best effort only.
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
                 return false;
             }
         }
@@ -1078,16 +1434,15 @@ public static class OpenWakeWordHelper
     public static void EnqueueAudio(object audioArg)
     {
         _enqueueAudioCallCount++;
-        
-        // Log EVERY call for debugging
-        if (_enqueueAudioCallCount <= 10 || _enqueueAudioCallCount % 100 == 0)
+        var verboseAudio = IsVerboseAudioLoggingEnabled();
+
+        if (verboseAudio && (_enqueueAudioCallCount <= 10 || _enqueueAudioCallCount % 100 == 0))
         {
             bool isLocked = _lockManager?.IsLocked == true;
             LogEvent($"[vosk-diag] EnqueueAudio CALLED #{_enqueueAudioCallCount}, locked={isLocked}, argType={audioArg?.GetType().Name ?? "null"}");
         }
-        
-        // Log every N calls to track if this is even being called
-        if (_enqueueAudioCallCount == 1 || _enqueueAudioCallCount % 100 == 0)
+
+        if (_enqueueAudioCallCount == 1 || _enqueueAudioCallCount % 500 == 0)
         {
             bool isLocked = _lockManager?.IsLocked == true;
             LogEvent($"[vosk-diag] EnqueueAudio call #{_enqueueAudioCallCount}, locked={isLocked}, voskQueued={_voskLockAudioQueuedCount}");
@@ -1131,6 +1486,16 @@ public static class OpenWakeWordHelper
 
         if (floatChunk != null && floatChunk.Length > 0)
         {
+            SanitizeAudioChunk(floatChunk, out var clippedSamples);
+            if (clippedSamples > 0)
+            {
+                _audioClipLogCount++;
+                if (verboseAudio || _audioClipLogCount <= 3 || _audioClipLogCount % 25 == 0)
+                {
+                    LogEvent($"[vosk-audio-guard] Clipped {clippedSamples} sample(s) before enqueue");
+                }
+            }
+
             if (floatChunk.Length > 65536)
             {
                 if (_enqueueDropCount <= 5 || _enqueueDropCount % 25 == 0)
@@ -1146,9 +1511,27 @@ public static class OpenWakeWordHelper
             {
                 lock (_voskLockQueueLock)
                 {
+                    if (_voskLockAudioQueue.Count >= MaxVoskLockQueueChunks)
+                    {
+                        _voskLockAudioQueue.Dequeue();
+                        _voskLockAudioDequeuedCount++;
+                        _voskLockAudioDroppedCount++;
+                        if (verboseAudio || _voskLockAudioDroppedCount <= 3 || _voskLockAudioDroppedCount % 25 == 0)
+                        {
+                            LogEvent($"[vosk-audio-queue] Queue full; dropped oldest chunk (drops={_voskLockAudioDroppedCount}, max={MaxVoskLockQueueChunks})");
+                        }
+                    }
+
                     _voskLockAudioQueue.Enqueue(floatChunk);
                     _voskLockAudioQueuedCount++;
-                    if (_voskLockAudioQueuedCount <= 3 || _voskLockAudioQueuedCount % 10 == 0)
+                    var wakeId = Interlocked.Read(ref _activeWakeSequenceId);
+                    if (wakeId > 0 && Interlocked.Read(ref _firstQueuedAudioMarkerWakeId) != wakeId)
+                    {
+                        Interlocked.Exchange(ref _firstQueuedAudioMarkerWakeId, wakeId);
+                        LogTimingMarker("first_queued_audio", wakeId, $"queue.size={_voskLockAudioQueue.Count};chunk.len={floatChunk.Length}");
+                    }
+
+                    if (verboseAudio && (_voskLockAudioQueuedCount <= 3 || _voskLockAudioQueuedCount % 10 == 0))
                     {
                         LogEvent($"[vosk-audio-queue] Queued audio chunk #{_voskLockAudioQueuedCount} during lock window (len={floatChunk.Length}, queueSize={_voskLockAudioQueue.Count})");
                     }
@@ -1161,7 +1544,7 @@ public static class OpenWakeWordHelper
             if (added)
             {
                 _enqueueSuccessCount++;
-                if (_enqueueSuccessCount == 1 || _enqueueSuccessCount % 200 == 0)
+                if (verboseAudio && (_enqueueSuccessCount == 1 || _enqueueSuccessCount % 200 == 0))
                 {
                     LogEvent($"Audio enqueue ok: chunks={_enqueueSuccessCount}, lastLen={floatChunk.Length}");
                 }
@@ -1268,45 +1651,64 @@ public static class OpenWakeWordHelper
     /// </summary>
     public static void TriggerSpeechRecognitionOnWake()
     {
+        var wakeId = Interlocked.Increment(ref _wakeSequenceCounter);
+        Interlocked.Exchange(ref _activeWakeSequenceId, wakeId);
+        Interlocked.Exchange(ref _firstQueuedAudioMarkerWakeId, 0);
+        LogTimingMarker("wake_detected", wakeId);
+
         LogEvent("Wake-word lock issued; starting Vosk speech recognition...");
         EnsureMicrophoneCaptureStarted("wake-handoff", forceRestart: false);
         
         // Initialize Vosk if not already attempted
         if (!_voskInitAttempted)
         {
+            LogTimingMarker("vosk_init_start", wakeId);
             _voskInitAttempted = true;
             try
             {
                 _voskRecognizer = new VoskSpeechRecognizer(LogEvent);
                 if (!_voskRecognizer.Initialize())
                 {
+                    LogTimingMarker("vosk_init_end", wakeId, "status=failed");
                     LogEvent("Vosk initialization failed; speech recognition unavailable");
                     _voskRecognizer?.Dispose();
                     _voskRecognizer = null;
                 }
+                else
+                {
+                    LogTimingMarker("vosk_init_end", wakeId, "status=ok");
+                }
             }
             catch (Exception ex)
             {
+                LogTimingMarker("vosk_init_end", wakeId, "status=exception");
                 LogEvent($"Exception initializing Vosk: {ex.Message}");
                 _voskRecognizer?.Dispose();
                 _voskRecognizer = null;
             }
         }
+        else
+        {
+            LogTimingMarker("vosk_init_end", wakeId, "status=cached");
+        }
 
         if (_voskRecognizer == null)
         {
+            LogTimingMarker("vosk_unavailable", wakeId);
             LogEvent("Vosk recognizer not available; speech recognition skipped");
             return;
         }
 
         if (_voskListening)
         {
+            LogTimingMarker("lock_window_skip", wakeId, "already_listening=true");
             LogEvent("Vosk speech recognition already active for current lock window");
             return;
         }
 
         // Start background task to process audio during lock window
         _voskListening = true;
+        LogTimingMarker("lock_window_start", wakeId, $"lock.ms={_settings?.LockDurationMs ?? 0}");
         System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
         {
             ProcessSpeechRecognitionLocked();
@@ -1324,11 +1726,13 @@ public static class OpenWakeWordHelper
 
         try
         {
+            var wakeId = Interlocked.Read(ref _activeWakeSequenceId);
             var settings = _settings ?? OpenWakeWordSettings.CreateDefault();
             var wakeUtc = DateTime.UtcNow;
             var stopTime = wakeUtc.AddMilliseconds(settings.LockDurationMs + 500);
             var graceDeadline = wakeUtc.AddMilliseconds(settings.PostWakeSilenceGraceMilliseconds);
             var silenceCutoffMs = settings.SpeechSilenceCutoffMilliseconds;
+            var lockWindowEndReason = "lock_timeout";
             var silenceStartUtc = (DateTime?)null;
             var attemptedMicRecovery = false;
             var loggedQueueEmptyOnce = false;
@@ -1383,6 +1787,7 @@ public static class OpenWakeWordHelper
 
                     if (hasSpeechAudio && silenceStartUtc.HasValue && DateTime.UtcNow >= silenceStartUtc.Value.AddMilliseconds(silenceCutoffMs))
                     {
+                        lockWindowEndReason = "silence_cutoff";
                         LogEvent($"[vosk-speech] Silence cutoff reached after {silenceCutoffMs}ms; finalizing speech capture.");
                         break;
                     }
@@ -1405,6 +1810,7 @@ public static class OpenWakeWordHelper
                         silenceStartUtc ??= DateTime.UtcNow;
                         if (DateTime.UtcNow >= silenceStartUtc.Value.AddMilliseconds(silenceCutoffMs))
                         {
+                            lockWindowEndReason = "silence_cutoff_no_audio";
                             LogEvent($"[vosk-speech] Silence cutoff reached after {silenceCutoffMs}ms without additional speech; finalizing speech capture.");
                             break;
                         }
@@ -1414,16 +1820,30 @@ public static class OpenWakeWordHelper
                 }
             }
 
+            if (DateTime.UtcNow >= stopTime)
+                lockWindowEndReason = "lock_window_timeout";
+
+            LogTimingMarker("lock_window_end", wakeId, $"reason={lockWindowEndReason};chunks={dequeuedChunks};samples={accumulatedAudio.Count};dropped={_voskLockAudioDroppedCount}");
             LogEvent($"Speech window ended. Processing {accumulatedAudio.Count} accumulated audio samples.");
 
             if (accumulatedAudio.Count > 0)
             {
                 // Convert ALL accumulated float audio to PCM bytes for Vosk
                 byte[] pcmData = new byte[accumulatedAudio.Count * 2];
+                var pcmClippedSamples = 0;
                 for (int i = 0; i < accumulatedAudio.Count; i++)
                 {
-                    short sample = (short)(accumulatedAudio[i] * 32768f);
+                    short sample = FloatToPcm16(accumulatedAudio[i], ref pcmClippedSamples);
                     BitConverter.GetBytes(sample).CopyTo(pcmData, i * 2);
+                }
+
+                if (pcmClippedSamples > 0)
+                {
+                    _pcmClipLogCount++;
+                    if (_pcmClipLogCount <= 3 || _pcmClipLogCount % 25 == 0)
+                    {
+                        LogEvent($"[vosk-audio-guard] Clipped {pcmClippedSamples} PCM sample(s) before Vosk processing");
+                    }
                 }
 
                 var result = _voskRecognizer.ProcessAudioChunk(pcmData);
@@ -1439,6 +1859,16 @@ public static class OpenWakeWordHelper
             {
                 LogEvent($"Vosk final result: {finalResult}");
                 HandleRecognizedSpeech(finalResult);
+            }
+            else
+            {
+                var partialFallback = _voskRecognizer.GetPartialResult();
+                if (!string.IsNullOrWhiteSpace(partialFallback))
+                {
+                    LogEvent("[vosk-speech] Final result empty; using partial-result fallback.");
+                    LogTimingMarker("transcript_fallback_partial", wakeId);
+                    HandleRecognizedSpeech(partialFallback);
+                }
             }
 
             LogEvent($"Vosk speech recognition completed (processed {dequeuedChunks} audio chunks, total accumulated samples: {accumulatedAudio.Count}, queued={_voskLockAudioQueuedCount}, dequeued={_voskLockAudioDequeuedCount})");
@@ -1456,15 +1886,18 @@ public static class OpenWakeWordHelper
 
             _lockManager?.Reset();
             _voskListening = false;
+            Interlocked.Exchange(ref _activeWakeSequenceId, 0);
         }
     }
 
     public static string? HandleRecognizedSpeech(string? rawResult)
     {
+        var wakeId = Interlocked.Read(ref _activeWakeSequenceId);
         var transcript = ExtractRecognizedText(rawResult);
         if (string.IsNullOrWhiteSpace(transcript))
             return null;
 
+        LogTimingMarker("transcript_emitted", wakeId, $"chars={transcript.Length}");
         LogEvent($"[vosk-speech] Transcript: {transcript}");
 
         var action = ResolveCommandAction(transcript);
@@ -1481,6 +1914,7 @@ public static class OpenWakeWordHelper
         if (DispatchCommandAction(action, out var dispatchDetail))
         {
             LogEvent($"[oww-command] Dispatch succeeded: {dispatchDetail}");
+            LogTimingMarker("dispatch_success", wakeId, $"token={action.CommandToken}");
             
             // Queue animation script execution if one is referenced  
             if (!string.IsNullOrWhiteSpace(action.ScriptReference))
@@ -1506,6 +1940,7 @@ public static class OpenWakeWordHelper
         else
         {
             LogEvent($"[oww-command] Dispatch unavailable: {dispatchDetail}");
+            LogTimingMarker("dispatch_failed", wakeId, $"token={action.CommandToken}");
         }
 
         return action.AssistantLine;
@@ -2693,6 +3128,12 @@ public static class OpenWakeWordHelper
         {
             scriptReference = commandText.Substring(parenOpen + 1, parenClose - parenOpen - 1).Trim();
             commandText = commandText.Substring(0, parenOpen).Trim();
+
+            if (!TryNormalizeCommandToken(scriptReference, out _, out var reason))
+            {
+                LogEvent($"[oww-command] Ignoring manifest entry with unsafe script reference '{scriptReference}': {reason}");
+                return null;
+            }
         }
 
         var normalizedPhrase = NormalizeCommandText(commandText);
@@ -2702,11 +3143,11 @@ public static class OpenWakeWordHelper
         var commandToken = normalizedPhrase;
         if (!string.IsNullOrWhiteSpace(scriptReference))
         {
-            commandToken = scriptReference!;
-            if (commandToken.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
-                commandToken = commandToken.Substring(0, commandToken.Length - 4);
-
-            commandToken = commandToken.Trim();
+            if (!TryNormalizeCommandToken(scriptReference!, out commandToken, out var reason))
+            {
+                LogEvent($"[oww-command] Ignoring manifest entry with unsafe command token '{scriptReference}': {reason}");
+                return null;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(commandToken))
@@ -2794,30 +3235,42 @@ public static class OpenWakeWordHelper
         if (!trimmed.StartsWith("{", StringComparison.Ordinal))
             return trimmed;
 
-        const string key = "\"text\"";
-        var keyIndex = trimmed.IndexOf(key, StringComparison.OrdinalIgnoreCase);
-        if (keyIndex < 0)
-            return trimmed;
+        var text = ExtractJsonStringField(trimmed, "\"text\"");
+        if (!string.IsNullOrWhiteSpace(text))
+            return text;
 
-        var colonIndex = trimmed.IndexOf(':', keyIndex);
+        var partial = ExtractJsonStringField(trimmed, "\"partial\"");
+        if (!string.IsNullOrWhiteSpace(partial))
+            return partial;
+
+        return null;
+    }
+
+    private static string? ExtractJsonStringField(string json, string key)
+    {
+        var keyIndex = json.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+        if (keyIndex < 0)
+            return null;
+
+        var colonIndex = json.IndexOf(':', keyIndex);
         if (colonIndex < 0)
             return null;
 
         var start = colonIndex + 1;
-        while (start < trimmed.Length && char.IsWhiteSpace(trimmed[start]))
+        while (start < json.Length && char.IsWhiteSpace(json[start]))
             start++;
 
-        if (start >= trimmed.Length)
+        if (start >= json.Length)
             return null;
 
-        if (trimmed[start] == '"')
+        if (json[start] == '"')
             start++;
 
         var builder = new StringBuilder();
         var escaping = false;
-        for (var i = start; i < trimmed.Length; i++)
+        for (var i = start; i < json.Length; i++)
         {
-            var current = trimmed[i];
+            var current = json[i];
             if (escaping)
             {
                 builder.Append(current switch
@@ -2845,7 +3298,8 @@ public static class OpenWakeWordHelper
             builder.Append(current);
         }
 
-        return builder.ToString().Trim();
+        var value = builder.ToString().Trim();
+        return value.Length == 0 ? null : value;
     }
 
     private static string NormalizeCommandText(string transcript)

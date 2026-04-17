@@ -19,6 +19,7 @@ public class VoskSpeechRecognizer : IDisposable
     private readonly Action<string>? _logger;
     private dynamic? _voskModel;
     private dynamic? _voskRecognizer;
+    private string? _lastPartialResult;
     private bool _disposed;
 
     public VoskSpeechRecognizer(Action<string>? logger = null)
@@ -213,6 +214,7 @@ public class VoskSpeechRecognizer : IDisposable
             var partial = GetStringMemberValue(_voskRecognizer, "PartialResult");
             if (!string.IsNullOrEmpty(partial) && partial != "{}")
             {
+                _lastPartialResult = partial;
                 LogEvent($"[vosk-speech] Partial: {partial}");
             }
 
@@ -242,6 +244,11 @@ public class VoskSpeechRecognizer : IDisposable
         {
             return null;
         }
+    }
+
+    public string? GetPartialResult()
+    {
+        return string.IsNullOrWhiteSpace(_lastPartialResult) ? null : _lastPartialResult;
     }
 
     private bool LoadVoskAssembly()
