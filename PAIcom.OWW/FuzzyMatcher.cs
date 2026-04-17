@@ -55,7 +55,7 @@ public sealed class FuzzyMatcher
         }
 
         // Stage 2: Calculate similarity score for each known command
-        var scores = new List<(string command, float confidence, bool hasKeywordBonus)>();
+        var scores = new List<(string command, float confidence, bool hasKeywordBonus, float overlapScore)>();
 
         foreach (var command in knownCommands)
         {
@@ -68,15 +68,17 @@ public sealed class FuzzyMatcher
             var maxLen = Math.Max(inputLength, commandNormalized.Length);
             var confidence = maxLen > 0 ? 1.0f - (distance / (float)maxLen) : 1.0f;
 
-            // Stage 3: Bonus for word overlap (if any input word appears in command)
-            var hasKeywordBonus = inputWords.Any(w => commandWords.Contains(w));
+            // Stage 3: Bonus for fuzzy word overlap (exact + singular/plural variants)
+            var overlapScore = CalculateWordOverlapScore(inputWords, commandWords);
+            var hasKeywordBonus = overlapScore > 0.0f;
             if (hasKeywordBonus)
             {
-                // Boost by 15% if any word matches
-                confidence = Math.Min(1.0f, confidence * 1.15f);
+                // Boost up to 15% based on overlap quality.
+                var overlapMultiplier = 1.0f + (0.15f * overlapScore);
+                confidence = Math.Min(1.0f, confidence * overlapMultiplier);
             }
 
-            scores.Add((command, confidence, hasKeywordBonus));
+            scores.Add((command, confidence, hasKeywordBonus, overlapScore));
         }
 
         // Get the best match
@@ -84,7 +86,9 @@ public sealed class FuzzyMatcher
 
         if (best.confidence >= minConfidence)
         {
-            var bonusNote = best.hasKeywordBonus ? " [word bonus]" : "";
+            var bonusNote = best.hasKeywordBonus
+                ? $" [word bonus: {best.overlapScore:P0}]"
+                : "";
             logger?.Invoke($"[oww-fuzzy] Matched '{input}' to '{best.command}' (confidence: {best.confidence:P1}{bonusNote})");
             return new FuzzyMatchResult(best.command, best.confidence);
         }
@@ -238,7 +242,7 @@ public sealed class FuzzyMatcher
             var matched = true;
             for (var i = 0; i < alias.AliasWords.Length; i++)
             {
-                if (!string.Equals(words[startIndex + i], alias.AliasWords[i], StringComparison.OrdinalIgnoreCase))
+                if (!AreAliasWordsEquivalent(words[startIndex + i], alias.AliasWords[i]))
                 {
                     matched = false;
                     break;
@@ -259,6 +263,60 @@ public sealed class FuzzyMatcher
     }
 
     /// <summary>
+    /// Calculates weighted overlap between input words and command words.
+    /// Treats exact and inflection-variant words (singular/plural) as strong matches.
+    /// </summary>
+    private static float CalculateWordOverlapScore(string[] inputWords, string[] commandWords)
+    {
+        if (inputWords.Length == 0 || commandWords.Length == 0)
+            return 0.0f;
+
+        var matchedCommandIndexes = new HashSet<int>();
+        var weightedMatches = 0.0f;
+
+        foreach (var inputWord in inputWords)
+        {
+            var bestScore = 0.0f;
+            var bestIndex = -1;
+
+            for (var index = 0; index < commandWords.Length; index++)
+            {
+                if (matchedCommandIndexes.Contains(index))
+                    continue;
+
+                var similarity = CalculateWordSimilarity(inputWord, commandWords[index]);
+                if (similarity > bestScore)
+                {
+                    bestScore = similarity;
+                    bestIndex = index;
+                }
+            }
+
+            if (bestIndex >= 0 && bestScore >= 0.85f)
+            {
+                matchedCommandIndexes.Add(bestIndex);
+                weightedMatches += bestScore;
+            }
+        }
+
+        var denominator = Math.Max(inputWords.Length, commandWords.Length);
+        return denominator > 0 ? Math.Min(1.0f, weightedMatches / denominator) : 0.0f;
+    }
+
+    /// <summary>
+    /// Alias comparison helper that accepts exact and inflection-variant matches.
+    /// </summary>
+    private static bool AreAliasWordsEquivalent(string spokenWord, string aliasWord)
+    {
+        if (string.Equals(spokenWord, aliasWord, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var spokenVariant = NormalizeWordVariant(spokenWord);
+        var aliasVariant = NormalizeWordVariant(aliasWord);
+        return string.Equals(spokenVariant, aliasVariant, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Calculate similarity between two individual words.
     /// Uses character overlap + length ratio for fast comparison.
     /// </summary>
@@ -269,6 +327,11 @@ public sealed class FuzzyMatcher
 
         if (s1 == s2)
             return 1.0f;
+
+        var v1 = NormalizeWordVariant(s1);
+        var v2 = NormalizeWordVariant(s2);
+        if (v1 == v2)
+            return 0.96f;
 
         // If one contains the other, high similarity
         if (s1.Contains(s2) || s2.Contains(s1))
@@ -285,6 +348,44 @@ public sealed class FuzzyMatcher
         }
 
         return 0.0f;
+    }
+
+    /// <summary>
+    /// Normalizes common inflection variants (for example, plural vs singular).
+    /// </summary>
+    private static string NormalizeWordVariant(string word)
+    {
+        if (string.IsNullOrWhiteSpace(word))
+            return string.Empty;
+
+        var normalized = word.ToLowerInvariant();
+        if (normalized.Length <= 3)
+            return normalized;
+
+        if (normalized.EndsWith("ies", StringComparison.Ordinal) && normalized.Length > 4)
+            return normalized.Substring(0, normalized.Length - 3) + "y";
+
+        if (normalized.EndsWith("es", StringComparison.Ordinal) && normalized.Length > 3)
+        {
+            if (normalized.EndsWith("ses", StringComparison.Ordinal)
+                || normalized.EndsWith("xes", StringComparison.Ordinal)
+                || normalized.EndsWith("zes", StringComparison.Ordinal)
+                || normalized.EndsWith("ches", StringComparison.Ordinal)
+                || normalized.EndsWith("shes", StringComparison.Ordinal)
+                || normalized.EndsWith("oes", StringComparison.Ordinal))
+            {
+                return normalized.Substring(0, normalized.Length - 2);
+            }
+        }
+
+        if (normalized.EndsWith("s", StringComparison.Ordinal)
+            && !normalized.EndsWith("ss", StringComparison.Ordinal)
+            && normalized.Length > 3)
+        {
+            return normalized.Substring(0, normalized.Length - 1);
+        }
+
+        return normalized;
     }
 
     /// <summary>
