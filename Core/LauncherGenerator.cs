@@ -167,15 +167,33 @@ public static class LauncherGenerator
                 log "Executing: $runtime_name $*"
                 set +e
 
-                export PAICOM_OWW_THRESHOLD="${PAICOM_OWW_THRESHOLD:-0.7}"
-                export PAICOM_OWW_LOCK_MS="${PAICOM_OWW_LOCK_MS:-3000}"
-                export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-1024}"
-                export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
-                export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
-                export PAICOM_OWW_MIC_BUFFER_MS="${PAICOM_OWW_MIC_BUFFER_MS:-200}"
-                export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.80}"
-                export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS="${PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS:-450}"
-                export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-1000}"
+                host_os_raw="$(uname -s 2>/dev/null || echo unknown)"
+                host_os_lower="$(printf "%s" "$host_os_raw" | tr '[:upper:]' '[:lower:]')"
+                export PAICOM_RUNTIME_HOST_OS="${PAICOM_RUNTIME_HOST_OS:-$host_os_lower}"
+
+                host_arch="$(uname -m 2>/dev/null || echo unknown)"
+                if [ "$host_arch" = "arm64" ] || [ "$host_arch" = "aarch64" ]; then
+                    export PAICOM_OWW_THRESHOLD="${PAICOM_OWW_THRESHOLD:-0.7}"
+                    export PAICOM_OWW_LOCK_MS="${PAICOM_OWW_LOCK_MS:-3200}"
+                    export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-960}"
+                    export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
+                    export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
+                    export PAICOM_OWW_MIC_BUFFER_MS="${PAICOM_OWW_MIC_BUFFER_MS:-160}"
+                    export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.80}"
+                    export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS="${PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS:-350}"
+                    export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-850}"
+                else
+                    export PAICOM_OWW_THRESHOLD="${PAICOM_OWW_THRESHOLD:-0.7}"
+                    export PAICOM_OWW_LOCK_MS="${PAICOM_OWW_LOCK_MS:-3000}"
+                    export PAICOM_OWW_AUDIO_CHUNK_SIZE="${PAICOM_OWW_AUDIO_CHUNK_SIZE:-1024}"
+                    export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
+                    export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
+                    export PAICOM_OWW_MIC_BUFFER_MS="${PAICOM_OWW_MIC_BUFFER_MS:-200}"
+                    export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.80}"
+                    export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS="${PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS:-450}"
+                    export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-1000}"
+                fi
+
                 export PAICOM_MIGRATION_MODE="$migration_mode"
 
                 printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
@@ -349,6 +367,7 @@ public static class LauncherGenerator
             log "Target exe: $EXE"
             log "Migration mode: $migration_mode"
             log "Whisky bottle: $WHISKY_BOTTLE"
+            log "Host OS hint: ${PAICOM_RUNTIME_HOST_OS:-$(uname -s 2>/dev/null || echo unknown)}"
             log "Runtime log: $RUNTIME_LOG"
 
             if command -v whisky >/dev/null 2>&1; then

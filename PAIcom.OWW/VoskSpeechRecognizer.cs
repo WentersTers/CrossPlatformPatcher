@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -19,6 +20,7 @@ public class VoskSpeechRecognizer : IDisposable
     private readonly Action<string>? _logger;
     private dynamic? _voskModel;
     private dynamic? _voskRecognizer;
+    private string? _lastPartialResult;
     private bool _disposed;
 
     public VoskSpeechRecognizer(Action<string>? logger = null)
@@ -32,12 +34,15 @@ public class VoskSpeechRecognizer : IDisposable
     /// </summary>
     public bool Initialize()
     {
+        var initStopwatch = Stopwatch.StartNew();
+        var initStatus = "failed";
         try
         {
             LogEvent("[vosk-speech] Initializing Vosk speech recognizer...");
 
             if (!Environment.Is64BitProcess)
             {
+                initStatus = "disabled:32bit_process";
                 LogEvent("[vosk-speech] Vosk disabled: running in 32-bit process; native Vosk initialization is unstable in this mode.");
                 return false;
             }
@@ -48,6 +53,7 @@ public class VoskSpeechRecognizer : IDisposable
             // In Stable mode, keep Vosk disabled for maximum safety
             if (string.Equals(migrationMode, "stable", StringComparison.OrdinalIgnoreCase))
             {
+                initStatus = "disabled:stable_mode";
                 LogEvent("[vosk-speech] Vosk disabled: stable mode requires no advanced features");
                 return false;
             }
@@ -57,6 +63,7 @@ public class VoskSpeechRecognizer : IDisposable
             {
                 if (!string.Equals(verifiedRuntime, "1", StringComparison.Ordinal))
                 {
+                    initStatus = "disabled:probe_unverified";
                     LogEvent("[vosk-speech] Vosk disabled: probe mode requires launcher verification of 64-bit runtime");
                     return false;
                 }
@@ -72,6 +79,7 @@ public class VoskSpeechRecognizer : IDisposable
             // Try to load Vosk.dll from embedded resources
             if (!LoadVoskAssembly())
             {
+                initStatus = "failed:assembly_load";
                 LogEvent("[vosk-speech] Failed to load Vosk assembly");
                 return false;
             }
@@ -80,6 +88,7 @@ public class VoskSpeechRecognizer : IDisposable
             var modelPath = GetOrDownloadModel();
             if (string.IsNullOrEmpty(modelPath) || !Directory.Exists(modelPath))
             {
+                initStatus = "failed:model_missing";
                 LogEvent($"[vosk-speech] Model not found at: {modelPath}");
                 return false;
             }
@@ -95,6 +104,7 @@ public class VoskSpeechRecognizer : IDisposable
 
                 if (modelType == null || recognizerType == null)
                 {
+                    initStatus = "failed:type_resolution";
                     LogEvent("[vosk-speech] Vosk types not found after loading assembly");
                     return false;
                 }
@@ -115,6 +125,7 @@ public class VoskSpeechRecognizer : IDisposable
                     _voskModel = Activator.CreateInstance(modelType, modelPath);
                     if (_voskModel == null)
                     {
+                        initStatus = "failed:model_ctor_null";
                         LogEvent("[vosk-speech] Failed to create Vosk model instance");
                         return false;
                     }
@@ -122,6 +133,7 @@ public class VoskSpeechRecognizer : IDisposable
                 }
                 catch (Exception modelEx)
                 {
+                    initStatus = "failed:model_ctor_exception";
                     LogEvent($"[vosk-speech] Error creating model instance: {modelEx.Message}");
                     if (modelEx.InnerException != null)
                         LogEvent($"[vosk-speech] (Inner: {modelEx.InnerException.Message})");
@@ -145,6 +157,7 @@ public class VoskSpeechRecognizer : IDisposable
                     _voskRecognizer = CreateRecognizerInstance(recognizerType, _voskModel!, grammarTerms);
                     if (_voskRecognizer == null)
                     {
+                        initStatus = "failed:recognizer_ctor_null";
                         LogEvent("[vosk-speech] Failed to create Vosk recognizer instance");
                         return false;
                     }
@@ -154,6 +167,7 @@ public class VoskSpeechRecognizer : IDisposable
                 }
                 catch (Exception recEx)
                 {
+                    initStatus = "failed:recognizer_ctor_exception";
                     LogEvent($"[vosk-speech] Error creating recognizer instance: {recEx.Message}");
                     if (recEx.InnerException != null)
                         LogEvent($"[vosk-speech] (Inner: {recEx.InnerException.Message})");
@@ -161,10 +175,12 @@ public class VoskSpeechRecognizer : IDisposable
                 }
 
                 LogEvent("[vosk-speech] Vosk recognizer initialized successfully");
+                initStatus = "ok";
                 return true;
             }
             catch (Exception ex)
             {
+                initStatus = "failed:constructor_exception";
                 var innerEx = ex.InnerException;
                 var errorMsg = $"[vosk-speech] Exception creating Vosk instance: {ex.Message}";
                 if (innerEx != null)
@@ -176,8 +192,13 @@ public class VoskSpeechRecognizer : IDisposable
         }
         catch (Exception ex)
         {
+            initStatus = "failed:outer_exception";
             LogEvent($"[vosk-speech] Initialization failed: {ex.Message}");
             return false;
+        }
+        finally
+        {
+            LogEvent($"[oww-timing] marker=vosk_init_internal_end t.ms={initStopwatch.ElapsedMilliseconds} status={initStatus}");
         }
     }
 
@@ -213,6 +234,7 @@ public class VoskSpeechRecognizer : IDisposable
             var partial = GetStringMemberValue(_voskRecognizer, "PartialResult");
             if (!string.IsNullOrEmpty(partial) && partial != "{}")
             {
+                _lastPartialResult = partial;
                 LogEvent($"[vosk-speech] Partial: {partial}");
             }
 
@@ -236,12 +258,20 @@ public class VoskSpeechRecognizer : IDisposable
         try
         {
             var result = GetStringMemberValue(_voskRecognizer, "Result");
-            return (!string.IsNullOrEmpty(result) && result != "{}") ? result : null;
+            if (!string.IsNullOrEmpty(result) && result != "{}")
+                return result;
+
+            return null;
         }
         catch
         {
             return null;
         }
+    }
+
+    public string? GetPartialResult()
+    {
+        return string.IsNullOrWhiteSpace(_lastPartialResult) ? null : _lastPartialResult;
     }
 
     private bool LoadVoskAssembly()

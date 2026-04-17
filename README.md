@@ -53,7 +53,7 @@ For an end-to-end build, publish, patch, and launch flow from the repo root on m
 
 The wrapper script supports additional flags:
 - `--rid <runtime-identifier>` (override auto-detected target)
-- `--migration-mode <stable|probe|full>` (launcher migration mode, default `stable`; recommended `full` for active runtime testing)
+- `--migration-mode <stable|probe|full>` (launcher migration mode, default `full`)
 - `--verbose` (print each invoked command)
 - `--show-build-output` (don’t suppress `dotnet` output)
 - `--no-launch` (build/publish/patch only, do not run setup-wizard)
@@ -66,9 +66,25 @@ If you want to force a specific runtime identifier, pass `--rid`:
 ./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
-Active test workflows:
-- live runtime testing: `LIVE-TESTING.md`
-- command injection testing: `TEST_COMMANDS.md`
+Developer validation workflow:
+
+```sh
+./build-and-test.sh
+```
+
+This script runs:
+- runtime-helper parity checks (Core vs runtime helper critical methods)
+- `dotnet build CrossPlatformPatcher.csproj -c Release`
+- `dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release`
+
+Set `RUN_PATCH_WORKFLOW=1` to include patch workflow validation (`./build-patch-and-launch.sh --migration-mode full --no-launch`).
+
+Active docs map:
+- documentation index: [docs/README.md](docs/README.md)
+- project structure: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
+- live runtime testing: [LIVE-TESTING.md](LIVE-TESTING.md)
+- command injection testing: [TEST_COMMANDS.md](TEST_COMMANDS.md)
+- archived docs index: [docs/archive/2026-04/README.md](docs/archive/2026-04/README.md)
 
 This script:
 - builds the patcher in Release
@@ -502,13 +518,13 @@ CrossPlatformPatcher PAIcom.exe \
 #   Range: [0.0, 1.0]
 #
 # --oww-lock-ms <milliseconds>
-#   Hard lock duration in milliseconds (default: 3000 = 3 seconds).
+#   Hard lock duration in milliseconds (default: 3000; arm64 profile: 3200).
 #   Prevents back-queuing and duplicate detections.
 #   Covers typical command recognition + safety margin.
-#   Range: [100, 10000]
+#   Range: [500, 20000]
 #
 # --oww-audio-chunk-size <samples>
-#   Audio chunk size in samples (default: 1024).
+#   Audio chunk size in samples (default: 1024; arm64 profile: 960).
 #   At 16 kHz, 1024 samples ≈ 64ms of audio.
 #   Larger = fewer inference calls, higher latency.
 #   Range: [128, 8192]
@@ -547,16 +563,16 @@ run.bat
 
 **Supported environment variables:**
 - `PAICOM_OWW_THRESHOLD` (float, default 0.7)
-- `PAICOM_OWW_LOCK_MS` (int, default 3000)
-- `PAICOM_OWW_AUDIO_CHUNK_SIZE` (int, default 1024)
+- `PAICOM_OWW_LOCK_MS` (int, default 3000; arm64 profile: 3200)
+- `PAICOM_OWW_AUDIO_CHUNK_SIZE` (int, default 1024; arm64 profile: 960)
 - `PAICOM_OWW_INFERENCE_THREAD_SCALE` (float, default 1.0)
 - `PAICOM_OWW_MODEL_RESOURCE` (string, default "oww.model.hey_pie_com.quant.onnx")
 - `PAICOM_OWW_AUDIO_SAMPLE_RATE` (int, default 16000)
 - `PAICOM_OWW_VERBOSE_LOG` (bool, default false)
-- `PAICOM_OWW_MIC_BUFFER_MS` (int, default 200)
+- `PAICOM_OWW_MIC_BUFFER_MS` (int, default 200; arm64 profile: 160)
 - `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.65)
-- `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450)
-- `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000)
+- `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450; arm64 profile: 350)
+- `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000; arm64 profile: 850)
 
 ### Embedded Resources
 
