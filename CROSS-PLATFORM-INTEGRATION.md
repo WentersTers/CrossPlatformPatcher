@@ -206,6 +206,6 @@ All new dispatchers log to `LogEvent` with prefixes:
 
 ## References
 
-- [Runtime Diagnostics Analysis](RTDIAGS-METHOD-REFERENCE.md) - Identified audio/animation methods
+- [Runtime Diagnostics Analysis (archived)](docs/archive/2026-04/RTDIAGS-METHOD-REFERENCE.md) - Historical audio/animation method findings
 - [Patcher Architecture](README.md) - Overall patcher design
 - [Process Compatibility Patcher](Core/ProcessStartCompatibilityPatcher.cs) - Pattern for cross-platform safety

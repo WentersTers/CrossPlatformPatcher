@@ -30,7 +30,7 @@ Usage:
 
 Options:
   --rid <runtime-identifier>   Override the detected publish target.
-  --migration-mode <mode>      Launcher migration mode: stable, probe, or full.
+    --migration-mode <mode>      Launcher migration mode: stable, probe, or full (default: full).
   --test-commands              Run in command injection test mode (auto-launch game).
   --test-interval <ms>         Interval between test commands in ms (default: 1000).
   --test-duration <seconds>    Run tests for N seconds, then auto-stop (default: infinite).
@@ -139,7 +139,7 @@ run_step() {
 }
 
 RID=""
-MIGRATION_MODE="stable"
+MIGRATION_MODE="full"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

@@ -54,7 +54,19 @@ class Program
         var migrationMode = MigrationMode.Stable;
         
         // OpenWakeWord settings (parsed from CLI args)
-        var owwBuilder = OpenWakeWordSettings.CreateBuilder();
+        var defaultOwwSettings = OpenWakeWordSettings.CreateDefault();
+        var owwBuilder = OpenWakeWordSettings.CreateBuilder()
+            .WithThreshold(defaultOwwSettings.ConfidenceThreshold)
+            .WithLockDurationMs(defaultOwwSettings.LockDurationMs)
+            .WithAudioChunkSize(defaultOwwSettings.AudioChunkSize)
+            .WithInferenceThreadScale(defaultOwwSettings.InferenceThreadPoolScale)
+            .WithModelResourceName(defaultOwwSettings.ModelResourceName)
+            .WithAudioSampleRate(defaultOwwSettings.AudioSampleRate)
+            .WithVerboseLogging(defaultOwwSettings.EnableVerboseLogging)
+            .WithMicrophoneBufferMilliseconds(defaultOwwSettings.MicrophoneBufferMilliseconds)
+            .WithFuzzyMatchMinConfidence(defaultOwwSettings.FuzzyMatchMinConfidence)
+            .WithPostWakeSilenceGraceMilliseconds(defaultOwwSettings.PostWakeSilenceGraceMilliseconds)
+            .WithSpeechSilenceCutoffMilliseconds(defaultOwwSettings.SpeechSilenceCutoffMilliseconds);
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -257,18 +269,18 @@ class Program
 
         OpenWakeWord Options:
             --oww-threshold <0.0-1.0>       Wake word confidence threshold (default: 0.7)
-            --oww-lock-ms <ms>              Hard lock duration in milliseconds (default: 3000)
-            --oww-audio-chunk-size <n>      Audio chunk size in samples (default: 1024)
+            --oww-lock-ms <ms>              Hard lock duration in milliseconds (default: 3000, arm64: 3200)
+            --oww-audio-chunk-size <n>      Audio chunk size in samples (default: 1024, arm64: 960)
             --oww-inference-thread-scale <n> ThreadPool scaling 0.5-2.0 (default: 1.0)
             --oww-model-resource <name>     ONNX model resource name (default: oww.model.hey_pie_com.quant.onnx)
             --oww-audio-sample-rate <hz>    Audio sample rate in Hz (default: 16000)
             --oww-verbose-log               Enable verbose OWW logging
-            --oww-mic-buffer-ms <ms>        Microphone buffer size in milliseconds (default: 200)
+            --oww-mic-buffer-ms <ms>        Microphone buffer size in milliseconds (default: 200, arm64: 160)
             --oww-fuzzy-match-confidence <f> Fuzzy command match confidence (default: 0.80)
             --oww-post-wake-silence-grace-ms <ms>
-                                         Silence grace after wake before cut-off starts (default: 450)
+                                         Silence grace after wake before cut-off starts (default: 450, arm64: 350)
             --oww-speech-silence-cutoff-ms <ms>
-                                         Silence duration that ends Vosk capture (default: 1000)
+                                         Silence duration that ends Vosk capture (default: 1000, arm64: 850)
 
         Description:
             Replaces Windows-only System.Speech with cross-platform Vosk

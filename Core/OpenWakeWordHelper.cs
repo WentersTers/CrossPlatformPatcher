@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -51,6 +52,7 @@ public static class OpenWakeWordHelper
     private static bool _voskListening;
 
     private const float SilenceAmplitudeThreshold = 0.01f;
+    private const int DefaultFallbackScriptTimeoutMs = 8000;
 
     // Sequential method testing (for diagnostics and compatibility testing)
     private static bool _sequentialMethodTestMode;
@@ -552,27 +554,33 @@ public static class OpenWakeWordHelper
         /// </summary>
         private static string[] GetPlatformSpecificScriptExtensions()
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            var isWine = IsRunningUnderWine();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !isWine)
             {
                 // Windows: prefer batch files, then PS1, then fall back to .exe/.sh
                 return new[] { ".bat", ".cmd", ".ps1", ".exe", ".sh", ".command" };
             }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || isWine)
             {
                 // macOS: prefer .command (Finder double-click wrapper) and .sh (shell script)
                 // Fall back to .exe/.bat only after Unix-native options exhausted
                 return new[] { ".command", ".sh", ".exe", ".bat", ".cmd", ".ps1" };
             }
-            else
-            {
-                // Linux: prefer .sh shell scripts, fall back to .exe/.bat with Wine
-                return new[] { ".sh", ".exe", ".bat", ".cmd", ".ps1", ".command" };
-            }
+
+            // Linux: prefer .sh shell scripts, fall back to .exe/.bat with Wine
+            return new[] { ".sh", ".exe", ".bat", ".cmd", ".ps1", ".command" };
         }
 
         private static bool TryResolveScriptPath(string commandToken, out string? scriptPath)
         {
             scriptPath = null;
+            if (!TryNormalizeCommandToken(commandToken, out var sanitizedToken, out var reason))
+            {
+                LogEvent($"[oww-command] Skipping unsafe command token '{commandToken}': {reason}");
+                return false;
+            }
+
             var baseDirectory = ResolveCommandRootDirectory();
             if (string.IsNullOrWhiteSpace(baseDirectory))
                 return false;
@@ -589,12 +597,22 @@ public static class OpenWakeWordHelper
 
             foreach (var root in searchRoots)
             {
+                var fullRoot = System.IO.Path.GetFullPath(root);
+                var normalizedRoot = fullRoot.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+                var rootPrefix = normalizedRoot + System.IO.Path.DirectorySeparatorChar;
                 foreach (var extension in platformExtensions)
                 {
-                    var candidate = System.IO.Path.Combine(root, commandToken + extension);
-                    if (System.IO.File.Exists(candidate))
+                    var candidate = System.IO.Path.Combine(root, sanitizedToken + extension);
+                    var fullCandidate = System.IO.Path.GetFullPath(candidate);
+                    if (!fullCandidate.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(fullCandidate, fullRoot, StringComparison.OrdinalIgnoreCase))
                     {
-                        scriptPath = candidate;
+                        continue;
+                    }
+
+                    if (System.IO.File.Exists(fullCandidate))
+                    {
+                        scriptPath = fullCandidate;
                         return true;
                     }
                 }
@@ -608,6 +626,7 @@ public static class OpenWakeWordHelper
             try
             {
                 var extension = System.IO.Path.GetExtension(scriptPath);
+                var timeoutMs = GetFallbackScriptTimeoutMs();
                 LogEvent($"[batch-converter-diag] TryStartScript called: path={scriptPath}, extension={extension}, isWindows={RuntimeInformation.IsOSPlatform(OSPlatform.Windows)}");
                 
                 ProcessStartInfo startInfo;
@@ -650,7 +669,7 @@ public static class OpenWakeWordHelper
                     {
                         // On Unix or Wine on Unix, translate the batch file to shell syntax and execute
                         LogEvent($"[batch-converter-diag] Translating batch file for Unix (Wine={isWine})");
-                        if (!TryTranslateAndExecuteBatch(scriptPath, out detail))
+                        if (!TryTranslateAndExecuteBatch(scriptPath, timeoutMs, out detail))
                         {
                             LogEvent($"[batch-converter-diag] Batch translation failed: {detail}");
                             return false;
@@ -672,11 +691,29 @@ public static class OpenWakeWordHelper
                 }
 
                 var process = Process.Start(startInfo);
-                detail = process == null
-                    ? $"Process launch returned null for script '{scriptPath}'."
-                    : $"Launched fallback script '{scriptPath}'.";
+                if (process == null)
+                {
+                    detail = $"Process launch returned null for script '{scriptPath}'.";
+                    return false;
+                }
 
-                return process != null;
+                if (WaitForProcessExit(process, timeoutMs, killOnTimeout: false, out var timedOut))
+                {
+                    detail = process.ExitCode == 0
+                        ? $"Fallback script completed: '{scriptPath}'."
+                        : $"Fallback script exited with code {process.ExitCode}: '{scriptPath}'.";
+                    return process.ExitCode == 0;
+                }
+
+                if (timedOut)
+                {
+                    LogEvent($"[oww-command] Script still running after {timeoutMs}ms; leaving background process active: {scriptPath}");
+                    detail = $"Fallback script launched and left running after timeout budget ({timeoutMs}ms): '{scriptPath}'.";
+                    return true;
+                }
+
+                detail = $"Fallback script launched: '{scriptPath}'.";
+                return true;
             }
             catch (Exception ex)
             {
@@ -692,45 +729,53 @@ public static class OpenWakeWordHelper
         /// </summary>
         private static bool IsRunningUnderWine()
         {
-            // Check environment variables that Wine sets
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WINEPREFIX")))
-                return true;
-            
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WINE")))
-                return true;
+            if (TryParseBooleanEnvironmentVariable("PAICOM_RUNTIME_FORCE_WINE", out var forcedWine))
+                return forcedWine;
 
-            // Check if we can successfully invoke a Unix shell
-            try
+            var hostOs = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_HOST_OS");
+            if (!string.IsNullOrWhiteSpace(hostOs))
             {
-                var testProcess = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "sh",
-                        Arguments = "-c \"echo 1\"",
-                        RedirectStandardOutput = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-                testProcess.Start();
-                testProcess.WaitForExit(500); // 500ms timeout
-                
-                // If we got here, sh is available (Unix-like environment)
-                return testProcess.ExitCode == 0 || testProcess.HasExited;
+                if (string.Equals(hostOs, "windows", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    return true;
             }
-            catch
+
+            var winePrefix = Environment.GetEnvironmentVariable("WINEPREFIX");
+            var wineLoader = Environment.GetEnvironmentVariable("WINELOADER");
+            var wineDllPath = Environment.GetEnvironmentVariable("WINEDLLPATH");
+            var wineVar = Environment.GetEnvironmentVariable("WINE");
+
+            if (!string.IsNullOrWhiteSpace(winePrefix) ||
+                !string.IsNullOrWhiteSpace(wineLoader) ||
+                !string.IsNullOrWhiteSpace(wineDllPath) ||
+                !string.IsNullOrWhiteSpace(wineVar))
             {
-                // sh not available or failed (true Windows)
+                return true;
+            }
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 return false;
+
+            var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
+            if (!string.IsNullOrWhiteSpace(systemRoot))
+            {
+                var wineSystemFile = Path.Combine(systemRoot, "system32", "wineboot.exe");
+                if (File.Exists(wineSystemFile))
+                    return true;
             }
+
+            var currentDir = Directory.GetCurrentDirectory();
+            return currentDir.StartsWith("Z:\\", StringComparison.OrdinalIgnoreCase) ||
+                   currentDir.StartsWith("Z:/", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
         /// Translates a batch file to shell syntax and executes it on Unix.
         /// Supports development mode (PAICOM_BATCH_TO_SHELL_MODE=generate-and-test) to generate/validate .sh files.
         /// </summary>
-        private static bool TryTranslateAndExecuteBatch(string batchFilePath, out string detail)
+        private static bool TryTranslateAndExecuteBatch(string batchFilePath, int timeoutMs, out string detail)
         {
             detail = "";
 
@@ -796,7 +841,13 @@ public static class OpenWakeWordHelper
                     return false;
                 }
 
-                process.WaitForExit();
+                if (!WaitForProcessExit(process, timeoutMs, killOnTimeout: true, out var timedOut))
+                {
+                    detail = timedOut
+                        ? $"Translated batch timed out after {timeoutMs}ms and was terminated: '{batchFilePath}'"
+                        : $"Translated batch did not complete cleanly: '{batchFilePath}'";
+                    return false;
+                }
                 
                 detail = process.ExitCode == 0
                     ? $"Translated and executed batch file: '{batchFilePath}'"
@@ -809,6 +860,42 @@ public static class OpenWakeWordHelper
             {
                 detail = $"Failed to translate and execute batch file '{batchFilePath}': {ex.GetType().Name}: {ex.Message}";
                 LogEvent($"[batch-converter-error] {detail}");
+                return false;
+            }
+        }
+
+        private static bool WaitForProcessExit(Process process, int timeoutMs, bool killOnTimeout, out bool timedOut)
+        {
+            timedOut = false;
+            try
+            {
+                if (process.WaitForExit(timeoutMs))
+                    return true;
+
+                timedOut = true;
+                if (killOnTimeout)
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            process.Kill();
+                        }
+                        catch
+                        {
+                            // Best effort only.
+                        }
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
                 return false;
             }
         }
@@ -839,6 +926,41 @@ public static class OpenWakeWordHelper
             }
             
             return unixPath;
+        }
+
+        private static int GetFallbackScriptTimeoutMs()
+        {
+            var configured = Environment.GetEnvironmentVariable("PAICOM_FALLBACK_SCRIPT_TIMEOUT_MS");
+            if (!string.IsNullOrWhiteSpace(configured) && int.TryParse(configured, out var parsed))
+                return parsed < 1000 ? 1000 : (parsed > 120000 ? 120000 : parsed);
+
+            return DefaultFallbackScriptTimeoutMs;
+        }
+
+        private static bool TryParseBooleanEnvironmentVariable(string name, out bool value)
+        {
+            value = false;
+            var raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            switch (raw.Trim().ToLowerInvariant())
+            {
+                case "1":
+                case "true":
+                case "yes":
+                case "on":
+                    value = true;
+                    return true;
+                case "0":
+                case "false":
+                case "no":
+                case "off":
+                    value = false;
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private static string QuoteArgument(string argument)
@@ -3495,6 +3617,62 @@ public static class OpenWakeWordHelper
             .ToArray();
     }
 
+    private static bool TryNormalizeCommandToken(string rawToken, out string normalizedToken, out string reason)
+    {
+        normalizedToken = string.Empty;
+        reason = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rawToken))
+        {
+            reason = "token is empty";
+            return false;
+        }
+
+        var token = rawToken.Trim();
+        if (token.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+            token = token.Substring(0, token.Length - 4);
+
+        token = token.Trim();
+        if (token.Length == 0)
+        {
+            reason = "token is empty after trim";
+            return false;
+        }
+
+        if (Path.IsPathRooted(token))
+        {
+            reason = "absolute paths are not allowed";
+            return false;
+        }
+
+        if (token.Contains("..", StringComparison.Ordinal))
+        {
+            reason = "path traversal sequence '..' is not allowed";
+            return false;
+        }
+
+        if (token.IndexOf('/') >= 0 || token.IndexOf('\\') >= 0)
+        {
+            reason = "path separators are not allowed";
+            return false;
+        }
+
+        if (token.StartsWith("~", StringComparison.Ordinal))
+        {
+            reason = "home-directory shorthand is not allowed";
+            return false;
+        }
+
+        if (token.IndexOfAny(new[] { ';', '&', '|', '`', '>', '<', '\r', '\n', '\t', '\0', ':' }) >= 0)
+        {
+            reason = "shell metacharacters are not allowed";
+            return false;
+        }
+
+        normalizedToken = token;
+        return true;
+    }
+
     private static CommandManifestEntry? ParseCommandLine(string? line)
     {
         if (string.IsNullOrWhiteSpace(line))
@@ -3513,6 +3691,12 @@ public static class OpenWakeWordHelper
         {
             scriptReference = commandText.Substring(parenOpen + 1, parenClose - parenOpen - 1).Trim();
             commandText = commandText.Substring(0, parenOpen).Trim();
+
+            if (!TryNormalizeCommandToken(scriptReference, out _, out var reason))
+            {
+                LogEvent($"[oww-command] Ignoring manifest entry with unsafe script reference '{scriptReference}': {reason}");
+                return null;
+            }
         }
 
         var normalizedPhrase = NormalizeCommandText(commandText);
@@ -3522,11 +3706,11 @@ public static class OpenWakeWordHelper
         var commandToken = normalizedPhrase;
         if (!string.IsNullOrWhiteSpace(scriptReference))
         {
-            commandToken = scriptReference!;
-            if (commandToken.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
-                commandToken = commandToken.Substring(0, commandToken.Length - 4);
-
-            commandToken = commandToken.Trim();
+            if (!TryNormalizeCommandToken(scriptReference!, out commandToken, out var reason))
+            {
+                LogEvent($"[oww-command] Ignoring manifest entry with unsafe command token '{scriptReference}': {reason}");
+                return null;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(commandToken))
@@ -3590,30 +3774,42 @@ public static class OpenWakeWordHelper
         if (!trimmed.StartsWith("{", StringComparison.Ordinal))
             return trimmed;
 
-        const string key = "\"text\"";
-        var keyIndex = trimmed.IndexOf(key, StringComparison.OrdinalIgnoreCase);
-        if (keyIndex < 0)
-            return trimmed;
+        var text = ExtractJsonStringField(trimmed, "\"text\"");
+        if (!string.IsNullOrWhiteSpace(text))
+            return text;
 
-        var colonIndex = trimmed.IndexOf(':', keyIndex);
+        var partial = ExtractJsonStringField(trimmed, "\"partial\"");
+        if (!string.IsNullOrWhiteSpace(partial))
+            return partial;
+
+        return null;
+    }
+
+    private static string? ExtractJsonStringField(string json, string key)
+    {
+        var keyIndex = json.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+        if (keyIndex < 0)
+            return null;
+
+        var colonIndex = json.IndexOf(':', keyIndex);
         if (colonIndex < 0)
             return null;
 
         var start = colonIndex + 1;
-        while (start < trimmed.Length && char.IsWhiteSpace(trimmed[start]))
+        while (start < json.Length && char.IsWhiteSpace(json[start]))
             start++;
 
-        if (start >= trimmed.Length)
+        if (start >= json.Length)
             return null;
 
-        if (trimmed[start] == '"')
+        if (json[start] == '"')
             start++;
 
         var builder = new StringBuilder();
         var escaping = false;
-        for (var i = start; i < trimmed.Length; i++)
+        for (var i = start; i < json.Length; i++)
         {
-            var current = trimmed[i];
+            var current = json[i];
             if (escaping)
             {
                 builder.Append(current switch
@@ -3641,7 +3837,8 @@ public static class OpenWakeWordHelper
             builder.Append(current);
         }
 
-        return builder.ToString().Trim();
+        var value = builder.ToString().Trim();
+        return value.Length == 0 ? null : value;
     }
 
     private static string NormalizeCommandText(string transcript)
