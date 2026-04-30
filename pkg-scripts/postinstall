@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -e
+
+INSTALL_ROOT="${3:-/Applications/CrossPlatformPatcher}"
+WIZARD="$INSTALL_ROOT/SetupWizard.command"
+
+if [ -f "$WIZARD" ]; then
+    chmod +x "$WIZARD" || true
+fi
+
+exit 0
