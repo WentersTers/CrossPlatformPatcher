@@ -66,6 +66,12 @@ If you want to force a specific runtime identifier, pass `--rid`:
 ./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
+To build the macOS installer package that downloads the latest patcher release from GitHub and then patches the selected `PAIcom.exe`, run:
+
+```sh
+./build-mac-pkg.sh
+```
+
 Developer validation workflow:
 
 ```sh
@@ -102,13 +108,6 @@ Build, patch, and launcher logs stream to the terminal that started the script. 
 > - macOS x64: `CrossPlatformPatcher-M-x64`
 > - macOS ARM64: `CrossPlatformPatcher-M-Arm`
 >
-> They also publish the GUI installer wizard from `InstallerWizard/InstallerWizard.csproj`
-> into `publish/SetupWizard/<RID>/`:
-> - Windows x64: `SetupWizard.exe`
-> - Linux x64: `SetupWizard`
-> - macOS x64: `SetupWizard`
-> - macOS ARM64: `SetupWizard`
-
 ### Use the Patcher
 
 1. Get your own copy of `PAIcom.exe` (purchased from Steam)
@@ -119,15 +118,15 @@ Build, patch, and launcher logs stream to the terminal that started the script. 
 3. The patcher generates:
    - `PAIcom_patched.exe` — the patched game
    - `run.sh` / `run.bat` / `launch.command` — OS-specific launchers
-  - `setup-wizard.sh` / `setup.command` — setup entry points (prefer GUI `SetupWizard` when present)
+  - `setup-wizard.sh` / `setup.command` — setup entry points
    - `SETUP_LINUX.md` / `SETUP_MAC.md` — setup instructions
 
 4. To run the patched game:
    - **Windows:** Double-click `PAIcom_patched.exe` or `run.bat`
-  - **Linux:** Run `./SetupWizard` (or `sh setup-wizard.sh`) once, then `sh run.sh`
-  - **macOS:** Run `./SetupWizard` (or double-click `setup.command`) once, then `launch.command`
+  - **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
+  - **macOS:** Run `sh setup-wizard.sh` once, then `launch.command`
 
-On macOS, the setup wizard can download/install Homebrew when missing, then install Whisky.
+The setup script can download/install Homebrew when missing, then install Whisky.
 
 ## What's Inside
 
@@ -139,6 +138,7 @@ On macOS, the setup wizard can download/install Homebrew when missing, then inst
 | `Core/ReferenceAssemblyResolver.cs` | Cross-platform .NET FW 4.8 ref resolution |
 | `Core/VoskResourceEmbedder.cs` | Embeds Vosk libs into the patched exe |
 | `Core/LauncherGenerator.cs` | Creates OS-specific launcher scripts |
+| `build-mac-pkg.sh` | Builds the macOS installer package with `pkgbuild`/`productbuild` |
 | `Core/SpeechCompatibilityPatcher.cs` | Adds compatibility wrappers/logging for System.Speech paths |
 | `Core/NativeLibraries/` | Vosk native binaries (Win, Linux, macOS) |
 | `Core/ManagedLibraries/` | Vosk & NAudio managed wrappers |
@@ -424,6 +424,12 @@ To update Vosk or NAudio versions:
 
 The `Core/NativeLibraries/` and `Core/ManagedLibraries/` folders are expected to contain the binaries. 
 The build will skip missing files gracefully, but the patcher will have reduced functionality without them.
+
+## macOS Installer Package
+
+The macOS installer package is built with `pkgbuild` and `productbuild` via `build-mac-pkg.sh`. It installs a `SetupWizard.command` bootstrapper under `Applications/CrossPlatformPatcher/`, which downloads the latest GitHub release of the patcher, patches the selected `PAIcom.exe`, and then launches the generated setup flow.
+
+The final `.pkg` is written to `build/mac-pkg/dist/`.
 
 See `Core/NativeLibraries/README.md` and `Core/ManagedLibraries/README.md` for setup.
 
