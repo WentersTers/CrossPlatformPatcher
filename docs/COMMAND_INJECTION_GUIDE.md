@@ -137,7 +137,7 @@ sleep 1
 send_command "hey paicom play some music"
 ```
 
-Run alongside your game:
+Run it alongside your game:
 ```bash
 # Terminal 1
 ./build-patch-and-launch.sh --file-command-input
