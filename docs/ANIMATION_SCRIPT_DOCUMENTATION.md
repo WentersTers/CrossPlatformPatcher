@@ -397,18 +397,3 @@ Expected behavior:
 2. UI dispatch succeeds (TextBox + Button simulation)
 3. Animation script queues and executes
 4. Frames display, audio plays, timings respected
-
----
-
-## File References
-
-- **Animation Scripts:** `PAIcom_Player_Folder/animations/*.txt`
-- **Frame Images:** `PAIcom_Player_Folder/animations/*.png`
-- **Audio Files:** `PAIcom_Player_Folder/audio/*` or `animations/audio/*`
-- **Command Manifest:** `PAIcom_Player_Folder/custom-commands/commands.txt`
-- **Implementation:** `PAIcom.OWW/OpenWakeWordHelper.cs` (TryExecuteAnimationScriptSync method)
-
----
-
-**Last Updated:** March 28, 2026  
-**Status:** ✅ All commands implemented with reflection-based method invocation
