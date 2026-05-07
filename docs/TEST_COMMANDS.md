@@ -127,4 +127,3 @@ Press **Ctrl+C** at any time to stop testing and kill the game process.
 - Game path might be wrong - check the file exists
 - Wine might not be installed on macOS/Linux
 - Check the game actually launches manually first
-
