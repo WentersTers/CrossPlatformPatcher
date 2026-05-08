@@ -11,7 +11,14 @@ The patcher itself runs on **Windows, Linux, macOS** (Intel and Apple Silicon) a
 
 ## Quick Start
 
-### Build the Patcher (All Platforms)
+**New to this project?** Start with these comprehensive guides:
+
+- **[Quick Start Guide](docs/QUICK_START.md)** — Fastest way to build and test
+- **[Build System](docs/BUILD_SYSTEM.md)** — Complete build pipeline documentation
+- **[Installer Guide](docs/INSTALLER_GUIDE.md)** — macOS native .app building and code signing
+- **[All Documentation](docs/README.md)** — Full documentation index
+
+### Core Workflows
 
 **Windows:**
 ```cmd
@@ -66,48 +73,18 @@ If you want to force a specific runtime identifier, pass `--rid`:
 ./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
-To build the macOS installer package that downloads the latest patcher release from GitHub and then patches the selected `PAIcom.exe`, run:
+To build the native macOS Setup Wizard app, run:
 
 ```sh
-./build-mac-pkg.sh
+cd SetupWizardMacApp && ./build.sh
 ```
 
-Developer validation workflow:
+The app can then be code-signed and distributed. See [INSTALLER_GUIDE.md](docs/INSTALLER_GUIDE.md) for signing instructions.
 
-```sh
-./build-and-test.sh
-```
+## Documentation
 
-This script runs:
-- runtime-helper parity checks (Core vs runtime helper critical methods)
-- `dotnet build CrossPlatformPatcher.csproj -c Release`
-- `dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release`
+For complete build documentation, see [docs/BUILD_SYSTEM.md](docs/BUILD_SYSTEM.md) and [docs/QUICK_START.md](docs/QUICK_START.md).
 
-Set `RUN_PATCH_WORKFLOW=1` to include patch workflow validation (`./build-patch-and-launch.sh --migration-mode full --no-launch`).
-
-Active docs map:
-- documentation index: [docs/README.md](docs/README.md)
-- project structure: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
-- live runtime testing: [LIVE-TESTING.md](LIVE-TESTING.md)
-- command injection testing: [TEST_COMMANDS.md](TEST_COMMANDS.md)
-- archived docs index: [docs/archive/2026-04/README.md](docs/archive/2026-04/README.md)
-
-This script:
-- builds the patcher in Release
-- publishes a self-contained OS-specific patcher
-- copies the published patcher into `PAIcom_Player_Folder/`
-- patches `PAIcom.exe` to `PAIcom_patched.exe`
-- runs `PAIcom_Player_Folder/launch.command`
-
-Build, patch, and launcher logs stream to the terminal that started the script. Press `Ctrl+C` to stop the wrapper and its child process.
-
-> **Note:** `publish-all.sh` / `publish-all.bat` publish `CrossPlatformPatcher.csproj` for
-> all four runtime identifiers into `publish/CrossPlatformPatcher/<RID>/` with the following naming scheme:
-> - Windows x64: `CrossPlatformPatcher-W-x64.exe`
-> - Linux x64: `CrossPlatformPatcher-L-x64`
-> - macOS x64: `CrossPlatformPatcher-M-x64`
-> - macOS ARM64: `CrossPlatformPatcher-M-Arm`
->
 ### Use the Patcher
 
 1. Get your own copy of `PAIcom.exe` (purchased from Steam)
@@ -138,7 +115,7 @@ The setup script can download/install Homebrew when missing, then install Whisky
 | `Core/ReferenceAssemblyResolver.cs` | Cross-platform .NET FW 4.8 ref resolution |
 | `Core/VoskResourceEmbedder.cs` | Embeds Vosk libs into the patched exe |
 | `Core/LauncherGenerator.cs` | Creates OS-specific launcher scripts |
-| `build-mac-pkg.sh` | Builds the macOS installer package with `pkgbuild`/`productbuild` |
+| `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application |
 | `Core/SpeechCompatibilityPatcher.cs` | Adds compatibility wrappers/logging for System.Speech paths |
 | `Core/NativeLibraries/` | Vosk native binaries (Win, Linux, macOS) |
 | `Core/ManagedLibraries/` | Vosk & NAudio managed wrappers |
@@ -425,11 +402,11 @@ To update Vosk or NAudio versions:
 The `Core/NativeLibraries/` and `Core/ManagedLibraries/` folders are expected to contain the binaries. 
 The build will skip missing files gracefully, but the patcher will have reduced functionality without them.
 
-## macOS Installer Package
+## macOS Setup Wizard Application
 
-The macOS installer package is built with `pkgbuild` and `productbuild` via `build-mac-pkg.sh`. It installs a `SetupWizard.command` bootstrapper under `Applications/CrossPlatformPatcher/`, which downloads the latest GitHub release of the patcher, patches the selected `PAIcom.exe`, and then launches the generated setup flow.
+The native `SetupWizard.app` is a SwiftUI application that provides an interactive setup wizard for macOS users. For build and distribution instructions, see [Installer Guide](docs/INSTALLER_GUIDE.md).
 
-The final `.pkg` is written to `build/mac-pkg/dist/`.
+The app includes code signing support for developer distribution and notarization for Big Sur+.
 
 See `Core/NativeLibraries/README.md` and `Core/ManagedLibraries/README.md` for setup.
 

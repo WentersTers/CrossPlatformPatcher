@@ -44,17 +44,12 @@ Added a model selection screen to the SetupWizard that allows users to:
 - `SetupWizardMacApp/Sources/SetupWizard/Views/FolderPickerView.swift`
   - Changed "Continue" button to navigate to model selection instead of download
 
-### 2. macOS Installer Package
+### 2. macOS SetupWizard.app
 
-**Modified Files:**
-- `build-mac-pkg.sh`
-  - Added code to include all Vosk model ZIPs from `VoskModels/zips/` into the installer payload
-  - Creates `Applications/CrossPlatformPatcher/VoskModels/zips/` directory
-
-- `pkg-scripts/postinstall`
-  - Added model extraction logic on install
-  - Extracts first found model ZIP into `Applications/CrossPlatformPatcher/models/<modelname>/`
-  - Gracefully handles extraction failures by copying ZIP if needed
+**Integration:**
+- Vosk model selection is fully integrated into the native SwiftUI `SetupWizard.app`
+- Users can select from pre-built models or provide custom models
+- Models are downloaded and extracted during setup workflow
 
 ## Available Models
 
@@ -77,14 +72,14 @@ The following models are available for selection:
 5. Continues to patcher download/patch step
 6. On first game run, Vosk initializer will find model in expected location
 
-## For Installer Users (macOS .pkg)
+## For SetupWizard.app Users (macOS)
 
-When users install via the `.pkg` installer:
-1. SetupWizard.command is installed to `Applications/CrossPlatformPatcher/`
-2. Default model (`vosk-model-en-us-0.22-lgraph.zip`) is extracted to `Applications/CrossPlatformPatcher/models/`
-3. User runs SetupWizard, selects PAIcom folder
-4. Can choose to use pre-installed model or select a different one
-5. Model is copied to their PAIcom folder for use
+When users launch the native `SetupWizard.app`:
+1. They're presented with an interactive setup wizard
+2. After selecting PAIcom folder, they reach the Vosk model selection step
+3. They can choose from pre-built models (downloaded on demand) or provide a custom model
+4. Selected model is extracted to `PAIcom_Player_Folder/models/<modelname>/`
+5. Model persists for all subsequent game runs
 
 ## Download Sources
 
@@ -96,13 +91,12 @@ These are official Vosk project CDN URLs with reliable hosting.
 
 The implementation has been:
 - ✅ Compiled successfully (Swift 5 with SwiftUI)
-- ✅ Integrated into SetupWizard app
-- ✅ Bundled into macOS `.pkg` installer
-- ✅ Model ZIP verified in installer payload
+- ✅ Integrated into SetupWizard.app
+- ✅ Model ZIP downloads verified
 
 Next steps for user:
-1. Install the generated `.pkg` on macOS
-2. Run `SetupWizard.command` from Applications
+1. Build and run SetupWizard.app: `cd SetupWizardMacApp && ./build.sh`
+2. Launch the app
 3. Select PAIcom folder
 4. Choose a model from the list or provide your own
 5. Wizard handles download and setup automatically
