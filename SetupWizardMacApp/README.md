@@ -136,14 +136,20 @@ Test workflow:
 - [ ] On arm64 Mac: correct asset downloaded
 - [ ] On x86_64 Mac: correct asset downloaded
 
-## Integration with build-mac-pkg.sh
+## Building and Distribution
 
-The main patcher's `build-mac-pkg.sh` will:
-1. Run `./SetupWizardMacApp/build.sh`
-2. Copy `SetupWizardMacApp/build/Release/SetupWizard.app` into the .pkg payload
-3. Create launcher wrapper for entry point
+The `SetupWizard.app` can be:
 
-See [CrossPlatformPatcher/build-mac-pkg.sh](../build-mac-pkg.sh) for integration.
+1. **Built for development:** `./build.sh`
+   - Output: `build/Release/SetupWizard.app`
+   - Code signed ad-hoc (suitable for local testing)
+
+2. **Distributed to users:**
+   - Code sign with Developer ID: See [Installer Guide](../docs/INSTALLER_GUIDE.md#22-developer-id-code-signing-for-distribution)
+   - Notarize for Big Sur+: See [Installer Guide](../docs/INSTALLER_GUIDE.md#23-notarization-required-for-distribution-on-big-sur)
+   - Create .dmg package: See [Installer Guide](../docs/INSTALLER_GUIDE.md#24-creating-a-dmg-distribution-package)
+
+The app is designed as a standalone native macOS application, not as part of a larger installer.
 
 ## Future Enhancements
 
