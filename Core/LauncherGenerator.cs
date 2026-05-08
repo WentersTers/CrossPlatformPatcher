@@ -196,6 +196,13 @@ public static class LauncherGenerator
 
                 export PAICOM_MIGRATION_MODE="$migration_mode"
 
+                # Auto-detect Vosk models directory and set model path
+                MODELS_DIR="$SCRIPT_DIR/models"
+                if [ -d "$MODELS_DIR" ]; then
+                    export PAICOM_VOSK_MODEL_PATH="$MODELS_DIR"
+                    log "Vosk model path set: $PAICOM_VOSK_MODEL_PATH"
+                fi
+
                 printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
 
                 "$@" >> "$RUNTIME_LOG" 2>&1 &
