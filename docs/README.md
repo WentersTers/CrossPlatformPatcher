@@ -12,7 +12,7 @@ This folder is the active documentation index for developers and AI agents worki
 
 **Critical reading for building and distributing the patcher:**
 
-- [Build System](BUILD_SYSTEM.md): complete build pipeline for all platforms (Windows/Linux/macOS)
+- [Build System](BUILD_SYSTEM.md): complete build pipeline (primary macOS workflows; Linux/Windows resupport in progress)
 - [Build Outputs](BUILD_OUTPUTS.md): detailed structure of all build artifacts
 - [Installer Guide](INSTALLER_GUIDE.md): macOS native `.app` code signing and distribution
 - [macOS Setup](SETUP_MAC.md): user-facing macOS setup documentation

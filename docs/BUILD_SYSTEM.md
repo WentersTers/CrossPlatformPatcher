@@ -2,6 +2,8 @@
 
 This document provides complete details on the CrossPlatformPatcher build pipeline, including all supported targets, build modes, and output artifacts.
 
+Note: This documentation currently focuses on the macOS build and distribution workflow (SetupWizard.app). Linux and Windows publishing/validation are planned and will be reintroduced after macOS workflows are finalized and tested.
+
 ## Overview
 
 The build system consists of:
