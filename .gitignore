@@ -98,3 +98,24 @@ PAIcom*.dll
 **/reverse-engineered/
 **/*decompile*/
 Command Caller reference/
+
+# Additional local/generated artifacts
+# macOS app bundles and build outputs
+*.app
+**/*.app
+SetupWizardMacApp/build/
+SetupWizardMacApp/build/Release/
+build/Release/
+*.dSYM
+# Test results and CI artifacts
+TestResults/
+*.trx
+
+# Large model/data directories not required for building
+VoskModels/
+
+# Dump and temporary outputs
+*.out
+logs/
+
+SetupWizardMacApp/.build/
