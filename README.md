@@ -2,7 +2,7 @@
 
 This is an **isolated, standalone build** of the cross-platform PAIcom patch injector. It contains all features for replacing the Windows-only `System.Speech` speech recognizer with **Vosk** (offline, cross-platform speech-to-text).
 
-The patcher itself runs on **Windows, Linux, macOS** (Intel and Apple Silicon) and outputs a patched PAIcom.exe that also runs on all those platforms via Wine/Mono.
+The patcher is implemented to run on multiple platforms, but it has currently been fully tested and verified on macOS (Intel & Apple Silicon) only. Linux and Windows support is planned and in progress and will be re-enabled once the macOS workflow is finalized.
 
 > **macOS users:** This tool is distributed without an Apple Developer ID signature.
 > macOS may show a security or "unidentified developer" warning on first run — this is

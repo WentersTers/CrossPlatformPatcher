@@ -1,6 +1,8 @@
 # Quick Start
 
-Fastest way to get started with CrossPlatformPatcher on any platform.
+Fastest way to get started with CrossPlatformPatcher on macOS.
+
+Status: This repository and its SetupWizard.app have been tested and verified on macOS (Intel & Apple Silicon). Support for Linux and Windows is planned and in progress and will be re-enabled after macOS stability is confirmed.
 
 ## Choose Your Path
 
