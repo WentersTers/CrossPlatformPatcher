@@ -54,6 +54,19 @@ copy_if_exists "$SCRIPT_DIR/setup.command" "setup.command"
 copy_if_exists "$SCRIPT_DIR/launch.command" "launch.command"
 copy_if_exists "$SCRIPT_DIR/run.sh" "run.sh"
 
+# Include any built Vosk model zips into the installer payload so postinstall can
+# extract them into the installed application folder.
+if [[ -d "$SCRIPT_DIR/VoskModels/zips" ]]; then
+    mkdir -p "$INSTALL_ROOT/VoskModels/zips"
+    # Copy files if any exist (ignore .gitkeep/DS_Store automatically)
+    shopt -s nullglob 2>/dev/null || true
+    for f in "$SCRIPT_DIR"/VoskModels/zips/*; do
+        if [[ -f "$f" ]]; then
+            cp "$f" "$INSTALL_ROOT/VoskModels/zips/"
+        fi
+    done
+fi
+
 cat > "$DIST_XML" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
