@@ -2,6 +2,8 @@
 
 This document describes the complete directory structure of build artifacts produced by various build commands.
 
+Note: The primary focus of this document is macOS build artifacts and the `SetupWizard.app` distribution. Linux and Windows publish artifacts are referenced where relevant but are not currently validated — re-introduction of full multi-platform validation is planned after macOS is finalized.
+
 ---
 
 ## 1. Local Build Outputs
