@@ -7,6 +7,8 @@ obj/
 *.so
 *.dylib
 publish/
+build/mac-pkg/
+*.pkg
 
 # NuGet
 *.nupkg
@@ -69,6 +71,7 @@ setup.command
 
 
 setup-wizard.sh
+SetupWizard.command
 
 SETUP_MAC.md
 SETUP_LINUX.md
@@ -94,3 +97,25 @@ PAIcom*.dll
 **/extracted/
 **/reverse-engineered/
 **/*decompile*/
+Command Caller reference/
+
+# Additional local/generated artifacts
+# macOS app bundles and build outputs
+*.app
+**/*.app
+SetupWizardMacApp/build/
+SetupWizardMacApp/build/Release/
+build/Release/
+*.dSYM
+# Test results and CI artifacts
+TestResults/
+*.trx
+
+# Large model/data directories not required for building
+VoskModels/
+
+# Dump and temporary outputs
+*.out
+logs/
+
+SetupWizardMacApp/.build/

@@ -2,7 +2,7 @@
 
 This is an **isolated, standalone build** of the cross-platform PAIcom patch injector. It contains all features for replacing the Windows-only `System.Speech` speech recognizer with **Vosk** (offline, cross-platform speech-to-text).
 
-The patcher itself runs on **Windows, Linux, macOS** (Intel and Apple Silicon) and outputs a patched PAIcom.exe that also runs on all those platforms via Wine/Mono.
+The patcher is implemented to run on multiple platforms, but it has currently been fully tested and verified on macOS (Intel & Apple Silicon) only. Linux and Windows support is planned and in progress and will be re-enabled once the macOS workflow is finalized.
 
 > **macOS users:** This tool is distributed without an Apple Developer ID signature.
 > macOS may show a security or "unidentified developer" warning on first run — this is
@@ -11,7 +11,14 @@ The patcher itself runs on **Windows, Linux, macOS** (Intel and Apple Silicon) a
 
 ## Quick Start
 
-### Build the Patcher (All Platforms)
+**New to this project?** Start with these comprehensive guides:
+
+- **[Quick Start Guide](docs/QUICK_START.md)** — Fastest way to build and test
+- **[Build System](docs/BUILD_SYSTEM.md)** — Complete build pipeline documentation
+- **[Installer Guide](docs/INSTALLER_GUIDE.md)** — macOS native .app building and code signing
+- **[All Documentation](docs/README.md)** — Full documentation index
+
+### Core Workflows
 
 **Windows:**
 ```cmd
@@ -48,11 +55,12 @@ sh publish-all.sh
 For an end-to-end build, publish, patch, and launch flow from the repo root on macOS or Linux, use:
 
 ```sh
-./build-patch-and-launch.sh
+./build-patch-and-launch.sh --migration-mode full
 ```
 
 The wrapper script supports additional flags:
 - `--rid <runtime-identifier>` (override auto-detected target)
+- `--migration-mode <stable|probe|full>` (launcher migration mode, default `full`)
 - `--verbose` (print each invoked command)
 - `--show-build-output` (don’t suppress `dotnet` output)
 - `--no-launch` (build/publish/patch only, do not run setup-wizard)
@@ -62,23 +70,20 @@ If you want to force a specific runtime identifier, pass `--rid`:
 
 ```sh
 ./build-patch-and-launch.sh --rid osx-arm64
+./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
-This script:
-- builds the patcher in Release
-- publishes a self-contained OS-specific patcher
-- copies the published patcher into `PAIcom_Player_Folder/`
-- patches `PAIcom.exe` to `PAIcom_patched.exe`
-- runs `PAIcom_Player_Folder/launch.command`
+To build the native macOS Setup Wizard app, run:
 
-Build, patch, and launcher logs stream to the terminal that started the script. Press `Ctrl+C` to stop the wrapper and its child process.
+```sh
+cd SetupWizardMacApp && ./build.sh
+```
 
-> **Note:** `publish-all.sh` / `publish-all.bat` publish `CrossPlatformPatcher.csproj` for
-> all four runtime identifiers into `publish/CrossPlatformPatcher/<RID>/` with the following naming scheme:
-> - Windows x64: `CrossPlatformPatcher-W-x64.exe`
-> - Linux x64: `CrossPlatformPatcher-L-x64`
-> - macOS x64: `CrossPlatformPatcher-M-x64`
-> - macOS ARM64: `CrossPlatformPatcher-M-Arm`
+The app can then be code-signed and distributed. See [INSTALLER_GUIDE.md](docs/INSTALLER_GUIDE.md) for signing instructions.
+
+## Documentation
+
+For complete build documentation, see [docs/BUILD_SYSTEM.md](docs/BUILD_SYSTEM.md) and [docs/QUICK_START.md](docs/QUICK_START.md).
 
 ### Use the Patcher
 
@@ -90,15 +95,15 @@ Build, patch, and launcher logs stream to the terminal that started the script. 
 3. The patcher generates:
    - `PAIcom_patched.exe` — the patched game
    - `run.sh` / `run.bat` / `launch.command` — OS-specific launchers
-   - `setup-wizard.sh` / `setup.command` — guided smart setup wizard (Linux/macOS)
+  - `setup-wizard.sh` / `setup.command` — setup entry points
    - `SETUP_LINUX.md` / `SETUP_MAC.md` — setup instructions
 
 4. To run the patched game:
    - **Windows:** Double-click `PAIcom_patched.exe` or `run.bat`
-   - **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
-   - **macOS:** Double-click `setup.command` once, then `launch.command`
+  - **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
+  - **macOS:** Run `sh setup-wizard.sh` once, then `launch.command`
 
-On macOS, the setup wizard can download/install Homebrew when missing, then install Whisky.
+The setup script can download/install Homebrew when missing, then install Whisky.
 
 ## What's Inside
 
@@ -110,6 +115,7 @@ On macOS, the setup wizard can download/install Homebrew when missing, then inst
 | `Core/ReferenceAssemblyResolver.cs` | Cross-platform .NET FW 4.8 ref resolution |
 | `Core/VoskResourceEmbedder.cs` | Embeds Vosk libs into the patched exe |
 | `Core/LauncherGenerator.cs` | Creates OS-specific launcher scripts |
+| `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application |
 | `Core/SpeechCompatibilityPatcher.cs` | Adds compatibility wrappers/logging for System.Speech paths |
 | `Core/NativeLibraries/` | Vosk native binaries (Win, Linux, macOS) |
 | `Core/ManagedLibraries/` | Vosk & NAudio managed wrappers |
@@ -148,20 +154,164 @@ All dependencies are **embedded** in the final binary (e.g., `CrossPlatformPatch
 
 ## Configuration
 
+### Migration Modes (32-bit to 64-bit rollout)
+
+Launchers support staged migration from 32-bit (x86) PE to 64-bit (x64) execution:
+
+- **`stable`** (default): Traditional behavior, no 64-bit enforcement. Vosk speech is disabled for safety.
+  - Uses x86 / x64 target based on original PAIcom PE header.
+  - No CorFlags rewriting.
+  - Vosk disabled by default (available only in Full mode or with explicit override).
+
+- **`probe`**: Staged 64-bit trial with auto-fallback.
+  - x86 targets: clears CorFlags 32BitRequired/32BitPreferred flags (CLR may attempt 64-bit execution).
+  - Prefers `win64` Wine prefix and `wine64` runtime if available.
+  - Verifies runtime process bitness at startup via `PROCESSOR_ARCHITECTURE` probe.
+  - Enables Vosk speech only if launcher confirms 64-bit execution.
+  - On failure: automatically rollback to stable x86 path with detailed `reason.code` logging.
+
+- **`full`**: Committed 64-bit mode (rollback still available during transition).
+  - x86 targets: applies same CorFlags rewriting as probe.
+  - Prefers 64-bit runtime same as probe.
+  - Enables Vosk in 64-bit process (no verification gatekeeping).
+  - Intended for environments where 64-bit success is verified.
+
+#### Setting Migration Mode
+
+Three ways to select mode:
+
+1. **Patch-time CLI:**
+   ```bash
+   CrossPlatformPatcher PAIcom.exe --migration-mode probe
+   CrossPlatformPatcher PAIcom.exe --migration-mode full
+   ```
+
+2. **Wrapper script:**
+   ```bash
+   ./build-patch-and-launch.sh --migration-mode probe
+   ```
+
+3. **Runtime override (environment variable):**
+   ```bash
+   PAICOM_MIGRATION_MODE=full sh run.sh
+   ```
+
+#### Fallback and Diagnostics
+
+When probe/full mode fails, the launcher automatically switches to the stable path and logs a `reason.code` to diagnose the issue:
+
+| Reason Code | Meaning | Recovery |
+|---|---|---|
+| `PROBE_PRECONDITION_RUNTIME_MISSING` | No wine64-compatible runtime found | Use stable mode |
+| `PROBE_PRECONDITION_PE32_UNMIGRATED` | x86 PE but CorFlags not migrated | Rebuild with probe/full mode |
+| `PROBE_STILL_32BIT` | Launch succeeded but process is still x86 | Check Wine/prefix configuration |
+| `PROBE_ONNX_INIT_FAILED` | OpenWakeWord model load failed | See `launcher-runtime.log` for details |
+| `PROBE_RESOURCE_NOT_FOUND` | Embedded resources missing | Ensure patched exe is complete |
+| `PROBE_PLATFORM_NOT_SUPPORTED` | Platform not supported for this runtime | Check OS/arch compatibility |
+| `LOAD_FAILURE_MANAGED_RESOURCE` | Managed assembly resource missing | Rebuild patcher |
+| `DEPENDENCY_MISMATCH` | Native library incompatibility | Check Wine version and 64-bit capability |
+| `UNMANAGED_EXCEPTION` | Unmanaged (native) exception during probe | Check Wine logs in `launcher-runtime.log` |
+| `PROBE_EXIT_NONZERO` | Launch exited with unidentified error | Inspect full log for diagnosis |
+
+#### Architecture Truth and Logging
+
+Launcher emits architecture diagnostics to `launcher.log` and `launcher-runtime.log`:
+
+**At launcher start (`launcher.log`):**
+```
+[launcher] arch.target_pe_machine=x86       # PE header machine type
+[launcher] arch.selected_runtime=/usr/bin/wine64  # Chosen Wine binary
+[launcher] arch.wineprefix=/home/user/.wine-prefix  # Wine prefix path
+[launcher] arch.wineprefix_arch=win64       # Detected prefix architecture (win32/win64)
+```
+
+**At process startup (`launcher-runtime.log`):**
+```
+[startup-diag] process.bitness=x64          # Actual CLR process bitness
+[startup-diag] migration.mode=probe         # Selected migration mode
+[startup-diag] launcher.verified_64bit=1    # Runtime verification result (1=verified, 0=not verified)
+[diag] vosk.bridge_status=enabled           # Vosk bridge state
+```
+
+**OpenWakeWord initialization:**
+```
+[oww] arch.process_bitness=64               # Process bitness from OWW perspective
+[oww] reason.code=PROBE_STILL_32BIT         # Failure reason if in 32-bit
+[oww] Wake word detected! Confidence: 0.892 # Detection event
+[vosk-speech] Vosk enabled: probe mode with runtime verification confirmed
+[vosk-speech] Vosk disabled: stable mode requires no advanced features
+```
+
+#### Native Library Manifest
+
+After successful patching, `NATIVES_MANIFEST.txt` documents which architecture-specific native libraries were extracted:
+
+```
+PAIcom Cross-Platform Patcher - Native Library Manifest
+======================================
+Generated: 2026-03-20T12:34:56.0000000Z
+Target Architecture: x86
+Migration Mode: stable
+
+Extracted Native Libraries:
+  PAIcom.OWW.dll
+  Vosk.dll
+  libvosk.dll
+  libgcc_s_sjlj-1.dll
+  ... (others)
+
+ONNX Runtime Bundle:
+  onnxruntime.native.win-x86.dll
+
+Architecture Details:
+  PE Machine: 0x014c
+  CorFlags Probe Attempted: false
+  CorFlags Probe Applied: false
+```
+
+Use this manifest to verify the correct architecture-specific binaries were bundled for your target.
+
+#### Vosk Speech Registration per Mode
+
+| Mode | Process Bitness | Behavior |
+|---|---|---|
+| `stable` | 32-bit | Vosk disabled (maximum safety) |
+| `stable` | 64-bit | Vosk disabled (not intended for stable mode) |
+| `probe` | 32-bit | Vosk disabled (process stayed 32-bit) |
+| `probe` | 64-bit | Vosk enabled **only if** launcher verified 64-bit |
+| `full` | 32-bit | Not expected (full mode is 64-bit committed) |
+| `full` | 64-bit | Vosk enabled (no verification gate) |
+
 ### Environment Variables
 
 ```bash
-# Skip microphone input entirely (use file-based dispatch only)
-PAICOM_NO_STT=1 ./run.sh
+# Use migration mode at runtime (overrides patched default)
+PAICOM_MIGRATION_MODE=probe sh run.sh
 
-# Verbose logging (includes Vosk diagnostics)
-# (Edit SETUP_LINUX.md for Wine configuration)
+# Require launcher 64-bit verification before enabling Vosk (set by launcher in probe mode)
+PAICOM_VOSK_REQUIRE_VERIFIED_64BIT=1
+
+# Launcher verification result (set by launcher after runtime bitness probe)
+PAICOM_RUNTIME_VERIFIED_64BIT=1
+
+# Skip microphone input entirely  (use file-based dispatch only)
+PAICOM_NO_STT=1 ./run.sh
 ```
 
 ### File-Based Commands
 
 If microphone recognition is unavailable under Wine, use `launcher-runtime.log`
 to inspect `[compat][speech]` diagnostics and verify the active speech path.
+
+When speech recognition is active, the runtime fuzzy-matches against the full command manifest in `PAIcom_Player_Folder/custom-commands/commands.txt`, not just the browser-related commands.
+
+When a phrase is matched, runtime command handling now follows this order:
+1. Resolve transcript -> manifest phrase -> command token (for example `please hide` -> `hide.txt`).
+2. Try in-process dispatch into the game's own command handler via reflection (preferred path).
+3. If no handler is discoverable, try script/process fallback for token-based command scripts.
+4. Always keep assistant-line logging for observability, even if dispatch is unavailable.
+
+Use `launcher-runtime.log` and search for `[oww-command]` entries to verify whether dispatch succeeded or fell back.
 
 ## Differences from Original PAIcomPatcher
 
@@ -193,7 +343,17 @@ Use the checked-in patcher sources to rebuild the project from scratch:
 ```sh
 dotnet build CrossPlatformPatcher.csproj -c Release
 dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release
+./build-patch-and-launch.sh --migration-mode full --no-launch
 ```
+
+### Migration Verification Checklist
+
+1. Build Release and ensure no new errors.
+2. Patch in `probe` mode and confirm generated launchers include migration mode diagnostics.
+3. Inspect `launcher.log` for PE machine, selected Wine binary, prefix path/arch, and process bitness probe.
+4. Run at least 5 cold starts in `probe` mode with no unmanaged crash.
+5. Force a probe precondition failure (for example, hide wine64) and verify automatic rollback plus `reason.code` logging.
+6. Confirm `stable` mode behavior is unchanged when migration flags are off.
 
 If you are preparing release artifacts or validating platform-specific launchers, republish with the appropriate runtime identifier(s):
 
@@ -241,6 +401,12 @@ To update Vosk or NAudio versions:
 
 The `Core/NativeLibraries/` and `Core/ManagedLibraries/` folders are expected to contain the binaries. 
 The build will skip missing files gracefully, but the patcher will have reduced functionality without them.
+
+## macOS Setup Wizard Application
+
+The native `SetupWizard.app` is a SwiftUI application that provides an interactive setup wizard for macOS users. For build and distribution instructions, see [Installer Guide](docs/INSTALLER_GUIDE.md).
+
+The app includes code signing support for developer distribution and notarization for Big Sur+.
 
 See `Core/NativeLibraries/README.md` and `Core/ManagedLibraries/README.md` for setup.
 
@@ -335,13 +501,13 @@ CrossPlatformPatcher PAIcom.exe \
 #   Range: [0.0, 1.0]
 #
 # --oww-lock-ms <milliseconds>
-#   Hard lock duration in milliseconds (default: 3000 = 3 seconds).
+#   Hard lock duration in milliseconds (default: 3000; arm64 profile: 3200).
 #   Prevents back-queuing and duplicate detections.
 #   Covers typical command recognition + safety margin.
-#   Range: [100, 10000]
+#   Range: [500, 20000]
 #
 # --oww-audio-chunk-size <samples>
-#   Audio chunk size in samples (default: 1024).
+#   Audio chunk size in samples (default: 1024; arm64 profile: 960).
 #   At 16 kHz, 1024 samples ≈ 64ms of audio.
 #   Larger = fewer inference calls, higher latency.
 #   Range: [128, 8192]
@@ -358,30 +524,38 @@ CrossPlatformPatcher PAIcom.exe \
 
 ### Runtime Configuration (Environment Variables)
 
-After patching, end users can **override settings at runtime** by setting environment variables:
+After patching, end users can **override settings at runtime** by setting environment variables. The default settings live in [PAIcom.OWW/OpenWakeWordSettings.cs](PAIcom.OWW/OpenWakeWordSettings.cs) and the CLI surface is in [Program.cs](Program.cs).
 
 ```bash
 # Linux/macOS
 export PAICOM_OWW_THRESHOLD=0.65
 export PAICOM_OWW_LOCK_MS=2500
 export PAICOM_OWW_VERBOSE_LOG=true
+export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450
+export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000
 sh run.sh
 
 # Windows
 set PAICOM_OWW_THRESHOLD=0.65
 set PAICOM_OWW_LOCK_MS=2500
 set PAICOM_OWW_VERBOSE_LOG=true
+set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450
+set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000
 run.bat
 ```
 
 **Supported environment variables:**
 - `PAICOM_OWW_THRESHOLD` (float, default 0.7)
-- `PAICOM_OWW_LOCK_MS` (int, default 3000)
-- `PAICOM_OWW_AUDIO_CHUNK_SIZE` (int, default 1024)
+- `PAICOM_OWW_LOCK_MS` (int, default 3000; arm64 profile: 3200)
+- `PAICOM_OWW_AUDIO_CHUNK_SIZE` (int, default 1024; arm64 profile: 960)
 - `PAICOM_OWW_INFERENCE_THREAD_SCALE` (float, default 1.0)
 - `PAICOM_OWW_MODEL_RESOURCE` (string, default "oww.model.hey_pie_com.quant.onnx")
 - `PAICOM_OWW_AUDIO_SAMPLE_RATE` (int, default 16000)
 - `PAICOM_OWW_VERBOSE_LOG` (bool, default false)
+- `PAICOM_OWW_MIC_BUFFER_MS` (int, default 200; arm64 profile: 160)
+- `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.65)
+- `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450; arm64 profile: 350)
+- `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000; arm64 profile: 850)
 
 ### Embedded Resources
 
@@ -436,8 +610,25 @@ This copies runtime-native binaries from your local NuGet cache into `Core/Nativ
 | `chunk-size` ↑ | Lower CPU | Higher latency (fewer inference cycles) |
 | `thread-scale` ↑ | Higher CPU (more workers) | Better multi-chunk handling |
 | `lock-ms` ↑ | Prevents back-queuing | May delay legitimate 2nd command |
+| `post-wake-silence-grace-ms` ↓ | Faster cutoff after wake | Too low can clip the start of the command |
+| `speech-silence-cutoff-ms` ↓ | Faster stop after command ends | Too low can cut off longer pauses |
 
-**Default balanced setting:** threshold=0.7, lock-ms=3000, chunk-size=1024, thread-scale=1.0
+**Default balanced setting:** threshold=0.7, lock-ms=3000, chunk-size=1024, thread-scale=1.0, post-wake-silence-grace-ms=450, speech-silence-cutoff-ms=1000
+
+**Command preview after speech recognition:**
+```
+[oww] [vosk-speech] Transcript: hey paicom open the browser
+[oww] [oww-command] command='open the browser', token='internet', confidence=91.2%
+[oww] [oww-command] Assistant line: Opening the browser.
+[oww] [oww-command] Dispatch succeeded: Queued 'hey paicom open the browser' via UI dispatcher ...
+```
+
+If the in-process handler is not available yet, runtime will emit an explicit fallback trail:
+```
+[oww] [oww-command] Dispatcher 'game-reflection' skipped: No high-confidence in-process command handler discovered.
+[oww] [oww-command] Dispatcher 'process-fallback' skipped: No fallback script found for token 'internet'.
+[oww] [oww-command] Dispatch unavailable: No dispatcher could execute the command.
+```
 
 ### Troubleshooting
 
@@ -460,6 +651,30 @@ This copies runtime-native binaries from your local NuGet cache into `Core/Nativ
 1. Increase `PAICOM_OWW_AUDIO_CHUNK_SIZE` (e.g., 2048) to reduce inference frequency
 2. Lower `PAICOM_OWW_INFERENCE_THREAD_SCALE` (e.g., 0.5) to single-thread inference
 3. Move background task to lower-priority queue (OS-dependent)
+
+## Testing and Debugging
+
+### Command Injection (File-Based)
+
+Test voice commands without using your microphone. Write commands to a file and PAIcom processes them automatically through the animation and dispatch pipeline:
+
+```bash
+# Terminal 1: Launch game with file input enabled
+./build-patch-and-launch.sh --file-command-input
+
+# Terminal 2 (while game runs): Send commands
+echo "hey paicom open the browser" > PAIcom_Player_Folder/input-command.txt
+sleep 1
+echo "hey paicom volume up" > PAIcom_Player_Folder/input-command.txt
+```
+
+The command goes through the **same animation dispatch path** as voice recognition would, so animations, scripts, and handlers all execute normally.
+
+**Full guide:** See [COMMAND_INJECTION_GUIDE.md](COMMAND_INJECTION_GUIDE.md)
+
+### Live Testing
+
+For runtime behavior analysis and method testing against a live game instance, see [LIVE-TESTING.md](LIVE-TESTING.md).
 
 ## License
 

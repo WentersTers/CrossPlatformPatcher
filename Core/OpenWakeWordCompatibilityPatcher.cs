@@ -7,9 +7,10 @@ namespace CrossPlatformPatcher.Core;
 /// IL patcher for OpenWakeWord integration into target assembly.
 ///
 /// This patcher emits a concrete helper type into the target module and injects
-/// calls at audio-related method entry points:
+/// calls at audio-related method entry sites:
 /// 1) InitializeOpenWakeWord()
-/// 2) if (!IsLocked()) OnAudioChunkAvailable(object audioArg)
+/// 2) if (!IsLocked()) OnAudioChunkAvailable(object audioArg)     [For OWW inference]
+/// 3) EnqueueAudioForVosk(object audioArg)         [Always called, even during lock] [For Vosk STT during lock window]
 /// </summary>
 public static class OpenWakeWordCompatibilityPatcher
 {
@@ -82,14 +83,13 @@ public static class OpenWakeWordCompatibilityPatcher
         body.SimplifyMacros(method.Parameters);
 
         var first = instrs[0];
-        var skipEnqueue = Instruction.Create(OpCodes.Nop);
         var audioParam = PickAudioParameter(method);
 
+        // Inject audio hook WITHOUT lock guard - let EnqueueAudio() decide what to do
+        // (queue to Vosk if locked, queue to OWW if not)
         var injected = new List<Instruction>
         {
             Instruction.Create(OpCodes.Call, helper.InitMethod),
-            Instruction.Create(OpCodes.Call, helper.IsLockedMethod),
-            Instruction.Create(OpCodes.Brtrue_S, skipEnqueue)
         };
 
         if (audioParam is null)
@@ -98,7 +98,6 @@ public static class OpenWakeWordCompatibilityPatcher
             injected.Add(Instruction.Create(OpCodes.Ldarg, audioParam));
 
         injected.Add(Instruction.Create(OpCodes.Call, helper.OnAudioMethod));
-        injected.Add(skipEnqueue);
 
         for (int i = injected.Count - 1; i >= 0; i--)
             instrs.Insert(0, injected[i]);
@@ -485,11 +484,56 @@ public static class OpenWakeWordCompatibilityPatcher
 
         var utcNowLocal = new Local(new ValueTypeSig(dateTimeType));
 
+        // Get or create reference to external OpenWakeWordHelper class from PAIcom.OWW assembly
+        // This is the runtime helper that receives audio and routes it to OWW or Vosk
+        IMethod? enqueueAudioMethod = null;
+        IMethod? realInitializeMethod = null;
+        
+        // Look for existing assembly reference to PAIcom.OWW
+        var owwAssemblyRef = module.GetAssemblyRefs()
+            .FirstOrDefault(a => a.Name == "PAIcom.OWW");
+        
+        // If no reference exists, create one
+        // Dnlib will handle emitting the reference metadata when writing the module
+        if (owwAssemblyRef == null)
+        {
+            owwAssemblyRef = new AssemblyRefUser("PAIcom.OWW", new Version(1, 0, 0, 0));
+        }
+        
+        if (owwAssemblyRef != null)
+        {
+            // Create a TypeRef pointing to OpenWakeWordHelper in the external assembly
+            var owwHelperTypeRef = new TypeRefUser(
+                module,
+                "CrossPlatformPatcher.Core",
+                "OpenWakeWordHelper",
+                owwAssemblyRef);
+            
+            // Create MemberRef to Initialize method in external type
+            realInitializeMethod = new MemberRefUser(
+                module,
+                "Initialize",
+                MethodSig.CreateStatic(module.CorLibTypes.Void),
+                owwHelperTypeRef);
+            
+            // Create MemberRef to EnqueueAudio method in external type
+            enqueueAudioMethod = new MemberRefUser(
+                module,
+                "EnqueueAudio",
+                MethodSig.CreateStatic(module.CorLibTypes.Void, module.CorLibTypes.Object),
+                owwHelperTypeRef);
+        }
+
         method.Body = new CilBody { InitLocals = true, MaxStack = 4 };
         method.Body.Variables.Add(utcNowLocal);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, initMethod));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, isLockedMethod));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, ret));
+        // Call the real OpenWakeWordHelper.Initialize() to run initialization logic including sequential method testing setup
+        if (realInitializeMethod != null)
+        {
+            method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, realInitializeMethod));
+        }
+        // Removed: lock check that prevented audio processing during lock window
+        // Now OnAudioChunkAvailable always runs, allowing Vosk to get audio during lock
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsfld, firstAudioLoggedField));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, skipFirstAudioLog));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));
@@ -517,6 +561,14 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "Wake-word gate triggered; lock armed"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, logMethod));
         method.Body.Instructions.Add(skipWakeLock);
+        
+        // Call the real OpenWakeWordHelper.EnqueueAudio() unconditionally with the audio argument
+        if (enqueueAudioMethod != null)
+        {
+            method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
+            method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, enqueueAudioMethod));
+        }
+        
         method.Body.Instructions.Add(ret);
 
         method.Body.OptimizeBranches();
@@ -584,8 +636,8 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Variables.Add(lengthLocal);
 
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, nonNull));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue, nonNull));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, falseRet));
 
         method.Body.Instructions.Add(nonNull);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
@@ -598,15 +650,15 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, fullNameLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "System.Speech.Recognition.SpeechRecognizedEventArgs"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, stringEqualsOp));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, trueRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue, trueRet));
 
         method.Body.Instructions.Add(checkArray);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Isinst, arrayRef));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Stloc, arrayLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, arrayLocal));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, haveArray));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue, haveArray));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, falseRet));
 
         method.Body.Instructions.Add(haveArray);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, arrayLocal));
@@ -614,41 +666,50 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Stloc, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_0));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Bgt_S, checkByteArray));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Bgt, checkByteArray));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, falseRet));
 
         method.Body.Instructions.Add(checkByteArray);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, fullNameLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "System.Byte[]"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, stringEqualsOp));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brfalse_S, checkInt16Array));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brfalse, checkInt16Array));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 3200));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Bge_S, trueRet));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Blt, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 65536));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ble, trueRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, falseRet));
 
         method.Body.Instructions.Add(checkInt16Array);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, fullNameLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "System.Int16[]"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, stringEqualsOp));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brfalse_S, checkSingleArray));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brfalse, checkSingleArray));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 512));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Bge_S, trueRet));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Blt, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 32768));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ble, trueRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, falseRet));
 
         method.Body.Instructions.Add(checkSingleArray);
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, fullNameLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "System.Single[]"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, stringEqualsOp));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brfalse_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Brfalse, falseRet));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 512));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Bge_S, trueRet));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Blt, falseRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, lengthLocal));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 32768));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ble, trueRet));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, falseRet));
 
         method.Body.Instructions.Add(falseRet);
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br_S, done));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Br, done));
         method.Body.Instructions.Add(trueRet);
         method.Body.Instructions.Add(done);
 

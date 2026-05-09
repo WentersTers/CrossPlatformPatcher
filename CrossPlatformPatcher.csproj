@@ -10,6 +10,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Optimize>true</Optimize>
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
   <ItemGroup>
@@ -71,7 +73,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="hey_pie_com.quant.onnx" LogicalName="oww.model.hey_pie_com.quant.onnx" Condition="Exists('hey_pie_com.quant.onnx')" />
+    <EmbeddedResource Include="models\hey_pie_com.quant.onnx" LogicalName="oww.model.hey_pie_com.quant.onnx" Condition="Exists('models\\hey_pie_com.quant.onnx')" />
     <EmbeddedResource Include="$(PkgMicrosoft_ML_OnnxRuntime)\runtimes\win-x86\native\onnxruntime.dll" LogicalName="onnxruntime.native.win-x86.dll" />
     <EmbeddedResource Include="Core\NativeLibraries\onnxruntime-win-x64.dll" LogicalName="onnxruntime.native.win-x64.dll" Condition="Exists('Core\NativeLibraries\onnxruntime-win-x64.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\onnxruntime-linux-x64.so" LogicalName="onnxruntime.native.linux-x64.so" Condition="Exists('Core\NativeLibraries\onnxruntime-linux-x64.so')" />
@@ -84,6 +86,18 @@
     <Compile Remove="CrossPlatformPatcher.Tests\**\*.cs" />
     <EmbeddedResource Remove="CrossPlatformPatcher.Tests\**\*" />
     <None Remove="CrossPlatformPatcher.Tests\**\*" />
+    <Compile Remove="Command Caller reference\**\*.cs" />
+    <EmbeddedResource Remove="Command Caller reference\**\*" />
+    <None Remove="Command Caller reference\**\*" />
+    <Compile Remove="dumper\**\*.cs" />
+    <EmbeddedResource Remove="dumper\**\*" />
+    <None Remove="dumper\**\*" />
+    <Compile Remove="FormAnalyzer\**\*.cs" />
+    <EmbeddedResource Remove="FormAnalyzer\**\*" />
+    <None Remove="FormAnalyzer\**\*" />
+    <Compile Remove=".tmp-deps\**\*.cs" />
+    <EmbeddedResource Remove=".tmp-deps\**\*" />
+    <None Remove=".tmp-deps\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordMicrophoneCapture.cs" />
