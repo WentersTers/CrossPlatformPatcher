@@ -19,6 +19,10 @@ public sealed class OpenWakeWordSettingsBuilder
     private string _modelResource = "oww.model.hey_pie_com.quant.onnx";
     private int _sampleRate = 16000;
     private bool _verboseLog;
+    private int _micBufferMs = 200;
+    private float _fuzzyMatchConfidence = 0.80f;
+    private int _postWakeSilenceGraceMs = 450;
+    private int _speechSilenceCutoffMs = 1000;
 
     /// <summary>Set confidence threshold [0.0, 1.0].</summary>
     public OpenWakeWordSettingsBuilder WithThreshold(float value)
@@ -69,7 +73,35 @@ public sealed class OpenWakeWordSettingsBuilder
         return this;
     }
 
+    /// <summary>Set microphone buffer size in milliseconds [20, 1000].</summary>
+    public OpenWakeWordSettingsBuilder WithMicrophoneBufferMilliseconds(int milliseconds)
+    {
+        _micBufferMs = milliseconds;
+        return this;
+    }
+
+    /// <summary>Set fuzzy matching minimum confidence [0.0, 1.0].</summary>
+    public OpenWakeWordSettingsBuilder WithFuzzyMatchMinConfidence(float confidence)
+    {
+        _fuzzyMatchConfidence = confidence;
+        return this;
+    }
+
+    /// <summary>Set silence grace after wake in milliseconds.</summary>
+    public OpenWakeWordSettingsBuilder WithPostWakeSilenceGraceMilliseconds(int milliseconds)
+    {
+        _postWakeSilenceGraceMs = milliseconds;
+        return this;
+    }
+
+    /// <summary>Set silence cutoff in milliseconds after the grace window.</summary>
+    public OpenWakeWordSettingsBuilder WithSpeechSilenceCutoffMilliseconds(int milliseconds)
+    {
+        _speechSilenceCutoffMs = milliseconds;
+        return this;
+    }
+
     /// <summary>Build immutable settings instance. Throws if any value is invalid.</summary>
     public OpenWakeWordSettings Build() =>
-        new(_threshold, _lockMs, _chunkSize, _threadScale, _modelResource, _sampleRate, _verboseLog);
+        new(_threshold, _lockMs, _chunkSize, _threadScale, _modelResource, _sampleRate, _verboseLog, _micBufferMs, _fuzzyMatchConfidence, _postWakeSilenceGraceMs, _speechSilenceCutoffMs);
 }

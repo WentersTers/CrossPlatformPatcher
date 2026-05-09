@@ -1,6 +1,8 @@
 using CrossPlatformPatcher.Core;
 using dnlib.DotNet;
 using System;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Xunit;
 
@@ -16,14 +18,19 @@ public class OpenWakeWordSettingsTests
     public void CreateDefault_Has_Expected_Values()
     {
         var settings = OpenWakeWordSettings.CreateDefault();
+        var isArm64 = RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
         
         Assert.Equal(0.7f, settings.ConfidenceThreshold);
-        Assert.Equal(3000, settings.LockDurationMs);
-        Assert.Equal(1024, settings.AudioChunkSize);
+        Assert.Equal(isArm64 ? 3200 : 3000, settings.LockDurationMs);
+        Assert.Equal(isArm64 ? 960 : 1024, settings.AudioChunkSize);
         Assert.Equal(1.0f, settings.InferenceThreadPoolScale);
         Assert.Equal("oww.model.hey_pie_com.quant.onnx", settings.ModelResourceName);
         Assert.Equal(16000, settings.AudioSampleRate);
         Assert.False(settings.EnableVerboseLogging);
+        Assert.Equal(isArm64 ? 160 : 200, settings.MicrophoneBufferMilliseconds);
+        Assert.Equal(0.65f, settings.FuzzyMatchMinConfidence);
+        Assert.Equal(isArm64 ? 350 : 450, settings.PostWakeSilenceGraceMilliseconds);
+        Assert.Equal(isArm64 ? 850 : 1000, settings.SpeechSilenceCutoffMilliseconds);
     }
 
     [Fact]
@@ -107,7 +114,7 @@ public class OpenWakeWordSettingsTests
 
     [Theory]
     [InlineData(50)]
-    [InlineData(11000)]
+    [InlineData(25000)]
     public void CreateDefault_LockDurationMs_Validation_Throws(int invalid)
     {
         Assert.Throws<ArgumentException>(() =>
@@ -122,6 +129,8 @@ public class OpenWakeWordSettingsTests
         Environment.SetEnvironmentVariable("PAICOM_OWW_THRESHOLD", "0.6");
         Environment.SetEnvironmentVariable("PAICOM_OWW_LOCK_MS", "2500");
         Environment.SetEnvironmentVariable("PAICOM_OWW_VERBOSE_LOG", "true");
+        Environment.SetEnvironmentVariable("PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS", "420");
+        Environment.SetEnvironmentVariable("PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS", "900");
         
         try
         {
@@ -130,12 +139,134 @@ public class OpenWakeWordSettingsTests
             Assert.Equal(0.6f, settings.ConfidenceThreshold);
             Assert.Equal(2500, settings.LockDurationMs);
             Assert.True(settings.EnableVerboseLogging);
+            Assert.Equal(420, settings.PostWakeSilenceGraceMilliseconds);
+            Assert.Equal(900, settings.SpeechSilenceCutoffMilliseconds);
         }
         finally
         {
             Environment.SetEnvironmentVariable("PAICOM_OWW_THRESHOLD", null);
             Environment.SetEnvironmentVariable("PAICOM_OWW_LOCK_MS", null);
             Environment.SetEnvironmentVariable("PAICOM_OWW_VERBOSE_LOG", null);
+            Environment.SetEnvironmentVariable("PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS", null);
+            Environment.SetEnvironmentVariable("PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS", null);
+        }
+    }
+
+    [Fact]
+    public void ResolveCommandResponse_Matches_Browser_Command()
+    {
+        WithTemporaryManifest(new[]
+        {
+            "hey paicom open the browser (browser.txt)"
+        }, () =>
+        {
+            var response = OpenWakeWordHelper.ResolveCommandResponse("hey paicom open the browser");
+            Assert.Equal("Opening the browser.", response);
+        });
+    }
+
+    [Fact]
+    public void ResolveCommandResponse_Matches_NonBrowser_Command()
+    {
+        var response = OpenWakeWordHelper.ResolveCommandResponse("hey paicom pause the music");
+
+        Assert.Equal("Pausing the music.", response);
+    }
+
+    [Fact]
+    public void ResolveCommandAction_Manifest_Preserves_CommandToken()
+    {
+        var originalDirectory = Directory.GetCurrentDirectory();
+        var tempRoot = Path.Combine(Path.GetTempPath(), "oww-command-action-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(tempRoot, "custom-commands"));
+        File.WriteAllText(
+            Path.Combine(tempRoot, "custom-commands", "commands.txt"),
+            "hey paicom please hide (fatherless.txt)" + Environment.NewLine);
+
+        try
+        {
+            Directory.SetCurrentDirectory(tempRoot);
+            OpenWakeWordHelper.Shutdown();
+
+            var action = OpenWakeWordHelper.ResolveCommandAction("hey paicom please hide");
+
+            Assert.NotNull(action);
+            Assert.Equal("please hide", action!.MatchPhrase);
+            Assert.Equal("hey paicom please hide", action.DispatchPhrase);
+            Assert.Equal("fatherless", action.CommandToken);
+        }
+        finally
+        {
+            OpenWakeWordHelper.Shutdown();
+            Directory.SetCurrentDirectory(originalDirectory);
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveCommandAction_UnsupportedTranscript_ReturnsNull()
+    {
+        WithTemporaryManifest(new[]
+        {
+            "hey paicom open calculator (calculator.txt)"
+        }, () =>
+        {
+            var action = OpenWakeWordHelper.ResolveCommandAction("hey paicom do something not in the manifest");
+            Assert.Null(action);
+        });
+    }
+
+    [Fact]
+    public void ResolveCommandAction_Rejects_PathTraversal_ScriptReference()
+    {
+        var originalDirectory = Directory.GetCurrentDirectory();
+        var tempRoot = Path.Combine(Path.GetTempPath(), "oww-command-action-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(tempRoot, "custom-commands"));
+        File.WriteAllText(
+            Path.Combine(tempRoot, "custom-commands", "commands.txt"),
+            "hey paicom do evil (../escape.sh)" + Environment.NewLine);
+
+        try
+        {
+            Directory.SetCurrentDirectory(tempRoot);
+            OpenWakeWordHelper.Shutdown();
+
+            var action = OpenWakeWordHelper.ResolveCommandAction("hey paicom do evil");
+
+            Assert.Null(action);
+        }
+        finally
+        {
+            OpenWakeWordHelper.Shutdown();
+            Directory.SetCurrentDirectory(originalDirectory);
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveCommandAction_Rejects_ShellMetachar_ScriptReference()
+    {
+        var originalDirectory = Directory.GetCurrentDirectory();
+        var tempRoot = Path.Combine(Path.GetTempPath(), "oww-command-action-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(tempRoot, "custom-commands"));
+        File.WriteAllText(
+            Path.Combine(tempRoot, "custom-commands", "commands.txt"),
+            "hey paicom do evil (evil;rm -rf)" + Environment.NewLine);
+
+        try
+        {
+            Directory.SetCurrentDirectory(tempRoot);
+            OpenWakeWordHelper.Shutdown();
+
+            var action = OpenWakeWordHelper.ResolveCommandAction("hey paicom do evil");
+
+            Assert.Null(action);
+        }
+        finally
+        {
+            OpenWakeWordHelper.Shutdown();
+            Directory.SetCurrentDirectory(originalDirectory);
+            Directory.Delete(tempRoot, recursive: true);
         }
     }
 
@@ -151,6 +282,45 @@ public class OpenWakeWordSettingsTests
         Assert.Contains("ConfidenceThreshold=0.750", str);
         Assert.Contains("LockDurationMs=3000", str);
         Assert.Contains("OpenWakeWordSettings", str);
+    }
+
+    private static void WithTemporaryManifest(string[] manifestLines, Action testBody)
+    {
+        var customCommandsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "custom-commands");
+        var manifestPath = Path.Combine(customCommandsDirectory, "commands.txt");
+        var hadManifest = File.Exists(manifestPath);
+        var previousManifest = hadManifest ? File.ReadAllText(manifestPath) : null;
+
+        Directory.CreateDirectory(customCommandsDirectory);
+        File.WriteAllText(manifestPath, string.Join(Environment.NewLine, manifestLines) + Environment.NewLine);
+
+        try
+        {
+            OpenWakeWordHelper.Shutdown();
+            testBody();
+        }
+        finally
+        {
+            OpenWakeWordHelper.Shutdown();
+
+            if (hadManifest)
+            {
+                File.WriteAllText(manifestPath, previousManifest ?? string.Empty);
+            }
+            else if (File.Exists(manifestPath))
+            {
+                File.Delete(manifestPath);
+            }
+
+            if (!hadManifest &&
+                Directory.Exists(customCommandsDirectory) &&
+                !Directory.EnumerateFileSystemEntries(customCommandsDirectory).Any())
+            {
+                Directory.Delete(customCommandsDirectory);
+            }
+
+            OpenWakeWordHelper.Shutdown();
+        }
     }
 }
 
@@ -187,7 +357,7 @@ public class AudioLockManagerTests
         manager.WakeWordDetected();
         Assert.True(manager.IsLocked);
         
-        Thread.Sleep(150); // Wait for lock to expire
+        Thread.Sleep(1150); // Wait for lock to expire
         
         Assert.False(manager.IsLocked);
     }
@@ -298,7 +468,7 @@ public class OpenWakeWordIntegrationTests
     public void Settings_And_Lock_Work_Together()
     {
         var settings = OpenWakeWordSettings.CreateBuilder()
-            .WithLockDurationMs(100)
+            .WithLockDurationMs(1000)
             .WithThreshold(0.7f)
             .Build();
         
@@ -314,7 +484,7 @@ public class OpenWakeWordIntegrationTests
         var chunk = new float[settings.AudioChunkSize];
         Assert.True(lockManager.TryEnqueueAudio(chunk));
         
-        Thread.Sleep(150); // Wait for lock to expire
+        Thread.Sleep(1150); // Wait for lock to expire
         
         Assert.False(lockManager.IsLocked);
     }

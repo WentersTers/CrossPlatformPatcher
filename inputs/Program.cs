@@ -17,12 +17,18 @@ class Program
         Console.WriteLine($"PAIcom Binary-Patch Injector ({BuildFlavor}) v1.0");
         Console.WriteLine("==================================");
 
-        if (args.Length == 1 && args[0] == "--prepare-onnx-natives")
+        if (args.Length >= 1 && args[0] == "--prepare-onnx-natives")
         {
             var copied = OnnxNativeLibraryManager.PrepareFromNuGetCache(
                 Directory.GetCurrentDirectory(),
                 Console.WriteLine);
             return copied > 0 ? 0 : 4;
+        }
+
+        if (args.Length >= 2 && args[0] == "--test-commands")
+        {
+            TestCommandInjection.Run(args.Skip(1).ToArray());
+            return 0;
         }
 
         // ── Parse arguments ──────────────────────────────────────────────
@@ -45,9 +51,22 @@ class Program
         bool verbose   = false;
         bool analyze   = false;
         bool prepareOnnxNatives = false;
+        var migrationMode = MigrationMode.Stable;
         
         // OpenWakeWord settings (parsed from CLI args)
-        var owwBuilder = OpenWakeWordSettings.CreateBuilder();
+        var defaultOwwSettings = OpenWakeWordSettings.CreateDefault();
+        var owwBuilder = OpenWakeWordSettings.CreateBuilder()
+            .WithThreshold(defaultOwwSettings.ConfidenceThreshold)
+            .WithLockDurationMs(defaultOwwSettings.LockDurationMs)
+            .WithAudioChunkSize(defaultOwwSettings.AudioChunkSize)
+            .WithInferenceThreadScale(defaultOwwSettings.InferenceThreadPoolScale)
+            .WithModelResourceName(defaultOwwSettings.ModelResourceName)
+            .WithAudioSampleRate(defaultOwwSettings.AudioSampleRate)
+            .WithVerboseLogging(defaultOwwSettings.EnableVerboseLogging)
+            .WithMicrophoneBufferMilliseconds(defaultOwwSettings.MicrophoneBufferMilliseconds)
+            .WithFuzzyMatchMinConfidence(defaultOwwSettings.FuzzyMatchMinConfidence)
+            .WithPostWakeSilenceGraceMilliseconds(defaultOwwSettings.PostWakeSilenceGraceMilliseconds)
+            .WithSpeechSilenceCutoffMilliseconds(defaultOwwSettings.SpeechSilenceCutoffMilliseconds);
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -59,6 +78,18 @@ class Program
                 case "--verbose":  verbose = true;      break;
                 case "--analyze":  analyze = true;      break;
                 case "--prepare-onnx-natives": prepareOnnxNatives = true; break;
+                case "--migration-mode":
+                    if (i + 1 < args.Length && MigrationModeParser.TryParse(args[++i], out var parsedMode))
+                    {
+                        migrationMode = parsedMode;
+                    }
+                    else
+                    {
+                        var invalid = i < args.Length ? args[i] : "<missing>";
+                        Console.Error.WriteLine($"[WARN] Invalid migration mode: {invalid}. Using stable mode.");
+                        migrationMode = MigrationMode.Stable;
+                    }
+                    break;
                 
                 // OpenWakeWord CLI arguments
                 case "--oww-threshold":
@@ -87,6 +118,22 @@ class Program
                     break;
                 case "--oww-verbose-log":
                     owwBuilder.WithVerboseLogging(true);
+                    break;
+                case "--oww-mic-buffer-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var micBufferMs))
+                        owwBuilder.WithMicrophoneBufferMilliseconds(micBufferMs);
+                    break;
+                case "--oww-fuzzy-match-confidence":
+                    if (i + 1 < args.Length && float.TryParse(args[++i], out var fuzzyConfidence))
+                        owwBuilder.WithFuzzyMatchMinConfidence(fuzzyConfidence);
+                    break;
+                case "--oww-post-wake-silence-grace-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var postWakeSilenceGraceMs))
+                        owwBuilder.WithPostWakeSilenceGraceMilliseconds(postWakeSilenceGraceMs);
+                    break;
+                case "--oww-speech-silence-cutoff-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var speechSilenceCutoffMs))
+                        owwBuilder.WithSpeechSilenceCutoffMilliseconds(speechSilenceCutoffMs);
                     break;
                     
                 default:
@@ -156,9 +203,14 @@ class Program
             Console.WriteLine($"  Lock Duration    : {owwSettings.LockDurationMs} ms");
             Console.WriteLine($"  Audio Chunk Size : {owwSettings.AudioChunkSize} samples");
             Console.WriteLine($"  Thread Scale     : {owwSettings.InferenceThreadPoolScale:F2}");
+            Console.WriteLine($"  Mic Buffer       : {owwSettings.MicrophoneBufferMilliseconds} ms");
+            Console.WriteLine($"  Fuzzy Confidence : {owwSettings.FuzzyMatchMinConfidence:F2}");
+            Console.WriteLine($"  Wake Grace       : {owwSettings.PostWakeSilenceGraceMilliseconds} ms");
+            Console.WriteLine($"  Silence Cutoff   : {owwSettings.SpeechSilenceCutoffMilliseconds} ms");
+            Console.WriteLine($"  Migration Mode   : {MigrationModeParser.ToCliString(migrationMode)}");
             Console.WriteLine();
             
-            var patcher = new AssemblyPatcher(verbose, owwSettings);
+            var patcher = new AssemblyPatcher(verbose, owwSettings, migrationMode);
             var result  = patcher.Patch(inputPath, outPath, dryRun);
 
             Console.WriteLine();
@@ -211,16 +263,24 @@ class Program
             --verbose                       Detailed IL scan output
             --analyze                       Analyze assembly and print method report (no patch)
             --prepare-onnx-natives          Copy ONNX Runtime native libs from NuGet cache into Core/NativeLibraries
+            --migration-mode <stable|probe|full>
+                                          Launcher migration mode (default: stable)
             -V, --version                   Print version and exit
 
         OpenWakeWord Options:
             --oww-threshold <0.0-1.0>       Wake word confidence threshold (default: 0.7)
-            --oww-lock-ms <ms>              Hard lock duration in milliseconds (default: 3000)
-            --oww-audio-chunk-size <n>      Audio chunk size in samples (default: 1024)
+            --oww-lock-ms <ms>              Hard lock duration in milliseconds (default: 3000, arm64: 3200)
+            --oww-audio-chunk-size <n>      Audio chunk size in samples (default: 1024, arm64: 960)
             --oww-inference-thread-scale <n> ThreadPool scaling 0.5-2.0 (default: 1.0)
             --oww-model-resource <name>     ONNX model resource name (default: oww.model.hey_pie_com.quant.onnx)
             --oww-audio-sample-rate <hz>    Audio sample rate in Hz (default: 16000)
             --oww-verbose-log               Enable verbose OWW logging
+            --oww-mic-buffer-ms <ms>        Microphone buffer size in milliseconds (default: 200, arm64: 160)
+            --oww-fuzzy-match-confidence <f> Fuzzy command match confidence (default: 0.80)
+            --oww-post-wake-silence-grace-ms <ms>
+                                         Silence grace after wake before cut-off starts (default: 450, arm64: 350)
+            --oww-speech-silence-cutoff-ms <ms>
+                                         Silence duration that ends Vosk capture (default: 1000, arm64: 850)
 
         Description:
             Replaces Windows-only System.Speech with cross-platform Vosk
