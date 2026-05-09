@@ -1,5 +1,6 @@
 using CrossPlatformPatcher.Core;
 using System.Security.Cryptography;
+using System.Reflection;
 
 namespace CrossPlatformPatcher;
 
@@ -11,10 +12,37 @@ namespace CrossPlatformPatcher;
 class Program
 {
     private const string BuildFlavor = "Compat";
+    private static readonly string ProgramVersion = ResolveProgramVersion();
+
+    private static string ResolveProgramVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            // Drop optional build metadata (for example "+sha") for user-facing logs.
+            var plusIndex = informational.IndexOf('+');
+            return plusIndex >= 0 ? informational[..plusIndex] : informational;
+        }
+
+        var fileVersion = assembly
+            .GetCustomAttribute<AssemblyFileVersionAttribute>()?
+            .Version;
+        if (!string.IsNullOrWhiteSpace(fileVersion))
+        {
+            return fileVersion;
+        }
+
+        return assembly.GetName().Version?.ToString() ?? "unknown";
+    }
 
     static int Main(string[] args)
     {
-        Console.WriteLine($"PAIcom Binary-Patch Injector ({BuildFlavor}) v1.0");
+        Console.WriteLine($"PAIcom Binary-Patch Injector ({BuildFlavor}) v{ProgramVersion}");
+        Console.WriteLine($"[INFO] CrossPlatformPatcher version: {ProgramVersion}");
         Console.WriteLine("==================================");
 
         if (args.Length >= 1 && args[0] == "--prepare-onnx-natives")
@@ -40,7 +68,7 @@ class Program
 
         if (args[0] is "-V" or "--version")
         {
-            Console.WriteLine($"CrossPlatformPatcher ({BuildFlavor}) v1.0");
+            Console.WriteLine($"CrossPlatformPatcher ({BuildFlavor}) v{ProgramVersion}");
             return 0;
         }
 
