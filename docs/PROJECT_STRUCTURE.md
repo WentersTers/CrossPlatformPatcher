@@ -7,6 +7,10 @@ This file explains where core behavior lives and which files to touch for specif
 - `Core/`: patcher-side implementation that rewrites the target assembly and generates launchers.
 - `PAIcom.OWW/`: runtime helper library injected/loaded by patched output; canonical runtime speech/dispatch behavior.
 - `CrossPlatformPatcher.Tests/`: unit/integration tests, including runtime-helper parity checks.
+- `SetupWizardCore/`: shared installer logic for cross-platform installer applications.
+- `SetupWizardWindows/`: Avalonia-based GUI installer for Windows.
+- `SetupWizardMacApp/`: SwiftUI-based native installer for macOS.
+- `SetupWizardCore.Tests/`: tests for the shared installer core functionality.
 - `PAIcom_Player_Folder/`: local runtime sandbox for patched output, launchers, logs, and command assets.
 - `docs/`: active documentation and archive.
 

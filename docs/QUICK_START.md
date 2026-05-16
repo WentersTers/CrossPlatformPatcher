@@ -1,8 +1,8 @@
 # Quick Start
 
-Fastest way to get started with CrossPlatformPatcher on macOS.
+Fastest way to get started with CrossPlatformPatcher on Windows and macOS.
 
-Status: This repository and its SetupWizard.app have been tested and verified on macOS (Intel & Apple Silicon). Support for Linux and Windows is planned and in progress and will be re-enabled after macOS stability is confirmed.
+Status: This repository and its installers have been tested and verified on macOS (Intel & Apple Silicon) and Windows. Support for Linux is planned and in progress.
 
 ## Choose Your Path
 
@@ -39,6 +39,17 @@ ls publish/win/CrossPlatformPatcher.exe
 ls publish/linux/CrossPlatformPatcher
 ls publish/osx-x64/CrossPlatformPatcher
 ls publish/osx-arm64/CrossPlatformPatcher
+```
+
+---
+
+### I want to build the native Windows installer
+
+```cmd
+# Prerequisites: .NET 8.0 SDK, Windows 10+
+dotnet build SetupWizardWindows/SetupWizardWindows.csproj -c Release
+
+# Output: SetupWizardWindows/bin/Release/net8.0-windows/SetupWizard.exe
 ```
 
 ---

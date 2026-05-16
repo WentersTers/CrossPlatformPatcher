@@ -2,8 +2,6 @@
 
 This document provides complete details on the CrossPlatformPatcher build pipeline, including all supported targets, build modes, and output artifacts.
 
-Note: This documentation currently focuses on the macOS build and distribution workflow (SetupWizard.app). Linux and Windows publishing/validation are planned and will be reintroduced after macOS workflows are finalized and tested.
-
 ## Overview
 
 The build system consists of:
@@ -11,7 +9,9 @@ The build system consists of:
 1. **Core Patcher** (`dotnet build`/`dotnet publish`) — C# standalone executable
 2. **Test Suite** (`dotnet test`) — Validation and integration tests
 3. **Launcher Generation** (`LauncherGenerator.cs`) — Runtime shell script generation
-4. **macOS Setup Wizard (.app)** (`SetupWizardMacApp/build.sh`) — Native SwiftUI installer UI
+4. **Shared Installer Core** (`SetupWizardCore`) — Cross-platform installer logic
+5. **Windows Installer** (`SetupWizardWindows`) — Avalonia-based GUI installer
+6. **macOS Setup Wizard (.app)** (`SetupWizardMacApp/build.sh`) — Native SwiftUI installer UI
 
 ---
 

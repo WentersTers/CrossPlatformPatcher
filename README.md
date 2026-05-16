@@ -15,8 +15,31 @@ The patcher is implemented to run on multiple platforms, but it has currently be
 
 - **[Quick Start Guide](docs/QUICK_START.md)** — Fastest way to build and test
 - **[Build System](docs/BUILD_SYSTEM.md)** — Complete build pipeline documentation
-- **[Installer Guide](docs/INSTALLER_GUIDE.md)** — macOS native .app building and code signing
+- **[Installer Guide](docs/INSTALLER_GUIDE.md)** — Windows and macOS installer building and setup
 - **[All Documentation](docs/README.md)** — Full documentation index
+
+## Installers
+
+This project now includes native installers for both Windows and macOS:
+
+### Windows Installer
+- **Avalonia-based GUI installer** with the same workflow as the macOS app
+- Features: folder selection, Vosk model download, patcher execution, dependency checks
+- Build with: `dotnet build SetupWizardWindows/SetupWizardWindows.csproj -c Release`
+- Output: `SetupWizardWindows/bin/Release/net8.0-windows/SetupWizard.exe`
+
+### macOS Installer
+- **SwiftUI native .app installer** with full macOS integration
+- Features: GitHub release lookup, model download, patcher execution, dependency guidance
+- Build with: `cd SetupWizardMacApp && ./build.sh`
+- Output: `SetupWizardMacApp/.build/release/SetupWizard.app`
+
+Both installers share a common core library (`SetupWizardCore`) that handles:
+- GitHub API interactions
+- Vosk model download and extraction
+- Patcher execution orchestration
+- Progress reporting and logging
+- Platform-specific asset selection
 
 ### Core Workflows
 
