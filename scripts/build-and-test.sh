@@ -20,10 +20,10 @@ dotnet test "$TEST_PROJECT_FILE" -c Release
 
 if [[ "${RUN_PATCH_WORKFLOW:-0}" == "1" ]]; then
     if [[ -x "$SCRIPT_DIR/build-patch-and-launch.sh" ]]; then
-        printf '\n==> Running patch workflow (%s %s %s)\n' "${PATCH_WORKFLOW_ARGS[@]}"
+        printf '\n==> Running patch workflow (%s)\n' "${PATCH_WORKFLOW_ARGS[*]}"
         "$SCRIPT_DIR/build-patch-and-launch.sh" "${PATCH_WORKFLOW_ARGS[@]}"
     elif [[ -f "$SCRIPT_DIR/build-patch-and-launch.sh" ]]; then
-        printf '\n==> Running patch workflow via bash (%s %s %s)\n' "${PATCH_WORKFLOW_ARGS[@]}"
+        printf '\n==> Running patch workflow via bash (%s)\n' "${PATCH_WORKFLOW_ARGS[*]}"
         bash "$SCRIPT_DIR/build-patch-and-launch.sh" "${PATCH_WORKFLOW_ARGS[@]}"
     else
         printf '\n[build-and-test] build-patch-and-launch.sh not found; skipping patch workflow.\n'
