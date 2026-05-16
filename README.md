@@ -55,7 +55,7 @@ sh publish-all.sh
 For an end-to-end build, publish, patch, and launch flow from the repo root on macOS or Linux, use:
 
 ```sh
-./build-patch-and-launch.sh --migration-mode full
+./scripts/build-patch-and-launch.sh --migration-mode full
 ```
 
 The wrapper script supports additional flags:
@@ -69,8 +69,8 @@ The wrapper script supports additional flags:
 If you want to force a specific runtime identifier, pass `--rid`:
 
 ```sh
-./build-patch-and-launch.sh --rid osx-arm64
-./build-patch-and-launch.sh --migration-mode full --no-launch
+./scripts/build-patch-and-launch.sh --rid osx-arm64
+./scripts/build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
 To build the native macOS Setup Wizard app, run:
@@ -188,7 +188,7 @@ Three ways to select mode:
 
 2. **Wrapper script:**
    ```bash
-   ./build-patch-and-launch.sh --migration-mode probe
+   ./scripts/build-patch-and-launch.sh --migration-mode probe
    ```
 
 3. **Runtime override (environment variable):**
@@ -343,7 +343,7 @@ Use the checked-in patcher sources to rebuild the project from scratch:
 ```sh
 dotnet build CrossPlatformPatcher.csproj -c Release
 dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release
-./build-patch-and-launch.sh --migration-mode full --no-launch
+./scripts/build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
 ### Migration Verification Checklist
@@ -544,6 +544,8 @@ set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000
 run.bat
 ```
 
+`run.bat` auto-detects a local `models\` folder for `PAICOM_VOSK_MODEL_PATH`, and when `PAICOM_FILE_COMMAND_INPUT=true` it defaults `PAICOM_FILE_COMMAND_INPUT_PATH` to `input-command.txt` next to the launcher.
+
 **Supported environment variables:**
 - `PAICOM_OWW_THRESHOLD` (float, default 0.7)
 - `PAICOM_OWW_LOCK_MS` (int, default 3000; arm64 profile: 3200)
@@ -556,6 +558,10 @@ run.bat
 - `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.65)
 - `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450; arm64 profile: 350)
 - `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000; arm64 profile: 850)
+- `PAICOM_VOSK_MODEL_PATH` (directory path to a specific extracted Vosk model)
+- `PAICOM_VOSK_MODEL_NAME` (model folder name inside the `models/` search roots)
+- `PAICOM_FILE_COMMAND_INPUT` (`true` to enable file-based command input mode)
+- `PAICOM_FILE_COMMAND_INPUT_PATH` (defaults to `input-command.txt` beside the launcher when file mode is enabled)
 
 ### Embedded Resources
 
@@ -660,7 +666,7 @@ Test voice commands without using your microphone. Write commands to a file and 
 
 ```bash
 # Terminal 1: Launch game with file input enabled
-./build-patch-and-launch.sh --file-command-input
+./scripts/build-patch-and-launch.sh --file-command-input
 
 # Terminal 2 (while game runs): Send commands
 echo "hey paicom open the browser" > PAIcom_Player_Folder/input-command.txt

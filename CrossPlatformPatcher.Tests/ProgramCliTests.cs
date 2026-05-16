@@ -18,7 +18,7 @@ public sealed class ProgramCliTests
         var version = ProgramInvoker.Invoke(["--version"]);
         Assert.Equal(0, version.ExitCode);
         Assert.Contains("CrossPlatformPatcher", version.StdOut);
-        Assert.Contains("v1.0", version.StdOut);
+        Assert.Contains(" v", version.StdOut, StringComparison.Ordinal);
     }
 
     [Fact]

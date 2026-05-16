@@ -49,7 +49,13 @@ public sealed class AssemblyPatcherIntegrationTests
         ArtifactAssertions.AssertNoSourceArtifacts(temp.Path);
 
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(temp.Path, "run.sh"), Path.GetFileName(output), "launcher-runtime.log");
-        ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(temp.Path, "run.bat"), Path.GetFileName(output));
+        ArtifactAssertions.AssertFileContains(
+            System.IO.Path.Combine(temp.Path, "run.bat"),
+            Path.GetFileName(output),
+            "PAICOM_RUNTIME_HOST_OS",
+            "PAICOM_VOSK_MODEL_PATH",
+            "PAICOM_FILE_COMMAND_INPUT_PATH",
+            "SetupWizard.exe");
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(temp.Path, "setup-wizard.sh"), Path.GetFileName(output), "run.sh");
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(temp.Path, "launch.command"), "run.sh");
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(temp.Path, "setup.command"), "setup-wizard.sh");
@@ -95,7 +101,13 @@ public sealed class AssemblyPatcherIntegrationTests
             Assert.True(File.Exists(System.IO.Path.Combine(directory, name)), $"Missing generated file: {name}");
 
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(directory, "run.sh"), exeName, "launcher-runtime.log");
-        ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(directory, "run.bat"), exeName);
+        ArtifactAssertions.AssertFileContains(
+            System.IO.Path.Combine(directory, "run.bat"),
+            exeName,
+            "PAICOM_RUNTIME_HOST_OS",
+            "PAICOM_VOSK_MODEL_PATH",
+            "PAICOM_FILE_COMMAND_INPUT_PATH",
+            "SetupWizard.exe");
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(directory, "launch.command"), "run.sh");
         ArtifactAssertions.AssertFileContains(System.IO.Path.Combine(directory, "setup.command"), "setup-wizard.sh");
     }
