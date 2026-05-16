@@ -1,0 +1,180 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:SetupWizardWindows.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+        x:Class="SetupWizardWindows.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="CrossPlatformPatcher Setup Wizard"
+        MinWidth="600" MinHeight="500"
+        Width="800" Height="600">
+
+  <Design.DataContext>
+    <vm:MainViewModel/>
+  </Design.DataContext>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <Border Grid.Row="0" Background="#FF2D2D30" Padding="20">
+      <TextBlock Text="CrossPlatformPatcher Setup Wizard" 
+                 FontSize="24" 
+                 FontWeight="Bold" 
+                 Foreground="White"/>
+    </Border>
+
+    <!-- Main Content -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Left Panel - Navigation -->
+      <Border Grid.Column="0" Background="#FF3C3C3C" Margin="10">
+        <StackPanel Margin="20">
+          <TextBlock Text="Setup Steps" FontSize="18" FontWeight="Bold" Foreground="White" Margin="0,0,0,20"/>
+          
+          <Button Content="Welcome" 
+                  Command="{Binding NavigateToStepCommand}" 
+                  CommandParameter="Welcome"
+                  Background="{Binding CurrentStep, Converter={StaticResource StepToBackgroundConverter}, ConverterParameter=Welcome}"
+                  Foreground="White"
+                  Margin="0,5"/>
+          
+          <Button Content="Select Folder" 
+                  Command="{Binding NavigateToStepCommand}" 
+                  CommandParameter="FolderPicker"
+                  Background="{Binding CurrentStep, Converter={StaticResource StepToBackgroundConverter}, ConverterParameter=FolderPicker}"
+                  Foreground="White"
+                  Margin="0,5"/>
+          
+          <Button Content="Select Model" 
+                  Command="{Binding NavigateToStepCommand}" 
+                  CommandParameter="ModelSelection"
+                  Background="{Binding CurrentStep, Converter={StaticResource StepToBackgroundConverter}, ConverterParameter=ModelSelection}"
+                  Foreground="White"
+                  Margin="0,5"/>
+          
+          <Button Content="Download" 
+                  Command="{Binding NavigateToStepCommand}" 
+                  CommandParameter="Download"
+                  Background="{Binding CurrentStep, Converter={StaticResource StepToBackgroundConverter}, ConverterParameter=Download}"
+                  Foreground="White"
+                  Margin="0,5"/>
+          
+          <Button Content="Dependencies" 
+                  Command="{Binding NavigateToStepCommand}" 
+                  CommandParameter="DependencyCheck"
+                  Background="{Binding CurrentStep, Converter={StaticResource StepToBackgroundConverter}, ConverterParameter=DependencyCheck}"
+                  Foreground="White"
+                  Margin="0,5"/>
+          
+          <Button Content="Complete" 
+                  Command="{Binding NavigateToStepCommand}" 
+                  CommandParameter="Complete"
+                  Background="{Binding CurrentStep, Converter={StaticResource StepToBackgroundConverter}, ConverterParameter=Complete}"
+                  Foreground="White"
+                  Margin="0,5"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Right Panel - Content -->
+      <Border Grid.Column="1" Background="White" Margin="10">
+        <ScrollViewer>
+          <StackPanel Margin="20">
+            <!-- Welcome Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=Welcome}">
+              <TextBlock Text="Welcome to CrossPlatformPatcher" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="This wizard will guide you through the installation process." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <TextBlock Text="Click 'Next' to begin the setup process." TextWrapping="Wrap"/>
+              <Button Content="Next" Command="{Binding NavigateToStepCommand}" CommandParameter="FolderPicker" Margin="0,20,0,0"/>
+            </StackPanel>
+
+            <!-- Folder Picker Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=FolderPicker}">
+              <TextBlock Text="Select Installation Folder" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="Choose the folder where you want to install the patcher." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <Button Content="Browse..." Command="{Binding SelectFolderCommand}" Margin="0,0,0,10"/>
+              <TextBlock Text="{Binding SelectedFolder}" TextWrapping="Wrap" FontWeight="Bold"/>
+              <Button Content="Next" Command="{Binding NavigateToStepCommand}" CommandParameter="ModelSelection" Margin="0,20,0,0" IsEnabled="{Binding SelectedFolder, Converter={StaticResource NullToBoolConverter}}"/>
+            </StackPanel>
+
+            <!-- Model Selection Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=ModelSelection}">
+              <TextBlock Text="Select Vosk Model" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="Choose a speech recognition model for the patcher." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <ListBox ItemsSource="{Binding AvailableModels}" 
+                       SelectedItem="{Binding SelectedModel}"
+                       Height="200" Margin="0,0,0,20"/>
+              <Button Content="Download Model" Command="{Binding DownloadModelCommand}" IsEnabled="{Binding SelectedModel, Converter={StaticResource NullToBoolConverter}}"/>
+            </StackPanel>
+
+            <!-- Download Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=Download}">
+              <TextBlock Text="Download and Install" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="Downloading and installing the patcher..." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <ProgressBar Value="{Binding Progress}" Maximum="1" Height="20" Margin="0,0,0,10"/>
+              <Button Content="Run Patcher" Command="{Binding RunPatcherCommand}" IsEnabled="{Binding IsProcessing, Converter={StaticResource InverseBoolConverter}}"/>
+            </StackPanel>
+
+            <!-- Dependency Check Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=DependencyCheck}">
+              <TextBlock Text="Checking Dependencies" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="Checking system dependencies..." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <Button Content="Check Dependencies" Command="{Binding CheckDependenciesCommand}"/>
+            </StackPanel>
+
+            <!-- .NET Install Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=DotNetInstall}">
+              <TextBlock Text="Install .NET Runtime" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text=".NET 8.0 runtime is required. Please install it from the official website." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <Button Content="Install .NET" Command="{Binding InstallDotNetCommand}"/>
+            </StackPanel>
+
+            <!-- Complete Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=Complete}">
+              <TextBlock Text="Installation Complete!" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="The patcher has been successfully installed." TextWrapping="Wrap" Margin="0,0,0,20"/>
+              <Button Content="Finish" Command="{Binding NavigateToStepCommand}" CommandParameter="Welcome"/>
+            </StackPanel>
+
+            <!-- Error Step -->
+            <StackPanel IsVisible="{Binding CurrentStep, Converter={StaticResource StepToVisibleConverter}, ConverterParameter=Error}">
+              <TextBlock Text="Error" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+              <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" Margin="0,0,0,20" Foreground="Red"/>
+              <Button Content="Back to Welcome" Command="{Binding NavigateToStepCommand}" CommandParameter="Welcome"/>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <!-- Footer with Progress -->
+    <Border Grid.Row="2" Background="#FF2D2D30" Padding="20">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        
+        <ProgressBar Grid.Column="0" 
+                     Value="{Binding Progress}" 
+                     Maximum="1" 
+                     Height="10" 
+                     Margin="0,0,20,0"/>
+        
+        <TextBlock Grid.Column="1" 
+                   Text="{Binding Progress, StringFormat='{}{0:P0}'}" 
+                   Foreground="White" 
+                   VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

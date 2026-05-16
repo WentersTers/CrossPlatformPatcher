@@ -1,14 +1,63 @@
-# macOS Installer Guide
+# Cross-Platform Installer Guide
 
-This document covers the native `SetupWizard.app` application for macOS.
+This document covers the native installers for both Windows and macOS platforms.
 
 ## Overview
 
-The macOS installation method uses a **native SwiftUI application** that provides an interactive GUI for setup and patching:
+The CrossPlatformPatcher project includes platform-specific installers that provide interactive GUIs for setup and patching:
 
-- **Setup Wizard App (.app)** — Native SwiftUI application for interactive setup and patching
+- **Windows Installer** — Avalonia-based GUI application for Windows
+- **macOS Installer** — Native SwiftUI application for macOS
 
-The app handles all setup tasks: detecting architecture, downloading the patcher, patching PAIcom, installing Wine/Whisky, and launching the game.
+Both installers share a common core library (`SetupWizardCore`) that handles:
+- GitHub API interactions for patcher downloads
+- Vosk model download and extraction
+- Patcher execution orchestration
+- Progress reporting and logging
+- Platform-specific asset selection
+
+---
+
+## 1. Windows Installer (Avalonia)
+
+### 1.1 What Is It?
+
+A **cross-platform Avalonia UI application** that provides an interactive GUI for:
+- Selecting installation folder
+- Downloading Vosk speech recognition models
+- Downloading and running the patcher
+- Checking system dependencies (.NET runtime)
+- Providing progress feedback and logging
+
+### 1.2 Building the Windows Installer
+
+```cmd
+dotnet build SetupWizardWindows/SetupWizardWindows.csproj -c Release
+```
+
+**Prerequisites:**
+- Windows 10+ or Windows Server 2016+
+- .NET 8.0 SDK
+- Visual Studio 2022 or Visual Studio Code
+
+**Output:**
+```
+SetupWizardWindows/bin/Release/net8.0-windows/SetupWizard.exe
+```
+
+### 1.3 Windows Installer Features
+
+- **Step-by-step wizard interface** with navigation sidebar
+- **Folder selection** using native Windows folder browser
+- **Vosk model selection** from multiple available models
+- **Progress tracking** with real-time progress bars
+- **Dependency checking** for .NET runtime
+- **Comprehensive logging** with timestamped messages
+- **Error handling** with clear error messages
+
+---
+
+## 2. macOS Installer (SwiftUI)
 
 ---
 

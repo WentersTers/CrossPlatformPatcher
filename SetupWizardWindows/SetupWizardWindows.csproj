@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>SetupWizard</AssemblyName>
+    <RootNamespace>SetupWizardWindows</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+  <PackageReference Include="Avalonia" Version="11.0.10" />
+  <PackageReference Include="Avalonia.Desktop" Version="11.0.10" />
+  <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.10" />
+  <PackageReference Include="Avalonia.Themes.Fluent" Version="11.0.10" />
+  <PackageReference Include="Avalonia.Fonts.Inter" Version="11.0.10" />
+  <PackageReference Include="Avalonia.Diagnostics" Version="11.0.10" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SetupWizardCore/SetupWizardCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+</Project>
