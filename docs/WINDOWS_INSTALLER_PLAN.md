@@ -100,6 +100,7 @@ WPF is acceptable only if the project wants a Windows-only GUI with less cross-p
   - Keep `run.bat` support for Windows.
   - Keep the `SetupWizard.exe` launch hook in the batch launcher.
   - Make the generated setup entry points clearly platform-aware.
+  - Keep Windows launcher parity with macOS launcher defaults for model and command input workflows (`PAICOM_VOSK_MODEL_PATH`, `PAICOM_FILE_COMMAND_INPUT_PATH`).
   - Preserve the macOS shell launchers unchanged except where shared installer naming needs alignment.
 
 - `Core/VoskSpeechRecognizer.cs`

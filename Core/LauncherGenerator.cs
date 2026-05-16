@@ -1046,6 +1046,7 @@ public static class LauncherGenerator
         // Use Windows-style line endings for .bat compatibility
         var content = "@echo off\r\n" +
                      "REM Set OpenWakeWord environment variables (can be overridden by user)\r\n" +
+                     "if not defined PAICOM_RUNTIME_HOST_OS set PAICOM_RUNTIME_HOST_OS=windows\r\n" +
                      "if not defined PAICOM_OWW_THRESHOLD set PAICOM_OWW_THRESHOLD=0.7\r\n" +
                      "if not defined PAICOM_OWW_LOCK_MS set PAICOM_OWW_LOCK_MS=3000\r\n" +
                      "if not defined PAICOM_OWW_AUDIO_CHUNK_SIZE set PAICOM_OWW_AUDIO_CHUNK_SIZE=1024\r\n" +
@@ -1055,6 +1056,13 @@ public static class LauncherGenerator
                      "if not defined PAICOM_OWW_FUZZY_MATCH_CONFIDENCE set PAICOM_OWW_FUZZY_MATCH_CONFIDENCE=0.80\r\n" +
                      "if not defined PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450\r\n" +
                      "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000\r\n" +
+                     "set \"MODELS_DIR=%~dp0models\"\r\n" +
+                     "if exist \"%MODELS_DIR%\\NUL\" (\r\n" +
+                     "  if not defined PAICOM_VOSK_MODEL_PATH set \"PAICOM_VOSK_MODEL_PATH=%MODELS_DIR%\"\r\n" +
+                     ")\r\n" +
+                     "if /I \"%PAICOM_FILE_COMMAND_INPUT%\"==\"true\" (\r\n" +
+                     "  if not defined PAICOM_FILE_COMMAND_INPUT_PATH set \"PAICOM_FILE_COMMAND_INPUT_PATH=%~dp0input-command.txt\"\r\n" +
+                     ")\r\n" +
                      "\r\n" +
                      "if /I \"%~1\"==\"--setup\" (\r\n" +
                      "  if exist \"%~dp0SetupWizard.exe\" (\r\n" +
@@ -1344,4 +1352,3 @@ public static class LauncherGenerator
         }
     }
 }
-
