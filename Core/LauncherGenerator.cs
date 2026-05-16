@@ -1057,7 +1057,7 @@ public static class LauncherGenerator
                      "if not defined PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450\r\n" +
                      "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000\r\n" +
                      "set \"MODELS_DIR=%~dp0models\"\r\n" +
-                     "if exist \"%MODELS_DIR%\\NUL\" (\r\n" +
+                     "if exist \"%MODELS_DIR%\\\" (\r\n" +
                      "  if not defined PAICOM_VOSK_MODEL_PATH set \"PAICOM_VOSK_MODEL_PATH=%MODELS_DIR%\"\r\n" +
                      ")\r\n" +
                      "if /I \"%PAICOM_FILE_COMMAND_INPUT%\"==\"true\" (\r\n" +
