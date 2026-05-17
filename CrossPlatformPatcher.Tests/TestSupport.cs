@@ -114,11 +114,51 @@ internal static class FixtureAssemblyBuilder
         var trustedAssemblies = (string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")
             ?? throw new InvalidOperationException("Trusted platform assemblies list is unavailable.");
 
-        return trustedAssemblies
+        List<MetadataReference> references = trustedAssemblies
             .Split(Path.PathSeparator)
             .Where(path => path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToList();
+
+        AddSystemSpeechReference(references);
+
+        return references;
+    }
+
+    private static void AddSystemSpeechReference(List<MetadataReference> references)
+    {
+        if (references.Any(r => string.Equals(r.Display, "System.Speech.dll", StringComparison.OrdinalIgnoreCase) ||
+                               (r.Display?.EndsWith("System.Speech.dll", StringComparison.OrdinalIgnoreCase) ?? false)))
+        {
+            return;
+        }
+
+        var candidates = new List<string>();
+
+        var gacSpeechPath = @"C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Speech\v4.0_4.0.0.0__31bf3856ad364e35\System.Speech.dll";
+        if (File.Exists(gacSpeechPath))
+            candidates.Add(gacSpeechPath);
+
+        try
+        {
+            var loadedSpeechAssembly = Assembly.Load(new AssemblyName("System.Speech"));
+            if (!string.IsNullOrWhiteSpace(loadedSpeechAssembly.Location))
+                candidates.Add(loadedSpeechAssembly.Location);
+        }
+        catch
+        {
+            // Best-effort only. The GAC path above is the primary fallback.
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(candidate))
+            {
+                references.Add(MetadataReference.CreateFromFile(candidate));
+                return;
+            }
+        }
     }
 }
 

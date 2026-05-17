@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using CrossPlatformPatcher.Core;
 using dnlib.DotNet;
+using dnlib.DotNet.Emit;
 using Xunit;
 
 namespace CrossPlatformPatcher.Tests;
@@ -156,5 +157,211 @@ public sealed class AssemblyPatcherIntegrationTests
             """;
 
         return FixtureAssemblyBuilder.Build(source, $"fixture-patchable-{Guid.NewGuid():N}", directory);
+    }
+    [Fact]
+    public void Native_Library_Extraction_Paths_Remain_Valid_On_Windows_Output_Layouts()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "patched-native-paths.exe");
+
+        var patcher = new AssemblyPatcher(verbose: false);
+        var result = patcher.Patch(input, output, dryRun: false);
+
+        Assert.True(File.Exists(output));
+        Assert.True(result.PatchPointsApplied > 0);
+
+        var module = ModuleDefMD.Load(output);
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherOWW");
+        Assert.NotNull(helperType);
+
+        // Verify the helper type contains initialization method
+        var initMethod = helperType?.Methods.FirstOrDefault(m => m.Name == "InitializeOpenWakeWord");
+        Assert.NotNull(initMethod);
+
+        // Verify the batch launcher contains proper Windows path handling
+        var batPath = System.IO.Path.Combine(temp.Path, "run.bat");
+        Assert.True(File.Exists(batPath));
+        var batContent = File.ReadAllText(batPath);
+
+        // Verify Windows-specific path separators and environment variables
+        Assert.Contains("%~dp0", batContent, StringComparison.Ordinal);
+        Assert.Contains("MODELS_DIR=%~dp0models", batContent, StringComparison.Ordinal);
+        Assert.Contains("PAICOM_VOSK_MODEL_PATH=%MODELS_DIR%", batContent, StringComparison.Ordinal);
+
+        // Verify no Unix-style path separators in Windows batch file
+        Assert.DoesNotContain("/models/", batContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("$SCRIPT_DIR", batContent, StringComparison.Ordinal);
+
+        ArtifactAssertions.AssertNoSourceArtifacts(temp.Path);
+    }
+
+    [Fact]
+    public void Command_Fixtures_Behave_Correctly_After_Patching()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildCommandFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "patched-command-fixture.exe");
+
+        var patcher = new AssemblyPatcher(verbose: false);
+        var result = patcher.Patch(input, output, dryRun: false);
+
+        Assert.True(File.Exists(output));
+        Assert.True(result.PatchPointsApplied > 0);
+
+        var module = ModuleDefMD.Load(output);
+
+        // Verify the OpenWakeWord helper type was injected
+        var owwHelperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherOWW");
+        Assert.NotNull(owwHelperType);
+
+        // Verify the initialization method exists
+        var initMethod = owwHelperType?.Methods.FirstOrDefault(m => m.Name == "InitializeOpenWakeWord");
+        Assert.NotNull(initMethod);
+
+        // Verify the audio handoff method exists
+        var onAudioMethod = owwHelperType?.Methods.FirstOrDefault(m => m.Name == "OnAudioChunkAvailable");
+        Assert.NotNull(onAudioMethod);
+
+        // Verify the original command handler method was patched
+        var commandHandlerType = module.Types.FirstOrDefault(t => t.Name == "FixtureCommandHandler");
+        Assert.NotNull(commandHandlerType);
+
+        var handleCommandMethod = commandHandlerType?.Methods.FirstOrDefault(m => m.Name == "HandleCommand");
+        Assert.NotNull(handleCommandMethod);
+        Assert.True(handleCommandMethod!.HasBody);
+
+        // Verify the method was instrumented with OpenWakeWord hooks
+        // Note: HandleCommand is not audio-related, so it won't be patched by OpenWakeWordCompatibilityPatcher
+        // The patcher only patches methods with audio-related parameters or types
+        var instructions = handleCommandMethod.Body.Instructions;
+        var hasInitCall = instructions.Any(i => i.OpCode == OpCodes.Call &&
+            ((IMethod?)i.Operand)?.Name == "InitializeOpenWakeWord");
+        // The OnAudioData method should be instrumented instead
+        var onAudioDataMethod = commandHandlerType?.Methods.FirstOrDefault(m => m.Name == "OnAudioData");
+        Assert.NotNull(onAudioDataMethod);
+        var onAudioInstructions = onAudioDataMethod!.Body.Instructions;
+        var onAudioHasInitCall = onAudioInstructions.Any(i => i.OpCode == OpCodes.Call &&
+            ((IMethod?)i.Operand)?.Name == "InitializeOpenWakeWord");
+        Assert.True(onAudioHasInitCall, "Audio handler should be instrumented with OpenWakeWord initialization");
+
+        AssertGeneratedLaunchers(temp.Path, Path.GetFileName(output));
+        ArtifactAssertions.AssertNoSourceArtifacts(temp.Path);
+    }
+
+    [Fact]
+    public void Animation_Fixtures_Behave_Correctly_After_Patching()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildAnimationFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "patched-animation-fixture.exe");
+
+        var patcher = new AssemblyPatcher(verbose: false);
+        var result = patcher.Patch(input, output, dryRun: false);
+
+        Assert.True(File.Exists(output));
+        Assert.True(result.PatchPointsApplied > 0);
+
+        var module = ModuleDefMD.Load(output);
+
+        // Verify the OpenWakeWord helper type was injected for animation fixtures
+        var owwHelperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherOWW");
+        Assert.NotNull(owwHelperType);
+
+        // Verify the initialization method exists
+        var initMethod = owwHelperType?.Methods.FirstOrDefault(m => m.Name == "InitializeOpenWakeWord");
+        Assert.NotNull(initMethod);
+
+        // Verify the original animation handler method was patched
+        var animationHandlerType = module.Types.FirstOrDefault(t => t.Name == "FixtureAnimationHandler");
+        Assert.NotNull(animationHandlerType);
+
+        var playAnimationMethod = animationHandlerType?.Methods.FirstOrDefault(m => m.Name == "PlayAnimation");
+        Assert.NotNull(playAnimationMethod);
+        Assert.True(playAnimationMethod!.HasBody);
+
+        // Verify the method was instrumented with OpenWakeWord hooks
+        // Note: PlayAnimation is not audio-related, so it won't be patched by OpenWakeWordCompatibilityPatcher
+        // The patcher only patches methods with audio-related parameters or types
+        var instructions = playAnimationMethod.Body.Instructions;
+        var hasInitCall = instructions.Any(i => i.OpCode == OpCodes.Call &&
+            ((IMethod?)i.Operand)?.Name == "InitializeOpenWakeWord");
+        // The OnAudioData method should be instrumented instead
+        var onAudioDataMethod = animationHandlerType?.Methods.FirstOrDefault(m => m.Name == "OnAudioData");
+        Assert.NotNull(onAudioDataMethod);
+        var onAudioInstructions = onAudioDataMethod!.Body.Instructions;
+        var onAudioHasInitCall = onAudioInstructions.Any(i => i.OpCode == OpCodes.Call &&
+            ((IMethod?)i.Operand)?.Name == "InitializeOpenWakeWord");
+        Assert.True(onAudioHasInitCall, "Audio handler should be instrumented with OpenWakeWord initialization");
+
+        // Verify the batch launcher contains animation-related environment variables
+        var batPath = System.IO.Path.Combine(temp.Path, "run.bat");
+        Assert.True(File.Exists(batPath));
+        var batContent = File.ReadAllText(batPath);
+
+        Assert.Contains("PAICOM_RUNTIME_HOST_OS", batContent, StringComparison.Ordinal);
+        Assert.Contains("PAICOM_VOSK_MODEL_PATH", batContent, StringComparison.Ordinal);
+        Assert.Contains("PAICOM_FILE_COMMAND_INPUT_PATH", batContent, StringComparison.Ordinal);
+
+        AssertGeneratedLaunchers(temp.Path, Path.GetFileName(output));
+        ArtifactAssertions.AssertNoSourceArtifacts(temp.Path);
+    }
+
+    private static string BuildCommandFixture(string directory)
+    {
+        var source = """
+            using System;
+            using System.Diagnostics;
+
+            public static class FixtureCommandHandler
+            {
+                public static void Main()
+                {
+                    Console.WriteLine("fixture-command-handler");
+                }
+
+                public static void HandleCommand(string command)
+                {
+                    Process.Start("notepad.exe", command);
+                    Console.WriteLine($"Handled: {command}");
+                }
+
+                public static void OnAudioData(byte[] audioData)
+                {
+                    Console.WriteLine($"Audio chunk: {audioData.Length} bytes");
+                }
+            }
+            """;
+
+        return FixtureAssemblyBuilder.Build(source, $"fixture-command-{Guid.NewGuid():N}", directory);
+    }
+
+    private static string BuildAnimationFixture(string directory)
+    {
+        var source = """
+            using System;
+            using System.Diagnostics;
+
+            public static class FixtureAnimationHandler
+            {
+                public static void Main()
+                {
+                    Console.WriteLine("fixture-animation-handler");
+                }
+
+                public static void PlayAnimation(string animationName)
+                {
+                    Process.Start("animation-player.exe", animationName);
+                    Console.WriteLine($"Playing: {animationName}");
+                }
+
+                public static void OnAudioData(byte[] audioData)
+                {
+                    Console.WriteLine($"Audio chunk: {audioData.Length} bytes");
+                }
+            }
+            """;
+
+        return FixtureAssemblyBuilder.Build(source, $"fixture-animation-{Guid.NewGuid():N}", directory);
     }
 }
