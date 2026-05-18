@@ -20,36 +20,18 @@ The patcher is implemented to run on multiple platforms, but it has currently be
 
 ### Core Workflows
 
-**Windows:**
-```cmd
-dotnet publish CrossPlatformPatcher.csproj -r win-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/win
-```
+For detailed build instructions, see the **[Build System](docs/BUILD_SYSTEM.md)**.
 
-**Linux:**
-```sh
-dotnet publish CrossPlatformPatcher.csproj -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/linux
-```
-
-**macOS (Intel):**
-```sh
-dotnet publish CrossPlatformPatcher.csproj -r osx-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/osx-x64
-```
-
-**macOS (Apple Silicon):**
-```sh
-dotnet publish CrossPlatformPatcher.csproj -r osx-arm64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/osx-arm64
-```
-
-Or use the included one-command script:
+To generate release builds for all supported platforms simultaneously, use the included one-command publish scripts:
 
 **Windows:**
 ```cmd
-publish-all.bat
+scripts\publish-all.bat
 ```
 
 **Linux/Mac:**
 ```sh
-sh publish-all.sh
+sh scripts/publish-all.sh
 ```
 
 For an end-to-end build, publish, patch, and launch flow from the repo root on macOS or Linux, use:

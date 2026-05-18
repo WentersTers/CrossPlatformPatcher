@@ -196,3 +196,18 @@ Verify commands file exists:
 ```bash
 ls -la PAIcom_Player_Folder/custom-commands/commands.txt
 ```
+
+## Post-Publish Verification
+
+It is critical to ensure that publishing the project as a self-contained executable does not break application logic or dependency resolution. 
+
+The CrossPlatformPatcher includes a unit test suite (dotnet test) that currently contains 184 passing tests. These tests cover components such as the assembly patcher, CLI parsing, fuzzy matching, and command injection.
+
+### Validating Self-Contained Binaries
+
+While unit tests (dotnet test) ensure the core logic remains intact in generic build outputs, to validate the actual self-contained published artifacts, you should perform integration testing against the compiled binaries:
+
+1. **Publish the binaries:** Run scripts\publish-all.bat (Windows) or bash scripts/publish-all.sh (macOS/Linux) to generate the publish/CrossPlatformPatcher/ outputs.
+2. **Run integration tests:** If you have an integration test script that performs file path substitution or injects commands into the compiled executable, ensure it targets the published binaries. You can set the RUN_PATCH_WORKFLOW=1 environment variable to trigger integration testing within your CI or local scripts.
+
+When RUN_PATCH_WORKFLOW=1 is provided, the test suite will run end-to-end patching against a blank test assembly, confirming that the isolated dependencies (like the bundled onnxruntime libraries or Vosk models) can be located resolving to the final executable directory instead of the traditional in/Release folder.

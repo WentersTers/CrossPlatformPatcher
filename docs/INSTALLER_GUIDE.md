@@ -323,3 +323,54 @@ codesign --force --deep --sign - SetupWizard.app
 > **Note:** The `.pkg` installer package (build-mac-pkg.sh) has been deprecated and removed.
 > The native `SetupWizard.app` provides superior functionality and cross-platform compatibility.
 > For macOS distribution, use the `.app` bundle with code signing and notarization as described above.
+
+
+## 3. Build & Publish Workflow
+
+CrossPlatformPatcher uses self-contained executables that require no .NET installation on the target machine.
+
+### 3.1 Publish Commands
+
+To generate release builds for all supported platforms, run the publish script from the repository root:
+
+**Windows:**
+\\\cmd
+scripts\publish-all.bat
+\\\
+
+**macOS / Linux:**
+\\\sh
+bash scripts/publish-all.sh
+\\\
+
+### 3.2 Output Directory Structure
+
+The publish scripts generate the following structure in the \publish/\ folder:
+
+\\\
+publish/
+└── CrossPlatformPatcher/
+    ├── win-x64/
+    │   └── CrossPlatformPatcher-W-x64.exe
+    ├── linux-x64/
+    │   └── CrossPlatformPatcher-L-x64
+    ├── osx-x64/
+    │   └── CrossPlatformPatcher-M-x64
+    └── osx-arm64/
+        └── CrossPlatformPatcher-M-Arm
+\\\
+
+### 3.3 Platform-Specific Executable Naming Conventions
+
+To clearly distinguish platform targets, the generated binaries follow this naming scheme:
+
+- \-W-x64\: Windows 64-bit (\.exe\ extension)
+- \-L-x64\: Linux 64-bit (ELF binary)
+- \-M-x64\: macOS Intel 64-bit (Mach-O binary)
+- \-M-Arm\: macOS Apple Silicon (ARM64 Mach-O binary)
+
+### 3.4 Self-Contained Binary Verification
+
+The publish pipeline uses \--self-contained true\ and \-p:PublishSingleFile=true\ to bundle the .NET runtime and all managed dependencies into a single file.
+
+After publishing, verify the output by checking that the executable exists and has a significant size (usually >30MB) indicating the runtime is successfully bundled. Native dependencies like \onnxruntime\ files will also be copied to the output directory alongside the main executable.

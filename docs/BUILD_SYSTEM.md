@@ -51,25 +51,30 @@ Self-contained publishes bundle the entire .NET runtime, producing a single exec
 
 **Linux/macOS:**
 ```sh
-sh publish-all.sh
+sh scripts/publish-all.sh
 ```
 
 **Windows:**
 ```cmd
-publish-all.bat
+scripts\publish-all.bat
 ```
 
 **Output structure:**
 ```
 publish/
-  win/
-    CrossPlatformPatcher.exe          (Windows x64)
-  linux/
-    CrossPlatformPatcher             (Linux x64)
-  osx-x64/
-    CrossPlatformPatcher             (macOS Intel)
-  osx-arm64/
-    CrossPlatformPatcher             (macOS Apple Silicon)
+  CrossPlatformPatcher/
+    win-x64/
+      CrossPlatformPatcher-W-x64.exe
+      onnxruntime.dll
+    linux-x64/
+      CrossPlatformPatcher-L-x64
+      libonnxruntime.so
+    osx-x64/
+      CrossPlatformPatcher-M-x64
+      libonnxruntime.dylib
+    osx-arm64/
+      CrossPlatformPatcher-M-Arm
+      libonnxruntime.dylib
 ```
 
 ### 2.2 Individual Platform Publishes
@@ -81,7 +86,8 @@ dotnet publish CrossPlatformPatcher.csproj \
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
-  -o publish/win
+  -p:AssemblyName=CrossPlatformPatcher-W-x64 \
+  -o publish/CrossPlatformPatcher/win-x64
 ```
 
 **Linux (x64):**
@@ -91,7 +97,8 @@ dotnet publish CrossPlatformPatcher.csproj \
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
-  -o publish/linux
+  -p:AssemblyName=CrossPlatformPatcher-L-x64 \
+  -o publish/CrossPlatformPatcher/linux-x64
 ```
 
 **macOS (Intel):**
@@ -101,13 +108,20 @@ dotnet publish CrossPlatformPatcher.csproj \
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
-  -o publish/osx-x64
+  -p:AssemblyName=CrossPlatformPatcher-M-x64 \
+  -o publish/CrossPlatformPatcher/osx-x64
 ```
 
 **macOS (Apple Silicon):**
 ```sh
 dotnet publish CrossPlatformPatcher.csproj \
   -r osx-arm64 \
+  -c Release \
+  --self-contained true \
+  -p:PublishSingleFile=true \
+  -p:AssemblyName=CrossPlatformPatcher-M-Arm \
+  -o publish/CrossPlatformPatcher/osx-arm64
+```
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
