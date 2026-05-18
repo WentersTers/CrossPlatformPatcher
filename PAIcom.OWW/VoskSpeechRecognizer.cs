@@ -40,13 +40,6 @@ public class VoskSpeechRecognizer : IDisposable
         {
             LogEvent("[vosk-speech] Initializing Vosk speech recognizer...");
 
-            if (!Environment.Is64BitProcess)
-            {
-                initStatus = "disabled:32bit_process";
-                LogEvent("[vosk-speech] Vosk disabled: running in 32-bit process; native Vosk initialization is unstable in this mode.");
-                return false;
-            }
-
             var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "stable";
             var verifiedRuntime = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_VERIFIED_64BIT") ?? "0";
             

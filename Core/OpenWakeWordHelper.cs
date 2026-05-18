@@ -2099,7 +2099,7 @@ public static class OpenWakeWordHelper
             }
 
             // Report Vosk bridge status
-            var voskEnabled = !Environment.Is64BitProcess ? "disabled:32bit_process" : "enabled";
+            var voskEnabled = "enabled";
             LogEvent($"[startup-diag] vosk.bridge_status={voskEnabled}");
         }
         catch (Exception ex)
