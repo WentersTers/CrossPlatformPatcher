@@ -1,0 +1,36 @@
+PAIcom Cross-Platform Patcher - Native Library Manifest
+======================================
+Generated: 2026-05-18T03:12:24.4757787Z
+Effective Runtime Architecture: x86
+Migration Mode: stable
+
+Extracted Native Libraries:
+  PAIcom.OWW.dll
+  System.Memory.dll
+  System.Buffers.dll
+  System.Numerics.Vectors.dll
+  System.Runtime.CompilerServices.Unsafe.dll
+  Microsoft.ML.OnnxRuntime.dll
+  Vosk.dll
+  NAudio.Core.dll
+  NAudio.WinMM.dll
+  onnxruntime.dll
+
+ONNX Runtime Bundle:
+  onnxruntime.native.win-x86.dll
+
+Architecture Selection:
+  PE Machine Type: 0x014C
+  Effective Architecture: x86
+  Migration Mode: stable
+  Note: In Probe/Full modes with x86 PE, x64 natives are extracted
+        because CorFlags rewriting allows the process to run as 64-bit.
+
+CorFlags Probe Details:
+  Probe Attempted: False
+  Probe Applied: False
+  Reason: (none)
+
+Verification:
+  Run the launcher script with verbose logging enabled.
+  Check /launcher-runtime.log for [diag] and [native-load] entries.
