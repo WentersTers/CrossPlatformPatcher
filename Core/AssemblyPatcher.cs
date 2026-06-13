@@ -198,12 +198,17 @@ public class AssemblyPatcher
             WriteNativeLibraryManifest(outputDir, result, effectiveArchitecture, _migrationMode);
 
             bool probeCorFlagsApplied = false;
+            var finalOutputPath = outputPath;
+            var stagedOutputPath = Path.Combine(outputDir, Path.GetFileName(outputPath) + ".staged");
+
+            if (File.Exists(stagedOutputPath))
+                File.Delete(stagedOutputPath);
 
             // If no IL patching happened, preserve the original bytes exactly.
             // This avoids resource mapping regressions in heavily obfuscated builds.
             if (result.PatchPointsApplied == 0)
             {
-                File.WriteAllBytes(outputPath, peBytes);
+                File.WriteAllBytes(stagedOutputPath, peBytes);
                 Log("Compat build: wrote byte-for-byte copy (no IL/resource rewrite).");
             }
             else
@@ -228,15 +233,20 @@ public class AssemblyPatcher
                     WritePdb = false,
                 };
 
-                module.Write(outputPath, writerOptions);
+                module.Write(stagedOutputPath, writerOptions);
             }
 
-            probeCorFlagsApplied = TryApply64BitProbeCorFlags(outputPath, peMachine, result);
+            probeCorFlagsApplied = TryApply64BitProbeCorFlags(stagedOutputPath, peMachine, result);
+
+            if (File.Exists(finalOutputPath))
+                File.Delete(finalOutputPath);
+
+            File.Move(stagedOutputPath, finalOutputPath);
 
             Log($"Compat build: Wrote PAIcom.OWW.dll and dependencies to output directory.");
 
             // Generate OS launcher scripts alongside the patched exe
-            LauncherGenerator.WriteAll(outputDir, Path.GetFileName(outputPath), _migrationMode, peMachineLabel, probeCorFlagsApplied);
+            LauncherGenerator.WriteAll(outputDir, Path.GetFileName(finalOutputPath), _migrationMode, peMachineLabel, probeCorFlagsApplied);
         }
 
         return result;

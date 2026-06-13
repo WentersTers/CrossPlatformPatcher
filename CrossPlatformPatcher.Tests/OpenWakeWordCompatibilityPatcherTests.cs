@@ -685,6 +685,57 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
     }
 
     [Fact]
+    public void Skips_WinForms_Methods_That_Only_Look_Audio_Related_In_Body()
+    {
+        // Arrange
+        using var temp = new TempDirectory();
+        var source = """
+            using System;
+
+            namespace System.Windows.Forms
+            {
+                public class TextBox { }
+                public class Button { }
+            }
+
+            public class WaveInEventArgs
+            {
+                public byte[] Buffer { get; set; } = Array.Empty<byte>();
+                public int BytesRecorded { get; set; }
+            }
+
+            public static class FixtureWinFormsStartupShape
+            {
+                public static void OnStartup(System.Windows.Forms.TextBox textBox, System.Windows.Forms.Button button)
+                {
+                    var audio = new WaveInEventArgs();
+                    Console.WriteLine(audio.BytesRecorded);
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-winforms-startup-shape", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+
+        // Act
+        var patchCount = OpenWakeWordCompatibilityPatcher.Patch(module);
+
+        // Assert
+        Assert.Equal(0, patchCount);
+
+        var startupMethod = module.Types
+            .FirstOrDefault(t => t.Name == "FixtureWinFormsStartupShape")?
+            .Methods.FirstOrDefault(m => m.Name == "OnStartup");
+
+        Assert.NotNull(startupMethod);
+        Assert.True(startupMethod!.HasBody);
+
+        var hasInitCall = startupMethod.Body.Instructions
+            .Any(i => i.OpCode == OpCodes.Call && i.Operand is IMethod m && m.Name == "InitializeOpenWakeWord");
+        Assert.False(hasInitCall);
+    }
+
+    [Fact]
     public void Preserves_Exception_Handler_Boundaries()
     {
         // Arrange
@@ -1295,6 +1346,14 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
         Assert.NotNull(onAudioMethod);
         Assert.NotNull(describeAudioArgMethod);
         Assert.NotNull(logMethod);
+
+        var describeInstructions = describeAudioArgMethod!.Body!.Instructions;
+        var intToStringCallIndex = describeInstructions.ToList().FindIndex(i =>
+            i.OpCode == OpCodes.Call && i.Operand is IMethod opMethod && opMethod.Name == "ToString");
+
+        Assert.True(intToStringCallIndex > 0);
+        Assert.True(describeInstructions[intToStringCallIndex - 1].OpCode == OpCodes.Ldloca_S
+            || describeInstructions[intToStringCallIndex - 1].OpCode == OpCodes.Ldloca);
     }
 
     [Fact]

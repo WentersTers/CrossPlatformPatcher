@@ -46,4 +46,19 @@ public sealed class FuzzyMatcherTests
         Assert.Equal("enable debug logs", match!.MatchedCommand);
         Assert.True(match.Confidence >= 0.85f, $"Expected confidence >= 0.85, got {match.Confidence:0.000}");
     }
+
+    [Fact]
+    public void FindClosestMatch_Does_Not_Match_Stopword_Fragment_To_Keyword()
+    {
+        var commands = new[]
+        {
+            "open the browser",
+            "hows the weather"
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("the browse", commands, 0.80f);
+
+        Assert.NotNull(match);
+        Assert.Equal("open the browser", match!.MatchedCommand);
+    }
 }
