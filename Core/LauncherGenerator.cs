@@ -1045,6 +1045,7 @@ public static class LauncherGenerator
         var path = Path.Combine(dir, "run.bat");
         // Use Windows-style line endings for .bat compatibility
         var content = "@echo off\r\n" +
+                 "setlocal\r\n" +
                      "REM Set OpenWakeWord environment variables (can be overridden by user)\r\n" +
                      "if not defined PAICOM_RUNTIME_HOST_OS set PAICOM_RUNTIME_HOST_OS=windows\r\n" +
                      "if not defined PAICOM_OWW_THRESHOLD set PAICOM_OWW_THRESHOLD=0.7\r\n" +
@@ -1056,6 +1057,7 @@ public static class LauncherGenerator
                      "if not defined PAICOM_OWW_FUZZY_MATCH_CONFIDENCE set PAICOM_OWW_FUZZY_MATCH_CONFIDENCE=0.80\r\n" +
                      "if not defined PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450\r\n" +
                      "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000\r\n" +
+                     "if not defined PAICOM_MIGRATION_MODE set PAICOM_MIGRATION_MODE=full\r\n" +
                      "set \"MODELS_DIR=%~dp0models\"\r\n" +
                      "if exist \"%MODELS_DIR%\\\" (\r\n" +
                      "  if not defined PAICOM_VOSK_MODEL_PATH set \"PAICOM_VOSK_MODEL_PATH=%MODELS_DIR%\"\r\n" +
@@ -1063,6 +1065,8 @@ public static class LauncherGenerator
                      "if /I \"%PAICOM_FILE_COMMAND_INPUT%\"==\"true\" (\r\n" +
                      "  if not defined PAICOM_FILE_COMMAND_INPUT_PATH set \"PAICOM_FILE_COMMAND_INPUT_PATH=%~dp0input-command.txt\"\r\n" +
                      ")\r\n" +
+                     "cd /d \"%~dp0\"\r\n" +
+                     "set \"ARGS=%*\"\r\n" +
                      "\r\n" +
                      "if /I \"%~1\"==\"--setup\" (\r\n" +
                      "  if exist \"%~dp0SetupWizard.exe\" (\r\n" +
@@ -1071,7 +1075,15 @@ public static class LauncherGenerator
                      "  )\r\n" +
                      ")\r\n" +
                      "\r\n" +
-                     "start \"\" \"%~dp0" + exe + "\" %*\r\n";
+                     "if /I \"%~1\"==\"--diagnose\" (\r\n" +
+                     "  if not defined PAICOM_RUNTIME_DIAGNOSTIC_MODE set PAICOM_RUNTIME_DIAGNOSTIC_MODE=1\r\n" +
+                     "  if not defined PAICOM_RUNTIME_DIAGNOSTIC_DURATION_SECONDS set PAICOM_RUNTIME_DIAGNOSTIC_DURATION_SECONDS=180\r\n" +
+                     "  if not defined PAICOM_LOG_UNHANDLED_EXCEPTIONS set PAICOM_LOG_UNHANDLED_EXCEPTIONS=1\r\n" +
+                     "  shift\r\n" +
+                     "  set \"ARGS=%*\"\r\n" +
+                     ")\r\n" +
+                     "\r\n" +
+                     "start \"\" \"%~dp0" + exe + "\" %ARGS%\r\n";
         File.WriteAllText(path, content, System.Text.Encoding.ASCII);
         Console.WriteLine($"  [launcher] run.bat written.");
     }
