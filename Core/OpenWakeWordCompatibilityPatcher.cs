@@ -199,6 +199,11 @@ public static class OpenWakeWordCompatibilityPatcher
                 hasAudioCarrierParam = true;
         }
 
+        if (HasUiControlParameter(method))
+        {
+            return false;
+        }
+
         if (nameLooksAudio && (hasAudioTypedParam || hasAudioEventArgsParam || hasAudioCarrierParam))
             return true;
 
@@ -240,6 +245,24 @@ public static class OpenWakeWordCompatibilityPatcher
         return fullTypeName.Contains("NAudio", StringComparison.OrdinalIgnoreCase) ||
                fullTypeName.Contains("Audio", StringComparison.OrdinalIgnoreCase) ||
                fullTypeName.Contains("Wave", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasUiControlParameter(MethodDef method)
+    {
+        foreach (var param in method.Parameters)
+        {
+            if (param.IsHiddenThisParameter)
+                continue;
+
+            var fullName = param.Type?.FullName ?? string.Empty;
+            if (fullName.StartsWith("System.Windows.Forms.", StringComparison.Ordinal) ||
+                fullName.StartsWith("System.Drawing.", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool LooksLikeAudioCallbackName(string methodName)
@@ -771,6 +794,7 @@ public static class OpenWakeWordCompatibilityPatcher
         var typeLocal = new Local(new ClassSig(typeRef));
         var fullNameLocal = new Local(module.CorLibTypes.String);
         var arrayLocal = new Local(new ClassSig(arrayRef));
+        var lengthLocal = new Local(module.CorLibTypes.Int32);
 
         var nonNull = Instruction.Create(OpCodes.Nop);
         var hasArray = Instruction.Create(OpCodes.Nop);
@@ -779,6 +803,7 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Variables.Add(typeLocal);
         method.Body.Variables.Add(fullNameLocal);
         method.Body.Variables.Add(arrayLocal);
+        method.Body.Variables.Add(lengthLocal);
 
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, nonNull));
@@ -808,6 +833,8 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, " length="));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, arrayLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, arrayGetLength));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Stloc, lengthLocal));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloca_S, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, intToString));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, concat4));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));

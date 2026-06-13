@@ -212,6 +212,9 @@ public sealed class FuzzyMatcher
         // Also try partial matches: check if any keyword contains or is contained by input words
         foreach (var word in inputWords)
         {
+            if (IsStopWord(word))
+                continue;
+
             foreach (var (keyword, cmd) in keywordIndex)
             {
                 // Check if word is similar to keyword (handles typos/misrecognitions)

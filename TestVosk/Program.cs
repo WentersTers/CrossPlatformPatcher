@@ -18,7 +18,7 @@ namespace TestVosk {
                 var result = method.Invoke(instance, null);
                 Console.WriteLine("Init result: " + result);
             } catch (Exception ex) {
-                Console.WriteLine("Error: " + ex);
+                Console.WriteLine(ex.ToString());
             }
         }
     }
