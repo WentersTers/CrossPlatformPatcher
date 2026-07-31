@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.DownloadPatchView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto, Auto, *, Auto" Margin="40">
+    <StackPanel Spacing="15" Margin="0,20,0,10">
+      <TextBlock Text="Download and Patch"
+                 FontSize="24"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+      <TextBlock Text="Downloading the latest patcher and applying it to your PAIcom installation."
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="400" />
+    </StackPanel>
+
+    <ProgressBar Grid.Row="1"
+                 Value="{Binding Progress}"
+                 Minimum="0"
+                 Maximum="1.0"
+                 Height="20"
+                 Margin="0,10" />
+
+    <ScrollViewer Grid.Row="2" Margin="0,10">
+      <ItemsControl ItemsSource="{Binding LogOutput}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding}"
+                       FontSize="12"
+                       FontFamily="Consolas"
+                       TextWrapping="Wrap"
+                       Margin="0,1" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <Button Grid.Row="3"
+            Content="Cancel"
+            Command="{Binding CancelCommand}"
+            IsEnabled="{Binding IsProcessing}"
+            HorizontalAlignment="Center"
+            Margin="0,10,0,30"
+            Padding="20,10" />
+  </Grid>
+</UserControl>

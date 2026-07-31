@@ -1,4 +1,55 @@
-# macOS Installer Guide
+# Cross-Platform Installer Guide
+
+This document covers installer methods for all platforms.
+
+> **macOS native:** The [`SetupWizardMacApp/`](../SetupWizardMacApp/) SwiftUI .app bundle remains the primary macOS distribution path and is **completely unchanged**.
+>
+> **Cross-platform .NET alternative:** The [`SetupWizardWindows/`](../SetupWizardWindows/) project (Avalonia UI, .NET 8.0) provides a unified installer for **Windows, Linux (AppImage), and macOS** as an alternative to the native Swift app.
+
+---
+
+## Table of Contents
+
+1. [macOS Setup Wizard App (.app)](#1-macos-setup-wizard-app-app)
+2. [Cross-Platform SetupWizard (.NET 8.0 Avalonia)](#2-cross-platform-setupwizard-net-80-avalonia)
+3. [Code Signing and Distribution](#3-code-signing-and-distribution)
+4. [Build & Publish Workflow](#4-build--publish-workflow)
+5. [Distribution Checklist](#5-distribution-checklist)
+6. [Troubleshooting](#6-troubleshooting)
+
+---
+
+## 1. macOS Setup Wizard App (.app)
+
+**This section remains the same as before.** The native SwiftUI app is the primary macOS distribution path. See below for build and signing instructions.
+
+### 1.1 What Is It?
+
+A native **SwiftUI application** that provides an interactive GUI for:
+- Detecting system architecture (arm64 vs x86_64)
+- Downloading the latest patcher from GitHub
+- Prompting for `PAIcom.exe` location
+- Patching the executable
+- Installing/detecting Wine (Whisky, Homebrew Wine)
+- Creating platform-specific launchers
+- Launching the patched game
+
+### 1.2 Building the App
+
+```sh
+cd SetupWizardMacApp
+./build.sh
+```
+
+**Prerequisites:**
+- macOS 12+
+- Swift 5.9+
+- Xcode command-line tools
+
+**Output:**
+```
+SetupWizardMacApp/build/Release/SetupWizard.app
+```
 
 This document covers the native `SetupWizard.app` application for macOS.
 
@@ -124,7 +175,155 @@ The SetupWizard app includes several service layers:
 
 ---
 
-## 2. Code Signing and Distribution
+## 2. Cross-Platform SetupWizard (.NET 8.0 Avalonia)
+
+The cross-platform SetupWizard is a .NET 8.0 **Avalonia UI** application that runs on **Windows, Linux, and macOS**. It provides the same setup wizard functionality as the macOS Swift app but as a portable .NET binary.
+
+### 2.1 Project Structure
+
+```
+SetupWizardCore/              ← Shared business logic (no UI dependencies)
+  ├── Models/
+  │   └── SetupState.cs       ← Persistent state model
+  ├── Services/
+  │   ├── SetupStateManager.cs    ← State persistence
+  │   ├── SetupWizardLogger.cs    ← File + console logging
+  │   ├── GitHubClient.cs         ← GitHub API + download
+  │   ├── ProcessRunner.cs        ← Process execution with streaming
+  │   ├── ModelDownloader.cs      ← Vosk model download + extraction
+  │   ├── DependencyChecker.cs    ← Wine/Whisky detection
+  │   ├── DotNetInstaller.cs      ← .NET 4.8 installation strategies
+  │   └── PatcherOrchestrator.cs  ← High-level download+patch flow
+  └── SetupWizardCore.csproj
+
+SetupWizardWindows/           ← Avalonia UI application
+  ├── App.axaml / App.axaml.cs   ← Application entry + DI setup
+  ├── Converters/
+  │   └── ObjectConverters.cs    ← Screen visibility converter
+  ├── ViewModels/
+  │   └── MainViewModel.cs       ← Main state + commands
+  ├── Views/
+  │   ├── MainWindow.axaml       ← Root window with screen switching
+  │   ├── WelcomeView.axaml
+  │   ├── FolderPickerView.axaml
+  │   ├── ModelSelectionView.axaml
+  │   ├── DownloadPatchView.axaml
+  │   ├── DependencyCheckView.axaml
+  │   ├── DotNetInstallView.axaml
+  │   ├── CompleteView.axaml
+  │   └── ErrorView.axaml
+  └── SetupWizardWindows.csproj
+```
+
+### 2.2 Prerequisites
+
+- [.NET SDK 8.0](https://dotnet.microsoft.com/download/dotnet/8.0)
+- For AppImage packaging: [`appimagetool`](https://github.com/AppImage/AppImageKit/releases)
+
+### 2.3 Building All Platforms
+
+Use the unified build script:
+
+```sh
+bash scripts/build-setupwizard-all.sh
+```
+
+This publishes self-contained executables for all four targets:
+
+| Runtime ID | Output Directory | File |
+|---|---|---|
+| `win-x64` | `SetupWizardWindows/bin/Release/net8.0/win-x64/publish/` | `SetupWizard.exe` |
+| `linux-x64` | `SetupWizardWindows/bin/Release/net8.0/linux-x64/publish/` | `SetupWizard` (ELF) |
+| `osx-x64` | `SetupWizardWindows/bin/Release/net8.0/osx-x64/publish/` | `SetupWizard` (Mach-O) |
+| `osx-arm64` | `SetupWizardWindows/bin/Release/net8.0/osx-arm64/publish/` | `SetupWizard` (Mach-O) |
+
+### 2.4 Building Individual Platforms
+
+```sh
+# Windows x64
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj \
+  -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+
+# Linux x64
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj \
+  -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
+
+# macOS Intel
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj \
+  -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true
+
+# macOS Apple Silicon
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj \
+  -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
+```
+
+### 2.5 AppImage Packaging (Linux)
+
+After building the `linux-x64` target, package it as an AppImage:
+
+```sh
+bash scripts/package-appimage.sh [path-to-appimagetool]
+```
+
+This creates `SetupWizard-x86_64.AppImage` in the repository root.
+
+**Manual AppImage steps:**
+
+1. Create AppDir structure:
+   ```
+   SetupWizard.AppDir/
+   ├── AppRun                       # Entry script
+   ├── SetupWizard.desktop          # FreeDesktop entry
+   ├── SetupWizard.png              # Application icon (256x256)
+   └── usr/
+       └── bin/
+           ├── SetupWizard          # Published .NET binary
+           └── lib*                 # Any native .so dependencies
+   ```
+
+2. Run `appimagetool`:
+   ```sh
+   ARCH=x86_64 appimagetool SetupWizard.AppDir SetupWizard-x86_64.AppImage
+   ```
+
+### 2.6 Windows Installer Packaging
+
+For Windows distribution, you can wrap the published `SetupWizard.exe` in an installer using tools like:
+
+- **Inno Setup** (free): https://jrsoftware.org/isinfo.php
+- **MSIX Packaging**: Built into Windows SDK
+
+### 2.7 User Workflow
+
+1. User launches `SetupWizard` (`.exe`, ELF, or AppImage)
+2. Welcome screen explains the setup process
+3. User selects the folder containing `PAIcom.exe`
+4. User chooses a Vosk speech recognition model (or skips)
+5. The model is downloaded and extracted from Alphacephei CDN
+6. The latest patcher is downloaded from GitHub Releases
+7. The patcher runs against `PAIcom.exe` with `--migration-mode full`
+8. User is guided through dependency installation (Wine, .NET)
+9. Setup complete — ready to launch
+
+### 2.8 Technology Stack
+
+| Layer | Choice |
+|---|---|
+| GUI Framework | Avalonia UI 11.0+ |
+| Runtime | .NET 8.0 |
+| HTTP Client | `System.Net.Http.HttpClient` |
+| Zip Extraction | `System.IO.Compression.ZipFile` |
+| JSON | `System.Text.Json` |
+| Process Execution | `System.Diagnostics.Process` |
+| Logging | File + Console |
+| MVVM | CommunityToolkit.Mvvm |
+
+---
+
+## 3. Code Signing and Distribution
+
+> **Note:** Sections 3–6 below apply only to the **macOS SwiftUI app** (`SetupWizardMacApp/`).
+> The cross-platform .NET builds do not require code signing.
 
 ### 2.1 Quick Ad-Hoc Signing
 
