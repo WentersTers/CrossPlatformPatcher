@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.WelcomeView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="*, Auto" Margin="40">
+    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20">
+      <TextBlock Text="CrossPlatformPatcher"
+                 FontSize="28"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+      <TextBlock Text="Setup Wizard"
+                 FontSize="20"
+                 TextAlignment="Center"
+                 Opacity="0.8" />
+      <TextBlock Text="Welcome to the CrossPlatformPatcher Setup Wizard! This tool will help you install and configure PAIcom for cross-platform play.&#x0a;&#x0a;You will be guided through the following steps:&#x0a;1. Select your PAIcom installation folder&#x0a;2. Choose a speech recognition model&#x0a;3. Download and patch the application&#x0a;4. Install dependencies"
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="400"
+                 LineHeight="22" />
+    </StackPanel>
+
+    <Button Grid.Row="1"
+            Content="Get Started"
+            Command="{Binding GoToFolderPickerCommand}"
+            HorizontalAlignment="Center"
+            Margin="0,0,0,30"
+            Padding="30,12" />
+  </Grid>
+</UserControl>
