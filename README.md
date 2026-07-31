@@ -55,7 +55,23 @@ If you want to force a specific runtime identifier, pass `--rid`:
 ./scripts/build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
-To build the native macOS Setup Wizard app, run:
+### Cross-Platform SetupWizard (Windows, Linux, macOS)
+
+A new .NET 8.0 Avalonia UI based SetupWizard provides the same setup experience across **Windows, Linux, and macOS**. Build with:
+
+```sh
+# Build all platforms at once
+bash scripts/build-setupwizard-all.sh
+
+# Package Linux AppImage (after linux-x64 build)
+bash scripts/package-appimage.sh [path-to-appimagetool]
+```
+
+See [INSTALLER_GUIDE.md § 2](docs/INSTALLER_GUIDE.md#2-cross-platform-setupwizard-net-80-avalonia) for full details.
+
+### macOS Setup Wizard App (Native)
+
+The original native macOS SwiftUI app remains the primary macOS distribution path:
 
 ```sh
 cd SetupWizardMacApp && ./build.sh
@@ -97,7 +113,9 @@ The setup script can download/install Homebrew when missing, then install Whisky
 | `Core/ReferenceAssemblyResolver.cs` | Cross-platform .NET FW 4.8 ref resolution |
 | `Core/VoskResourceEmbedder.cs` | Embeds Vosk libs into the patched exe |
 | `Core/LauncherGenerator.cs` | Creates OS-specific launcher scripts |
-| `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application |
+| `SetupWizardCore/` | Cross-platform .NET shared library (services, models) |
+| `SetupWizardWindows/` | Cross-platform Avalonia UI setup wizard (Windows, Linux, macOS) |
+| `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application (unchanged) |
 | `Core/SpeechCompatibilityPatcher.cs` | Adds compatibility wrappers/logging for System.Speech paths |
 | `Core/NativeLibraries/` | Vosk native binaries (Win, Linux, macOS) |
 | `Core/ManagedLibraries/` | Vosk & NAudio managed wrappers |

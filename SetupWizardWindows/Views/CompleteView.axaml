@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.CompleteView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="*, Auto" Margin="40">
+    <StackPanel VerticalAlignment="Center" Spacing="20" HorizontalAlignment="Center">
+      <Border Background="{DynamicResource SystemAccentColor}"
+              CornerRadius="40"
+              Width="60"
+              Height="60"
+              HorizontalAlignment="Center">
+        <TextBlock Text="✓"
+                   FontSize="36"
+                   Foreground="White"
+                   TextAlignment="Center"
+                   VerticalAlignment="Center" />
+      </Border>
+
+      <TextBlock Text="Setup Complete!"
+                 FontSize="28"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+
+      <TextBlock Text="CrossPlatformPatcher has been installed and configured successfully."
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="400"
+                 Opacity="0.8" />
+
+      <StackPanel Spacing="5" Margin="0,10">
+        <TextBlock Text="{Binding SelectedFolder, StringFormat='Installation folder: {0}'}"
+                   FontSize="13"
+                   TextAlignment="Center"
+                   Opacity="0.6" />
+        <TextBlock Text="{Binding ModelPath, StringFormat='Speech model: {0}'}"
+                   FontSize="13"
+                   TextAlignment="Center"
+                   Opacity="0.6" />
+      </StackPanel>
+    </StackPanel>
+
+    <StackPanel Grid.Row="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Spacing="15"
+                Margin="0,10,0,30">
+      <Button Content="Launch PAIcom"
+              Command="{Binding DownloadAndPatchCommand}"
+              Padding="25,12" />
+      <Button Content="Close"
+              Click="OnCloseClick"
+              Padding="25,12" />
+    </StackPanel>
+  </Grid>
+</UserControl>
