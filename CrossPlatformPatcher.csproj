@@ -102,6 +102,15 @@
     <Compile Remove="TestVosk\**\*.cs" />
     <EmbeddedResource Remove="TestVosk\**\*" />
     <None Remove="TestVosk\**\*" />
+    <Compile Remove="SetupWizardWindows\**\*.cs" />
+    <EmbeddedResource Remove="SetupWizardWindows\**\*" />
+    <None Remove="SetupWizardWindows\**\*" />
+    <Compile Remove="SetupWizardCore\**\*.cs" />
+    <EmbeddedResource Remove="SetupWizardCore\**\*" />
+    <None Remove="SetupWizardCore\**\*" />
+    <Compile Remove="SetupWizardCore.Tests\**\*.cs" />
+    <EmbeddedResource Remove="SetupWizardCore.Tests\**\*" />
+    <None Remove="SetupWizardCore.Tests\**\*" />
     <Compile Remove=".tmp-deps\**\*.cs" />
     <EmbeddedResource Remove=".tmp-deps\**\*" />
     <None Remove=".tmp-deps\**\*" />

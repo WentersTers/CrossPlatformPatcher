@@ -1,4 +1,6 @@
 using CrossPlatformPatcher.Core;
+using CrossPlatformPatcher.Core.Modules;
+using CrossPlatformPatcher.Core.Modules.OpenWakeWord;
 using dnlib.DotNet;
 using dnlib.DotNet.Emit;
 using Xunit;
@@ -1428,5 +1430,98 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
         var calculateSumHasInitCall = calculateSumMethod!.Body.Instructions
             .Any(i => i.OpCode == OpCodes.Call && i.Operand is IMethod m && m.Name == "InitializeOpenWakeWord");
         Assert.False(calculateSumHasInitCall);
+    }
+
+    [Fact]
+    public void Module_Apply_Emits_Configured_LockDuration_From_OwwSettings()
+    {
+        // Arrange
+        using var temp = new TempDirectory();
+        var source = """
+            using System;
+
+            public static class FixtureOwwConfigured
+            {
+                public static void OnAudioData(byte[] audioData)
+                {
+                    Console.WriteLine("Processing audio");
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-oww-configured", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+
+        var settings = OpenWakeWordSettings.CreateBuilder()
+            .WithLockDurationMs(1234)
+            .Build();
+
+        var context = new PatchModuleContext
+        {
+            Module = module,
+            Log = _ => { },
+            OwwSettings = settings,
+        };
+
+        var owwModule = new OpenWakeWordModule();
+
+        // Act — thread the injected settings through the module into the emitted IL.
+        var result = owwModule.Apply(context);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.True(result.PatchPointsFound >= 1);
+
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherOWW");
+        Assert.NotNull(helperType);
+
+        var initMethod = helperType?.Methods.FirstOrDefault(m => m.Name == "InitializeOpenWakeWord");
+        Assert.NotNull(initMethod);
+
+        // The lock-duration constant baked into the IL should reflect the configured value (1234),
+        // not the legacy 3000 default.
+        var hasConfiguredConstant = initMethod!.Body.Instructions
+            .Any(i => i.OpCode == OpCodes.Ldc_I4 && i.Operand is int v && v == 1234);
+        Assert.True(hasConfiguredConstant);
+    }
+
+    [Fact]
+    public void Patch_WithNullSettings_FallsBack_To_Legacy_Constants()
+    {
+        // Arrange
+        using var temp = new TempDirectory();
+        var source = """
+            using System;
+
+            public static class FixtureOwwLegacy
+            {
+                public static void OnAudioData(byte[] audioData)
+                {
+                    Console.WriteLine("Processing audio");
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-oww-legacy", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+
+        // Act — no settings passed, so the legacy defaults must be preserved.
+        OpenWakeWordCompatibilityPatcher.Patch(module);
+
+        // Assert
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherOWW");
+        Assert.NotNull(helperType);
+
+        var initMethod = helperType?.Methods.FirstOrDefault(m => m.Name == "InitializeOpenWakeWord");
+        Assert.NotNull(initMethod);
+        var hasLegacyLock = initMethod!.Body.Instructions
+            .Any(i => i.OpCode == OpCodes.Ldc_I4 && i.Operand is int v && v == 3000);
+        Assert.True(hasLegacyLock, "Expected the legacy 3000 ms lock duration to be emitted.");
+
+        var onAudioMethod = helperType?.Methods.FirstOrDefault(m => m.Name == "OnAudioChunkAvailable");
+        Assert.NotNull(onAudioMethod);
+        var hasLegacyTicks = onAudioMethod!.Body.Instructions
+            .Any(i => i.OpCode == OpCodes.Ldc_I8 && i.Operand is long v && v == 10000L);
+        Assert.True(hasLegacyTicks, "Expected the legacy 10000L ticks multiplier to be emitted.");
     }
 }
