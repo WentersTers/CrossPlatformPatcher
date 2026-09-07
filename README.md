@@ -103,18 +103,97 @@ For complete build documentation, see [docs/BUILD_SYSTEM.md](docs/BUILD_SYSTEM.m
 
 The setup script can download/install Homebrew when missing, then install Whisky.
 
+## Plugin Architecture
+
+The patcher uses a **modular, plugin-based core**. Each patch feature is an isolated
+module implementing `IPatchModule`. The engine (`ModuleRegistry`) discovers modules
+by reflection at startup, so **adding a pure-IL feature does not require editing the engine**
+(Open/Closed Principle). Features that need new embedded natives or external assembly
+references still require changes to `AssemblyPatcher`.
+
+### New Module Layout
+
+```
+Core/
+  Modules/                       <-- every feature lives here
+    IPatchModule.cs              <-- module contract (primary extension point; engine still owns OWW orchestration for embedded natives & assembly refs)
+    PatchModuleContext.cs        <-- dependency-injection context (module, log, settings)
+    PatchModuleResult.cs         <-- per-module outcome
+    PatchRunResult.cs            <-- aggregated run outcome
+    ModuleRegistry.cs            <-- discovery + ordering + per-module error isolation
+    ProcessStart/                <-- example feature module
+      ProcessStartModule.cs
+    Speech/
+      SpeechModule.cs
+    OpenWakeWord/
+      OpenWakeWordModule.cs
+  Cli/                           <-- argument parsing extracted from the entry point
+    CliOptions.cs                <-- pure, testable argument parser
+    CliVerb.cs
+    CliHelpText.cs
+inputs/Program.cs                <-- thin verb dispatcher (run flow lives in RunPatch)
+```
+
+> **Note (future work):** `IPatchModule` is the *primary* extension point, but the engine currently
+> retains OWW-specific orchestration for embedded natives and assembly references. Closing this
+> gap, and extracting a dedicated `PatcherRunner` from `RunPatch`, is tracked as future work.
+
+### Adding a Pure-IL Feature (3 steps, zero engine edits)
+
+1. **Create a folder + module class** implementing `IPatchModule`:
+
+   ```csharp
+   namespace CrossPlatformPatcher.Core.Modules.MyFeature;
+
+   public sealed class MyFeatureModule : IPatchModule
+   {
+       public string Name => "MyFeature";
+       public int Order => 40;                      // deterministic execution order
+
+       public PatchModuleResult Apply(PatchModuleContext context)
+       {
+           context.Log($"[{Name}] running.");       // use injected logger, not Console
+           // ... your dnlib logic using context.Module / context.OwwSettings ...
+           return new PatchModuleResult
+           {
+               ModuleName = Name,
+               PatchPointsFound = n,
+               PatchPointsApplied = n,
+           };
+       }
+   }
+   ```
+
+2. **Never catch broadly** — the registry isolates exceptions per module, so a crash
+   in one feature records a failure and the rest keep running.
+
+3. **Optional CLI flags** — add a case in `CliOptions.Parse`; the entry point
+   passes the parsed settings through `PatchModuleContext`.
+
+### Design Principles Applied
+
+| Principle | How it's met |
+|---|---|
+| **Single Responsibility** | Each feature = one module; parsing/help/patching are separate types |
+| **Open/Closed** | Add a pure-IL feature = new file implementing `IPatchModule`; `ModuleRegistry`/`Program` are never edited. New embedded natives / assembly references still need `AssemblyPatcher` edits |
+| **Error isolation** | `ModuleRegistry.RunAll` wraps each module in its own try/catch |
+| **Dependency Injection** | Modules receive `PatchModuleContext` (logger, settings). `OwwSettings`/`MigrationMode` are present for future use, but the lock-duration and Ticks-multiplier in the emitted IL are still hard-coded in `OpenWakeWordCompatibilityPatcher`; `--oww-lock-ms`/`--oww-threshold` currently only affect the runtime `PAIcom.OWW` defaults (wiring through is future work) |
+| **Testability** | `CliOptions.Parse` is pure; `ModuleRegistry` is testable without a real PE |
+
 ## What's Inside
 
 ### Key Components
 
 | File/Folder | Purpose |
 |---|---|
-| `Core/` | Patch injection logic |
-| `Core/ReferenceAssemblyResolver.cs` | Cross-platform .NET FW 4.8 ref resolution |
+| `Core/` | Patch injection logic (engine + modules) |
+| `Core/Modules/` | Plugin modules (see **Plugin Architecture** above) |
+| `Core/Cli/` | Argument parsing and help text |
+| `Core/AssemblyPatcher.cs` | Orchestrates patch application (module run + embedded native / assembly-reference handling) |
 | `Core/VoskResourceEmbedder.cs` | Embeds Vosk libs into the patched exe |
 | `Core/LauncherGenerator.cs` | Creates OS-specific launcher scripts |
-| `SetupWizardCore/` | Cross-platform .NET shared library (services, models) |
-| `SetupWizardWindows/` | Cross-platform Avalonia UI setup wizard (Windows, Linux, macOS) |
+| `SetupWizardCore/` | Cross-platform .NET shared library (services, models) — own project |
+| `SetupWizardWindows/` | Cross-platform Avalonia UI setup wizard (Windows, Linux, macOS) — own project |
 | `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application (unchanged) |
 | `Core/SpeechCompatibilityPatcher.cs` | Adds compatibility wrappers/logging for System.Speech paths |
 | `Core/NativeLibraries/` | Vosk native binaries (Win, Linux, macOS) |
@@ -524,7 +603,7 @@ CrossPlatformPatcher PAIcom.exe \
 
 ### Runtime Configuration (Environment Variables)
 
-After patching, end users can **override settings at runtime** by setting environment variables. The default settings live in [PAIcom.OWW/OpenWakeWordSettings.cs](PAIcom.OWW/OpenWakeWordSettings.cs) and the CLI surface is in [Program.cs](Program.cs).
+After patching, end users can **override settings at runtime** by setting environment variables. The default settings live in [PAIcom.OWW/OpenWakeWordSettings.cs](PAIcom.OWW/OpenWakeWordSettings.cs) and the CLI surface is in [inputs/Program.cs](inputs/Program.cs).
 
 ```bash
 # Linux/macOS
