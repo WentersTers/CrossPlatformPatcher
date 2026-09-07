@@ -21,7 +21,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Keep the nested TestModuleTypes project out of this project's default
+         **/*.cs glob so its sources and generated AssemblyInfo do not double-compile. -->
+    <Compile Remove="TestModuleTypes/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../CrossPlatformPatcher.csproj" />
+    <ProjectReference Include="TestModuleTypes/CrossPlatformPatcher.TestModuleTypes.csproj" />
   </ItemGroup>
 
 </Project>
