@@ -1,0 +1,48 @@
+<domain type='kvm'>
+  <!-- stage-0 test domain for the Ubuntu 22.04 X11 golden (runbook Session 1).
+       Resolution is NOT set here: libvirt video models carry no resolution
+       element — 1920x1080 is a guest-OS setting, verified post-boot via
+       xrandr (adjudication step 6). The harness domain-XML checks cover
+       tablet + QGA channel only. -->
+  <name>ubuntu-2204-stage0</name>  <memory unit='MiB'>8192</memory>
+  <vcpu placement='static'>4</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-model'/>
+  <clock offset='utc'/>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <!-- golden lives in the default storage pool: libvirt-qemu cannot
+           traverse the restrictive home dir, so the image is copied here
+           post-build with libvirt-qemu:kvm ownership (first-boot finding).
+           FROZEN on v1+golden-clean-2 as the Session 2-3 evidence chain;
+           forward work runs on ubuntu-2204-stage (v4). -->
+      <source file='/var/lib/libvirt/images/ubuntu-22.04-x11-golden.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <interface type='network'>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+    <input type='tablet' bus='usb'/>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+    <video>
+      <model type='virtio' heads='1' primary='yes'/>
+    </video>
+    <!-- localhost only: never exposed publicly (cloud-host rule) -->
+    <graphics type='vnc' port='-1' listen='127.0.0.1'/>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+  </devices>
+</domain>
