@@ -18,6 +18,15 @@ public static class LauncherGenerator
 {
     private static readonly System.Text.Encoding Utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
+    /// <summary>
+    /// Shell scripts must be LF-only: the raw-string literals below inherit
+    /// this source file's CRLF line endings, which broke run.sh on Linux
+    /// (Session-6: `set: -D: invalid option`, exit before first log line).
+    /// Batch files keep their explicit \r\n escapes; markdown is untouched.
+    /// </summary>
+    internal static string ToUnixLineEndings(string content) =>
+        content.Replace("\r\n", "\n");
+
     public static void WriteAll(string outputDir, string exeFileName, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied)
     {
         Directory.CreateDirectory(outputDir);
@@ -420,7 +429,7 @@ public static class LauncherGenerator
             .Replace("__TARGET_PE_MACHINE__", targetPeMachine)
             .Replace("__PROBE_CORFLAGS_APPLIED__", probeCorFlagsApplied ? "1" : "0");
 
-        File.WriteAllText(path, content, Utf8NoBom);
+        File.WriteAllText(path, ToUnixLineEndings(content), Utf8NoBom);
 
         // Make it executable on Unix (no-op on Windows)
         TryChmod(path, "755");
@@ -990,7 +999,7 @@ public static class LauncherGenerator
             .Replace("__MIGRATION_MODE__", MigrationModeParser.ToCliString(migrationMode))
             .Replace("__TARGET_PE_MACHINE__", targetPeMachine);
 
-        File.WriteAllText(path, content, Utf8NoBom);
+        File.WriteAllText(path, ToUnixLineEndings(content), Utf8NoBom);
 
         // Make it executable on Unix (no-op on Windows)
         TryChmod(path, "755");
@@ -1002,7 +1011,7 @@ public static class LauncherGenerator
     private static void WriteSetupCommand(string dir)
     {
         var path = Path.Combine(dir, "setup.command");
-        File.WriteAllText(path, $"""
+        File.WriteAllText(path, ToUnixLineEndings($"""
             #!/usr/bin/env sh
             # Mac Finder double-click setup launcher - prefers GUI setup wizard
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -1016,7 +1025,7 @@ public static class LauncherGenerator
             fi
 
             sh "$SCRIPT_DIR/setup-wizard.sh" --no-gui "$@"
-            """, Utf8NoBom);
+            """), Utf8NoBom);
 
         TryChmod(path, "755");
         Console.WriteLine($"  [launcher] setup.command written.");
@@ -1027,12 +1036,12 @@ public static class LauncherGenerator
     private static void WriteLaunchCommand(string dir)
     {
         var path = Path.Combine(dir, "launch.command");
-        File.WriteAllText(path, $"""
+        File.WriteAllText(path, ToUnixLineEndings($"""
             #!/usr/bin/env sh
             # Mac Finder double-click launcher — runs the game
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
             exec sh "$SCRIPT_DIR/run.sh" "$@"
-            """, Utf8NoBom);
+            """), Utf8NoBom);
 
         TryChmod(path, "755");
         Console.WriteLine($"  [launcher] launch.command written.");
