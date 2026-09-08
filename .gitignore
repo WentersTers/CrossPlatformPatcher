@@ -64,6 +64,9 @@ desktop.ini
 # Generated files (excluding source)
 *.class
 *.cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
 bin-int/
 PAIcom_Player_Folder/
 launch.command
