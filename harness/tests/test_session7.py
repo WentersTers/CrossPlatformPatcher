@@ -170,6 +170,22 @@ def test_classify_family_fatal_outranks_caught_dll():
     assert classify_family("clean boot", 0, False) is None
 
 
+def test_classify_family_keys_on_fatal_line_not_caught_strings():
+    from harness.live.cycles import (FAMILY_C_FATAL, FAMILY_F_RES,
+                                     classify_family)
+    # wine11 shape: caught onnx DllNotFound + fatal resources.
+    # The fatal line's own signature wins; caught strings are context.
+    wine11 = ("[oww] OpenWakeWord initialization failed: System.DllNotFoundException: onnxruntime\n"
+              "[ERROR] FATAL UNHANDLED EXCEPTION: System.Resources.MissingManifestResourceException: "
+              "Could not find any resources appropriate for the specified culture")
+    assert classify_family(wine11, 1, False) == FAMILY_F_RES
+    # fatal line carries the font signature in its message (6b case)
+    from harness.live.cycles import FAMILY_E_FONTS
+    assert classify_family("FATAL UNHANDLED EXCEPTION: System.ArgumentException: "
+                           "FontFamily could not be found [GDI+ status]", 1, False) == FAMILY_E_FONTS
+    assert classify_family("FATAL UNHANDLED EXCEPTION: Something.ElseEntirely", 3, False) == FAMILY_C_FATAL
+
+
 def test_hang_is_timeout_kill_verdict_not_cycle_failure(tmp_path):
     pool, calls = _pool(), []
     clock, sleep, now = _clock()
