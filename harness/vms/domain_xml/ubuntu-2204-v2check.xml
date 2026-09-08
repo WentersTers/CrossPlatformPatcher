@@ -1,0 +1,42 @@
+<domain type='kvm'>
+  <!-- golden-v2 validation domain: boots the rebuilt image with ZERO manual
+       fixes. If autologin lands on a 1920x1080 desktop with network and no
+       wizard, the hardened template is proven end-to-end. -->
+  <name>ubuntu-2204-v2check</name>
+  <memory unit='MiB'>8192</memory>
+  <vcpu placement='static'>4</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-model'/>
+  <clock offset='utc'/>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='/var/lib/libvirt/images/ubuntu-22.04-x11-golden-v2.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <interface type='network'>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+    <input type='tablet' bus='usb'/>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+    <video>
+      <model type='virtio' heads='1' primary='yes'/>
+    </video>
+    <!-- localhost only: never exposed publicly (cloud-host rule) -->
+    <graphics type='vnc' port='-1' listen='127.0.0.1'/>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+  </devices>
+</domain>
