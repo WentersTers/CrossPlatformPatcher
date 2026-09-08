@@ -45,6 +45,7 @@ def main() -> int:
     print("- Session-7 seams (hop argv, pool revert, qmp prefix, 2-leg shots): "
           "test_seams.py")
     print("- QGA-over-hop launch channel: test_qga.py")
+    print("- fix-loop contract (tripwires, Mac policy/gate): test_fixloop.py")
     print("  + kvm probe, latency/Samples, host-key hint, URI query passthrough")
     print("- evidence helper p50/p95 + --cycles runner: test_measurements_cycles.py")
     print("- repo hygiene meta-test: test_meta.py")
