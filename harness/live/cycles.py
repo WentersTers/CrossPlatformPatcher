@@ -33,6 +33,7 @@ FAMILY_C_EXIT = "runtime-startup/exit-nonzero (family c)"
 FAMILY_C_FATAL = "startup/fatal-unhandled (family c)"
 FAMILY_A_DL = "mic-enumeration/dll-not-found (family a)"
 FAMILY_E_FONTS = "ui-startup/gdi-font-missing (family e)"
+FAMILY_F_RES = "app-resources/missing-manifest (family f)"
 FAMILY_BITNESS = "native-load/bad-image-format (bitness branch)"
 
 TS_FMT = "%Y%m%dT%H%M%SZ"
@@ -47,32 +48,44 @@ def cycle_ts(base_ts: str, index: int) -> str:
     return (base + timedelta(seconds=index)).strftime(TS_FMT)
 
 
+def _fatal_line(tier0_text: str) -> str | None:
+    """The full FATAL UNHANDLED line (type + message). Diagnosis keys on
+    what killed the process (this line), never on caught strings elsewhere
+    in the log (degraded lanes that survived)."""
+    import re
+    m = re.search(r"FATAL UNHANDLED EXCEPTION:[^\n]*", tier0_text or "")
+    return m.group(0) if m else None
+
+
 def classify_family(tier0_text: str, exit_code: int | None,
                     timed_out: bool) -> str | None:
     """Diagnose the known-failure family from tee evidence (§1d oracle).
 
-    Precedence is causal, not textual: a FATAL UNHANDLED block names the
-    exit cause, so it outranks every pattern. A bare DllNotFoundException
-    is NOT family (a) by itself — the app catches native-load failures
-    in degraded lanes (OWW onnx bridge) and continues; only a FATAL
-    DllNotFound is mic/startup-load class. (6b calibration: caught onnx
-    DllNotFound + fatal FontFamily — the old order misdiagnosed (a).)
+    Precedence is causal: the fatal line's own exception type outranks
+    every pattern. A bare DllNotFoundException is NOT family (a) by
+    itself — the app catches native-load failures in degraded lanes
+    (OWW onnx bridge) and continues; only a FATAL DllNotFound is
+    mic/startup-load class. (6b calibrations: caught onnx string twice
+    misdiagnosed (a) against fatal fonts, then fatal resources.)
     """
     text = tier0_text or ""
     if timed_out:
         return FAMILY_C_HANG
-    fatal = "FATAL UNHANDLED" in text
-    if fatal and ("FontFamily" in text or "FontFamilyNotFound" in text
-                  or "GDI+" in text):
-        return FAMILY_E_FONTS
+    fatal = _fatal_line(text)
+    if fatal is not None:
+        if "FontFamily" in fatal or "GDI" in fatal:
+            return FAMILY_E_FONTS
+        if "DllNotFound" in fatal:
+            return FAMILY_A_DL
+        if "BadImageFormat" in fatal:
+            return FAMILY_BITNESS
+        if "MissingManifestResource" in fatal:
+            return FAMILY_F_RES
+        return FAMILY_C_FATAL
     if "Wine Mono is not installed" in text:
         return FAMILY_C_MONO
     if "BadImageFormat" in text:
         return FAMILY_BITNESS
-    if fatal and "DllNotFoundException" in text:
-        return FAMILY_A_DL
-    if fatal:
-        return FAMILY_C_FATAL
     if exit_code not in (0, None):
         return FAMILY_C_EXIT
     return None
