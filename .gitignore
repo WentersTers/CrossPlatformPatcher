@@ -121,3 +121,9 @@ logs/
 SetupWizardMacApp/.build/
 PAIcom Test Folder/
 dump_analysis*.txt
+
+# Harness rehearsal outputs, checkpoints, session metrics (never committed)
+harness/runs/
+
+# Packer build secrets (passwords/hashes; see secrets.pkrvars.hcl.example)
+*.pkrvars.hcl

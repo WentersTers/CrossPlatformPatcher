@@ -323,4 +323,22 @@ public sealed class LauncherGeneratorTests
         var fullRunSh = File.ReadAllText(Path.Combine(fullDir, "run.sh"));
         Assert.Contains("DEFAULT_MIGRATION_MODE=\"full\"", fullRunSh, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Shell_Launchers_Use_LF_Only_Batch_Keeps_CRLF()
+    {
+        // Session-6: raw-string literals inherit this source file's CRLF and
+        // broke run.sh on Linux (`set: -D: invalid option`, died pre-log).
+        using var temp = new TempDirectory();
+        LauncherGenerator.WriteAll(temp.Path, "PAIcom.exe", MigrationMode.Full, "AMD64", false);
+
+        foreach (var name in new[] { "run.sh", "setup-wizard.sh", "setup.command", "launch.command" })
+        {
+            var text = File.ReadAllText(Path.Combine(temp.Path, name));
+            Assert.DoesNotContain("\r", text, StringComparison.Ordinal);
+        }
+
+        var bat = File.ReadAllText(Path.Combine(temp.Path, "run.bat"), System.Text.Encoding.ASCII);
+        Assert.Contains("\r\n", bat, StringComparison.Ordinal);
+    }
 }
