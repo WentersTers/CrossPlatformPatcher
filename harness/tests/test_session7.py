@@ -152,6 +152,24 @@ def test_clock_anchor_recorded_and_failure_noted(tmp_path):
     assert "no clock" in sc["clock_note"]
 
 
+def test_classify_family_fatal_outranks_caught_dll():
+    from harness.live.cycles import (FAMILY_A_DL, FAMILY_BITNESS,
+                                     FAMILY_C_EXIT, FAMILY_C_FATAL,
+                                     FAMILY_C_MONO, FAMILY_E_FONTS,
+                                     classify_family)
+    assert classify_family("x Wine Mono is not installed", 255, False) == FAMILY_C_MONO
+    # 6b shape: caught onnx DllNotFound (app continues) + fatal fonts.
+    # The fatal cause wins; the caught string alone is generic exit-nonzero.
+    both = ("[oww] OpenWakeWord initialization failed: System.DllNotFoundException: onnxruntime\n"
+            "FATAL UNHANDLED EXCEPTION: System.ArgumentException: FontFamilyNotFound [GDI+]")
+    assert classify_family(both, 1, False) == FAMILY_E_FONTS
+    assert classify_family("only System.DllNotFoundException: onnxruntime (caught)", 1, False) == FAMILY_C_EXIT
+    assert classify_family("FATAL UNHANDLED EXCEPTION: System.DllNotFoundException: foo", 1, False) == FAMILY_A_DL
+    assert classify_family("FATAL UNHANDLED EXCEPTION: something novel", 3, False) == FAMILY_C_FATAL
+    assert classify_family("System.BadImageFormatException: 0x8007000B", 1, False) == FAMILY_BITNESS
+    assert classify_family("clean boot", 0, False) is None
+
+
 def test_hang_is_timeout_kill_verdict_not_cycle_failure(tmp_path):
     pool, calls = _pool(), []
     clock, sleep, now = _clock()
