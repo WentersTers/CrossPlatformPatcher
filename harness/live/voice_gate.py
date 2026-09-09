@@ -111,6 +111,23 @@ def needs_redraw(draw_bytes: int, bus_peak: float,
     return draw_expectation(draw_bytes) == "audible" and bus_peak < thr
 
 
+def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
+                      second_text: str = "",
+                      thr: float = ONSET_PEAK_TH) -> tuple[str, str]:
+    """Terminal rule for the same-session re-draw. First-silent +
+    redraw-audible = member-matched-with-redraw (and the redraw event is
+    fate-distribution data). Both silent on a small member escalates to
+    systematic suspicion: random GC death rarely strikes twice — hand to
+    the fresh-session probes, confirmatory, not outlier-hunting."""
+    if second_peak >= thr:
+        if second_text and say_membership(second_text, refs):
+            return MEMBER_MATCHED, "matched on re-draw; redraw is fate data"
+        return OBSERVE_RECORD, "audible re-draw outside refs: record it"
+    return OBSERVE_RECORD, \
+        "silent twice on audible-expected member: systematic suspicion, " \
+        "escalate to fresh-session probes"
+
+
 def adjudicate_say(draw_bytes: int, bus_peak: float,
                    regions: list[tuple[float, float, str]],
                    refs: set[str], known_bug: bool = False,
