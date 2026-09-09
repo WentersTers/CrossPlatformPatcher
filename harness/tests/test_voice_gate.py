@@ -83,6 +83,14 @@ def test_known_bug_entry():
     assert b == vg.KNOWN_BUG
 
 
+def test_redraw_terminal_rule():
+    refs = {"you didn't care"}
+    b, _ = vg.adjudicate_redraw(0.0, 0.41, refs, "You didn't care.")
+    assert b == vg.MEMBER_MATCHED
+    b, d = vg.adjudicate_redraw(0.0, 0.0, refs)
+    assert b == vg.OBSERVE_RECORD and "systematic suspicion" in d
+
+
 def test_gateplay_source_exercised_shape():
     assert "parec" in GATEPLAY_SOURCE and "no-onset" in GATEPLAY_SOURCE
     assert "baseline-held" in GATEPLAY_SOURCE and "max-total" in GATEPLAY_SOURCE
