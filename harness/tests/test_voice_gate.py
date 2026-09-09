@@ -11,7 +11,7 @@ from harness.live.voice_gateplay import GATEPLAY_SOURCE
 def test_gate_config_from_census():
     cfg = vg.gate_config_for(32.6)
     assert cfg == {"onset_budget": 40.0, "hold": 5.0,
-                   "max_total": 40.0 + 32.6 + 5.0 + 10.0}
+                   "max_total": 40.0 + 32.6 + 5.0 + 10.0 + 25.0}
 
 
 def test_draw_expectation_bounds():
@@ -91,7 +91,45 @@ def test_redraw_terminal_rule():
     assert b == vg.OBSERVE_RECORD and "systematic suspicion" in d
 
 
+def test_redraw_fragment_is_inconclusive():
+    b, _ = vg.adjudicate_redraw(0.0, 0.35, {"cur Centimeters calibration"},
+                                "Listen.", second_regions=[(26.0, 26.5)])
+    assert b == vg.FRAGMENT_INCONCLUSIVE
+
+
+def test_overlap_variant_match():
+    refs = {"before i shut down i want to ask you did you ever hear"}
+    assert vg.say_overlap("Before I shut down, I must ask you.", refs)
+    assert not vg.say_overlap("Listen.", {"curse calibration complete"})
+
+
+def test_draw_prior_match():
+    refs = {"start in vr mode so you can erp without touching anything"}
+    b, d = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "In the air mode. So you...")],
+                             refs, draw_audio="vrmode.wav",
+                             member_audio="vrmode.wav")
+    assert b == vg.MEMBER_MATCHED and "draw-prior" in d
+    # confabulation-length regions without shared content do not ride it
+    b, _ = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "Completely other words here")],
+                             refs, draw_audio="vrmode.wav",
+                             member_audio="vrmode.wav")
+    assert b == vg.OBSERVE_RECORD
+    # wrong file draws never match even with shared words
+    b, _ = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "In the air mode. So you...")],
+                             refs, draw_audio="other.wav",
+                             member_audio="vrmode.wav")
+    assert b == vg.OBSERVE_RECORD
+
+
+def test_no_flow_is_instrument_failure_shape():
+    st = {"closed_why": "no-flow", "onset_s": None, "end_s": None,
+          "hot_regions": []}
+    assert vg.check_gate_report(st, 0, 0.0) == []
+    assert vg.check_gate_report(st, 100000, 0.0) != []
+
+
 def test_gateplay_source_exercised_shape():
     assert "parec" in GATEPLAY_SOURCE and "no-onset" in GATEPLAY_SOURCE
     assert "baseline-held" in GATEPLAY_SOURCE and "max-total" in GATEPLAY_SOURCE
+    assert "no-flow" in GATEPLAY_SOURCE and "flow" in GATEPLAY_SOURCE
     compile(GATEPLAY_SOURCE, "gateplay", "exec")

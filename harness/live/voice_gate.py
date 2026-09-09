@@ -37,19 +37,47 @@ SIL_MIN = 9087636
 FRAGMENT_MIN_SECS = 1.5
 
 # Gate defaults: onset budget errs long (a short budget manufactures
-# false expected-silence); max is computed from the census, not fixed.
+# false expected-silence verdicts); max is computed from the census, not fixed.
 ONSET_BUDGET = 40.0
 HOLD_SECS = 5.0
 MAX_MARGIN = 10.0
+# Trigger slack: the harness touches the trigger ~15-20s after gate start
+# (QGA roundtrips). Without it the onset budget races the max cap and
+# silent draws close as max-total by 1s — same outcome, wrong reason.
+TRIGGER_SLACK = 25.0
 ONSET_PEAK_TH = 0.05
+
+# Structural stopwords for token-overlap matching (command verbs excluded:
+# they collide across every command; matching runs on content words).
+_STOPWORDS = frozenset(
+    "i you he she it we they me him her us them my your his its our their "
+    "the a an to do does did is are was were be been and or but on in at "
+    "of for with from that this so no yes not can could what how why when "
+    "where there here".split())
+
+
+def content_tokens(text: str) -> set[str]:
+    return {w for w in normalize(text).split() if w not in _STOPWORDS}
+
+
+def say_overlap(text: str, refs: set[str], min_common: int = 3) -> bool:
+    """Variant matching: whisper garbles exact wording but preserves
+    content words. Quorum of shared content tokens (single-token
+    collisions cannot pass)."""
+    t = content_tokens(text)
+    if not t:
+        return False
+    return any(len(t & content_tokens(r)) >= min_common for r in refs)
 
 
 def gate_config_for(largest_member_secs: float, onset: float = ONSET_BUDGET,
                     hold: float = HOLD_SECS,
-                    margin: float = MAX_MARGIN) -> dict:
-    """Census-computed gate window: onset + longest member + hold + margin."""
+                    margin: float = MAX_MARGIN,
+                    slack: float = TRIGGER_SLACK) -> dict:
+    """Census-computed gate window: onset + longest member + hold +
+    margin + trigger slack (see TRIGGER_SLACK)."""
     return {"onset_budget": onset, "hold": hold,
-            "max_total": onset + largest_member_secs + hold + margin}
+            "max_total": onset + largest_member_secs + hold + margin + slack}
 
 
 def draw_expectation(nbytes: int) -> str:
@@ -69,8 +97,15 @@ def check_gate_report(status: dict, raw_bytes: int, raw_peak: float,
     the raw is the effect."""
     bad = []
     why = status.get("closed_why")
-    if why not in ("no-onset", "baseline-held", "max-total", "no-trigger"):
+    if why not in ("no-onset", "baseline-held", "max-total", "no-trigger",
+                   "no-flow"):
         bad.append(f"unknown close reason {why!r}")
+    if why == "no-flow":
+        # Instrument failure, never a verdict: harness fails loud and
+        # retries. The checker accepts the shape; the driver owns the rest.
+        if raw_bytes > 32000:
+            bad.append("no-flow claim with substantial raw present")
+        return bad
     if raw_bytes <= 0:
         bad.append("raw missing or empty")
     if why == "no-onset" and raw_peak >= thr:
@@ -113,15 +148,23 @@ def needs_redraw(draw_bytes: int, bus_peak: float,
 
 def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
                       second_text: str = "",
+                      second_regions: list[tuple[float, float]] | None = None,
                       thr: float = ONSET_PEAK_TH) -> tuple[str, str]:
     """Terminal rule for the same-session re-draw. First-silent +
     redraw-audible = member-matched-with-redraw (and the redraw event is
     fate-distribution data). Both silent on a small member escalates to
     systematic suspicion: random GC death rarely strikes twice — hand to
-    the fresh-session probes, confirmatory, not outlier-hunting."""
+    the fresh-session probes, confirmatory, not outlier-hunting.
+    Fragment rule applies to redraws too (confabulation risk is
+    path-independent): all-fragment redraw regions are inconclusive."""
+    if second_regions and all(is_fragment(b - a) for a, b in second_regions):
+        return FRAGMENT_INCONCLUSIVE, \
+            "re-draw regions all under %.1fs" % FRAGMENT_MIN_SECS
     if second_peak >= thr:
         if second_text and say_membership(second_text, refs):
             return MEMBER_MATCHED, "matched on re-draw; redraw is fate data"
+        if second_text and say_overlap(second_text, refs):
+            return MEMBER_MATCHED, "variant-matched on re-draw"
         return OBSERVE_RECORD, "audible re-draw outside refs: record it"
     return OBSERVE_RECORD, \
         "silent twice on audible-expected member: systematic suspicion, " \
@@ -131,10 +174,17 @@ def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
 def adjudicate_say(draw_bytes: int, bus_peak: float,
                    regions: list[tuple[float, float, str]],
                    refs: set[str], known_bug: bool = False,
+                   draw_audio: str | None = None,
+                   member_audio: str | None = None,
                    thr: float = ONSET_PEAK_TH) -> tuple[str, str]:
     """One dispatch -> (bucket, detail). regions: (start_s, end_s, text)
     hot spans from the gated window; refs: this draw's pool-member
-    reference set (caller-supplied)."""
+    reference set (caller-supplied). draw_audio/member_audio identify the
+    log-named draw vs the script-named member for the draw-prior match:
+    the identified file playing audibly IS the primary evidence (the log
+    identifies, the bus verifies); a shared content token corroborates
+    against whisper variance. Fragments never reach this clause (gated
+    above), so confabulations cannot ride it."""
     if known_bug:
         return KNOWN_BUG, "confirmed misroute entry: holds across sessions"
     if not regions and bus_peak < thr:
@@ -152,6 +202,14 @@ def adjudicate_say(draw_bytes: int, bus_peak: float,
     for _, _, text in solid:
         if say_membership(text, refs):
             return MEMBER_MATCHED, "transcript in reference set"
+    for _, _, text in solid:
+        if say_overlap(text, refs):
+            return MEMBER_MATCHED, "variant match: content-token quorum"
+    if (draw_audio and member_audio and draw_audio == member_audio
+            and any(content_tokens(t) & content_tokens(r)
+                    for _, _, t in solid for r in refs)):
+        return MEMBER_MATCHED, \
+            "draw-prior match: identified file audible, shared content"
     if draw_expectation(draw_bytes) == "gap":
         return OBSERVE_RECORD, "audible gap draw: cap-bracketing datum"
     return OBSERVE_RECORD, "audible draw outside reference set: record it"
