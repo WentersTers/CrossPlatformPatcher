@@ -31,6 +31,7 @@ MAX_TOTAL = float(sys.argv[5]) if len(sys.argv) > 5 else 90.0
 RAW = "/tmp/rb-%s.raw" % TAG
 TRIG = "/tmp/go-%s" % TAG
 STAT = "/tmp/gate-%s.json" % TAG
+FLOW = "/tmp/flow-%s" % TAG
 THR = 0.05
 POLL = 0.5
 
@@ -60,7 +61,23 @@ def done(why, onset=None, end=None, hot=()):
 rec = subprocess.Popen(["parec", "--device=%s.monitor" % BUS, "--rate=16000",
                         "--channels=1", "--format=s16le", RAW])
 t0 = time.monotonic()
+# Flow-confirm with own timeout (fail loud: instrument failure is never
+# a verdict). The onset budget starts at flow-confirm, so monitor-connect
+# latency is absorbed into budget rather than lost audio. Without this,
+# fast onsets (dispatch-during-injection) fall in the blind window and
+# read as clean no-onset closes the trust checks cannot see.
 try:
+    ft0 = time.monotonic()
+    while time.monotonic() - ft0 < 10.0:
+        try:
+            if os.path.getsize(RAW) > 64000:
+                break
+        except OSError:
+            pass
+        time.sleep(POLL)
+    else:
+        done(rec, "no-flow")
+    open(FLOW, "w").write("flow")
     while time.monotonic() - t0 < 120:
         if os.path.exists(TRIG):
             break
