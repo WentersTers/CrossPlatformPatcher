@@ -24,6 +24,20 @@ def to_absolute(x: int, y: int) -> tuple[int, int]:
     return ax, ay
 
 
+def _default_runner(cmd: list[str]) -> str:
+    """Real runner: loud on transport failure (§8 — a dead monitor command
+    must raise, never return empty output for the ledger to ack). Custom
+    injected runners keep the str-returning contract; they should raise
+    on failure the same way."""
+    import subprocess
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        from harness.vms.pool import LibvirtConnectionError
+        raise LibvirtConnectionError(
+            f"qemu-monitor-command failed: {p.stderr.strip()[:200]}")
+    return p.stdout
+
+
 @dataclass
 class QmpTransport:
     """Sends input events. runner(cmd: list[str]) -> str injects fakes.
@@ -48,11 +62,21 @@ class QmpTransport:
         return (self.time_fn or _t.monotonic)()
 
     def _run(self, payload: str) -> tuple[str, float]:
+        if self.argv_prefix is not None and self.argv_prefix[:1] == ["ssh"]:
+            # ssh-hop: the local ssh joins argv with spaces and the remote
+            # shell word-splits, eating the JSON quotes (quote-eating
+            # family, 3rd member: QGA --cmd, virsh-argv, now QMP-monitor —
+            # every pointer event over the hop died in libvirt's JSON
+            # parser while ledgers acked). Quote the --cmd payload into ONE
+            # element. Local path passes argv lists straight to subprocess
+            # (no shell), where quoting would corrupt the payload — hence
+            # conditional on the hop, never blanket.
+            import shlex
+            payload = shlex.quote(payload)
         cmd = (list(self.argv_prefix) if self.argv_prefix is not None
                else ["virsh", "-c", self.uri]) + \
             ["qemu-monitor-command", self.domain, "--cmd", payload]
-        run = self.runner or (lambda c: subprocess.run(
-            c, capture_output=True, text=True, timeout=60).stdout)
+        run = self.runner or _default_runner
         t0, out = self._now(), run(cmd)
         return out, self._now() - t0
 
