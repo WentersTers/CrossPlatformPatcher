@@ -97,6 +97,15 @@ def test_redraw_fragment_is_inconclusive():
     assert b == vg.FRAGMENT_INCONCLUSIVE
 
 
+def test_redraw_draw_prior_match():
+    refs = {"dont be stressed here we fucking go"}
+    b, d = vg.adjudicate_redraw(0.0, 0.33, refs, "Three straps. Here we go.",
+                                second_regions=[(24.0, 26.0)],
+                                draw_audio="tourist.wav",
+                                member_audio="tourist.wav")
+    assert b == vg.MEMBER_MATCHED and "draw-prior" in d
+
+
 def test_overlap_variant_match():
     refs = {"before i shut down i want to ask you did you ever hear"}
     assert vg.say_overlap("Before I shut down, I must ask you.", refs)
@@ -135,6 +144,23 @@ def test_pre_trigger_pop_is_not_a_gate_lie():
           "hot_regions": [], "trigger_offset_s": 26.6,
           "pre_hot": [[25.7, 25.9]], "post_peak": 0.0}
     assert vg.check_gate_report(st, 2130924, 0.0) == []
+
+
+def test_pre_hot_corroboration_exempts_abort():
+    # q-93: raw blip covered (lag-shifted) by the gate's own pre_hot.
+    st = {"closed_why": "no-onset", "onset_s": None, "end_s": 40.06,
+          "hot_regions": [], "trigger_offset_s": 27.04,
+          "pre_hot": [[26.04, 26.54]], "post_peak": 0.0}
+    assert vg.check_gate_report(st, 2033800, 0.255, [[24.0, 25.0]]) == []
+
+
+def test_uncorroborated_raw_audio_aborts():
+    # q-35 (old gate, no pre-trigger memory): blip with no corroboration.
+    st = {"closed_why": "no-onset", "onset_s": None, "end_s": 40.06,
+          "hot_regions": [], "trigger_offset_s": 26.6,
+          "pre_hot": [], "post_peak": 0.0}
+    bad = vg.check_gate_report(st, 2058576, 0.2561, [[25.0, 26.0]])
+    assert any("never saw" in v for v in bad)
 
 
 def test_post_trigger_audio_still_caught():
