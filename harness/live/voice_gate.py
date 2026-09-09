@@ -90,11 +90,19 @@ def draw_expectation(nbytes: int) -> str:
 
 
 def check_gate_report(status: dict, raw_bytes: int, raw_peak: float,
+                      raw_hot: list | None = None,
                       thr: float = ONSET_PEAK_TH) -> list[str]:
     """Trust treatment for the gate's self-report: cross-check the status
     JSON against its raw before any verdict is issued from it. Returns
     violations (empty = trusted). The report is an acknowledgment;
-    the raw is the effect."""
+    the raw is the effect.
+
+    With raw_hot (hot spans measured from the pulled raw: pull-then-check),
+    consistency is two-sided but lag-tolerant: parec trails wall-clock by
+    seconds under load, so positions are never compared, only existence.
+    gate-hot + raw-hot = trusted (lag explains any shift); either side
+    claiming alone is a violation that fails loud into forensics.
+    Without raw_hot, falls back to peak comparison (weaker: misses lag)."""
     bad = []
     why = status.get("closed_why")
     if why not in ("no-onset", "baseline-held", "max-total", "no-trigger",
@@ -108,6 +116,16 @@ def check_gate_report(status: dict, raw_bytes: int, raw_peak: float,
         return bad
     if raw_bytes <= 0:
         bad.append("raw missing or empty")
+    gate_hot = bool(status.get("hot_regions"))
+    if raw_hot is not None:
+        raw_has = len(raw_hot) > 0
+        if why == "no-onset" and raw_has:
+            bad.append("audio the gate never saw: pull forensics, then judge")
+        if why in ("baseline-held", "max-total") and gate_hot and not raw_has:
+            bad.append("claims response but raw is silent")
+        if why == "baseline-held" and not gate_hot:
+            bad.append("held close without hot regions")
+        return bad
     if why == "no-onset" and raw_peak >= thr:
         bad.append(f"claims silence but raw peaks at {raw_peak}")
     if why == "baseline-held" and not status.get("hot_regions"):

@@ -2,19 +2,22 @@
 
 Delivered to /tmp/gateplay.py and run under the guest python3; kept
 in-repo so the instrument is versioned with its rules (voice_gate.py).
-GATEPLAY_SOURCE is byte-identical in behavior to the build exercised
-live (mini-smoke: 5 no-onset + 1 baseline-held closes, every raw
-cross-checked against its status before any verdict).
+GATEPLAY_SOURCE tracks the exercised build; behavior changes are
+re-exercised before formal use (mini-smoke, block runs).
 
 Protocol (harness side):
   1. start:  python3 /tmp/gateplay.py ResponseBus <tag> [onset [hold [max]]]
      (begins recording immediately; budgets from gate_config_for)
-  2. inject, then: touch /tmp/go-<tag>
-  3. poll /tmp/gate-<tag>.json until present (status: closed_why, onset_s,
-     end_s, hot_regions); the gate kills its own parec on close.
-  4. check_gate_report(status, raw stat) BEFORE any verdict from it.
-Close reasons: no-trigger | no-onset (expected-silence path: silent
-draws close the window instead of hanging it) | baseline-held | max-total.
+  2. wait for /tmp/flow-<tag> (capture flowing; fail loud + retry on timeout)
+  3. inject, then: touch /tmp/go-<tag>
+  4. poll /tmp/gate-<tag>.json until present, then check_gate_report
+     against the raw before any verdict from it.
+Close reasons: no-flow | no-trigger | no-onset (expected-silence path:
+silent draws close the window instead of hanging it) | baseline-held |
+max-total. Statuses also carry trigger_offset_s, pre_hot (pre-trigger
+peaks the onset budget cannot see: fast dispatch-during-injection
+responses and device-open pops), and post_peak (peak over the
+post-trigger portion only: the silence claim's actual subject).
 """
 GATEPLAY_SOURCE = '''\
 import audioop
@@ -35,6 +38,10 @@ FLOW = "/tmp/flow-%s" % TAG
 THR = 0.05
 POLL = 0.5
 
+_t0 = None
+_off = 0.0
+_pre = []
+
 
 def peak_last(path, secs=1.0):
     try:
@@ -51,9 +58,38 @@ def peak_last(path, secs=1.0):
     return audioop.max(d, 2) / 32768.0
 
 
-def done(why, onset=None, end=None, hot=()):
+def peak_from(path, start_byte):
+    try:
+        d = open(path, "rb").read()[start_byte:]
+    except OSError:
+        return 0.0
+    if len(d) < 2:
+        return 0.0
+    m = 0.0
+    for o in range(0, len(d) - 1600, 1600):
+        m = max(m, audioop.max(d[o:o + 1600], 2) / 32768.0)
+    return round(m, 4)
+
+
+def done(rec, why, onset=None, end=None, hot=()):
+    try:
+        post = peak_from(RAW, int(_off * 32000))
+    except Exception:
+        post = -1.0
+    try:
+        rec.terminate()
+    except Exception:
+        pass
+    try:
+        rec.wait(timeout=3)
+    except Exception:
+        try:
+            rec.kill()
+        except Exception:
+            pass
     json.dump({"tag": TAG, "closed_why": why, "onset_s": onset, "end_s": end,
-               "hot_regions": hot},
+               "hot_regions": hot, "trigger_offset_s": round(_off, 2),
+               "pre_hot": _pre, "post_peak": post},
               open(STAT, "w"))
     sys.exit(0)
 
@@ -61,11 +97,7 @@ def done(why, onset=None, end=None, hot=()):
 rec = subprocess.Popen(["parec", "--device=%s.monitor" % BUS, "--rate=16000",
                         "--channels=1", "--format=s16le", RAW])
 t0 = time.monotonic()
-# Flow-confirm with own timeout (fail loud: instrument failure is never
-# a verdict). The onset budget starts at flow-confirm, so monitor-connect
-# latency is absorbed into budget rather than lost audio. Without this,
-# fast onsets (dispatch-during-injection) fall in the blind window and
-# read as clean no-onset closes the trust checks cannot see.
+_t0 = t0
 try:
     ft0 = time.monotonic()
     while time.monotonic() - ft0 < 10.0:
@@ -81,10 +113,18 @@ try:
     while time.monotonic() - t0 < 120:
         if os.path.exists(TRIG):
             break
+        p = peak_last(RAW, 0.5)
+        now0 = time.monotonic() - t0
+        if p > THR:
+            if _pre and now0 - _pre[-1][1] <= 1.0:
+                _pre[-1][1] = round(now0, 2)
+            else:
+                _pre.append([round(now0, 2), round(now0, 2)])
         time.sleep(POLL)
     else:
-        done("no-trigger")
+        done(rec, "no-trigger")
     tg = time.monotonic()
+    _off = tg - t0
     onset = None
     hot, cur = [], None
     quiet_since = None
@@ -106,15 +146,19 @@ try:
                     hot.append(cur)
                     cur = None
         if onset is None and now > ONSET_BUDGET:
-            done("no-onset", onset=None, end=round(now, 2), hot=[])
+            done(rec, "no-onset", onset=None, end=round(now, 2), hot=[])
         if onset is not None and quiet_since is not None and \\
                 time.monotonic() - quiet_since >= HOLD:
-            done("baseline-held", onset=onset,
+            done(rec, "baseline-held", onset=onset,
                  end=round(time.monotonic() - tg, 2), hot=hot)
         time.sleep(POLL)
     if cur is not None:
         hot.append(cur)
-    done("max-total", onset=onset, end=round(time.monotonic() - tg, 2), hot=hot)
+    done(rec, "max-total", onset=onset, end=round(time.monotonic() - tg, 2),
+         hot=hot)
 finally:
-    rec.terminate()
+    try:
+        rec.terminate()
+    except Exception:
+        pass
 '''
