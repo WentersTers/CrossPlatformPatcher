@@ -128,6 +128,39 @@ def test_no_flow_is_instrument_failure_shape():
     assert vg.check_gate_report(st, 100000, 0.0) != []
 
 
+def test_pre_trigger_pop_is_not_a_gate_lie():
+    # device-open pop before the trigger, clean silence after: the gate
+    # reports what it saw; the checker judges the post-trigger claim only.
+    st = {"closed_why": "no-onset", "onset_s": None, "end_s": 40.06,
+          "hot_regions": [], "trigger_offset_s": 26.6,
+          "pre_hot": [[25.7, 25.9]], "post_peak": 0.0}
+    assert vg.check_gate_report(st, 2130924, 0.0) == []
+
+
+def test_post_trigger_audio_still_caught():
+    st = {"closed_why": "no-onset", "onset_s": None, "end_s": 40.06,
+          "hot_regions": [], "trigger_offset_s": 18.0,
+          "pre_hot": [], "post_peak": 0.2561}
+    bad = vg.check_gate_report(st, 2130924, 0.2561)
+    assert any("silence" in v for v in bad)
+
+
+def test_lag_shifted_hot_is_trusted():
+    # gate saw audio at its clock, raw shows it shifted: lag explains,
+    # existence agrees -> trusted.
+    st = {"closed_why": "baseline-held", "onset_s": 0.0, "end_s": 8.01,
+          "hot_regions": [[0.0, 2.5]], "trigger_offset_s": 27.05,
+          "pre_hot": [[26.55, 26.55]], "post_peak": 0.0}
+    assert vg.check_gate_report(st, 1020654, 0.43, [[24.0, 25.0]]) == []
+
+
+def test_hallucinated_hot_is_caught():
+    st = {"closed_why": "baseline-held", "onset_s": 0.0, "end_s": 8.01,
+          "hot_regions": [[0.0, 2.5]]}
+    bad = vg.check_gate_report(st, 1020654, 0.0, [])
+    assert any("silent" in v for v in bad)
+
+
 def test_gateplay_source_exercised_shape():
     assert "parec" in GATEPLAY_SOURCE and "no-onset" in GATEPLAY_SOURCE
     assert "baseline-held" in GATEPLAY_SOURCE and "max-total" in GATEPLAY_SOURCE
