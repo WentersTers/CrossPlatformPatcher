@@ -120,6 +120,18 @@ def check_gate_report(status: dict, raw_bytes: int, raw_peak: float,
     if raw_hot is not None:
         raw_has = len(raw_hot) > 0
         if why == "no-onset" and raw_has:
+            # Pre-trigger corroboration: the gate's clock trails the file
+            # clock by connect lag (0.5-5s observed), so a raw span [a,b]
+            # is covered by a pre-trigger span [c,d] when the lag-shifted
+            # interval overlaps it. Covered = seen (transient class);
+            # uncovered = genuinely unobserved (forensics).
+            pre = status.get("pre_hot") or []
+
+            def _covered(a, b):
+                return any(not (b + 5.0 < c or a + 0.5 > d) for c, d in pre)
+
+            if all(_covered(a, b) for a, b in raw_hot):
+                return bad
             bad.append("audio the gate never saw: pull forensics, then judge")
         if why in ("baseline-held", "max-total") and gate_hot and not raw_has:
             bad.append("claims response but raw is silent")
@@ -167,6 +179,8 @@ def needs_redraw(draw_bytes: int, bus_peak: float,
 def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
                       second_text: str = "",
                       second_regions: list[tuple[float, float]] | None = None,
+                      draw_audio: str | None = None,
+                      member_audio: str | None = None,
                       thr: float = ONSET_PEAK_TH) -> tuple[str, str]:
     """Terminal rule for the same-session re-draw. First-silent +
     redraw-audible = member-matched-with-redraw (and the redraw event is
@@ -174,7 +188,9 @@ def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
     systematic suspicion: random GC death rarely strikes twice — hand to
     the fresh-session probes, confirmatory, not outlier-hunting.
     Fragment rule applies to redraws too (confabulation risk is
-    path-independent): all-fragment redraw regions are inconclusive."""
+    path-independent): all-fragment redraw regions are inconclusive.
+    Draw-prior applies here as in adjudicate_say (same-file + shared
+    token corroborates against whisper variance)."""
     if second_regions and all(is_fragment(b - a) for a, b in second_regions):
         return FRAGMENT_INCONCLUSIVE, \
             "re-draw regions all under %.1fs" % FRAGMENT_MIN_SECS
@@ -183,6 +199,11 @@ def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
             return MEMBER_MATCHED, "matched on re-draw; redraw is fate data"
         if second_text and say_overlap(second_text, refs):
             return MEMBER_MATCHED, "variant-matched on re-draw"
+        if (second_text and draw_audio and member_audio
+                and draw_audio == member_audio
+                and content_tokens(second_text) & set().union(
+                    *(content_tokens(r) for r in refs))):
+            return MEMBER_MATCHED, "draw-prior match on re-draw"
         return OBSERVE_RECORD, "audible re-draw outside refs: record it"
     return OBSERVE_RECORD, \
         "silent twice on audible-expected member: systematic suspicion, " \
