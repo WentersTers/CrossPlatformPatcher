@@ -4437,13 +4437,23 @@ public static class OpenWakeWordHelper
                 return;
             }
 
-            // Call Play() method
+            // Root the player for the playback's duration: PlaySync blocks
+            // until done, so the instance and its buffer stay reachable and
+            // wine/mono GC cannot collect mid-playback (unrooted async Play
+            // died silently under collection pressure; paired A/B validated
+            // the fix, contention review cleared co-residency). Off-thread so
+            // the animation sequence stays unblocked.
             var playMethod = soundPlayerType.GetMethod("Play");
             if (playMethod != null)
             {
                 try
                 {
-                    playMethod.Invoke(player, null);
+                    var playSyncMethod = soundPlayerType.GetMethod("PlaySync");
+                    var blocking = playSyncMethod ?? playMethod;
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try { blocking.Invoke(player, null); } catch { }
+                    });
                     LogEvent($"[animation-script-action] Audio playing: {audioFile}");
                 }
                 catch (Exception ex)
