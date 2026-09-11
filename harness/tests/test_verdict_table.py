@@ -10,7 +10,7 @@ import pytest
 from harness.live.verdict_table import build_table
 
 FIRSTS = [
-    {"idx": 0, "do": "misroute", "bucket": "known-bug", "audio": "joke.wav",
+    {"idx": 0, "do": "misroute", "bucket": "known-bug", "audio": "klaxon.wav",
      "peak": 0.0, "detail": "x"},
     {"idx": 1, "do": "resolved", "bucket": "member-matched", "audio": "a.wav",
      "peak": 0.5, "detail": "x"},

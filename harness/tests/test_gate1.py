@@ -8,8 +8,8 @@ def _base_step():
             "env": {"PAICOM_MIGRATION_MODE": "full",
                     "PAICOM_RUNTIME_VERIFIED_64BIT": "1"},
             "libs": [NativeLibInfo("libvosk.so", True, True, True)],
-            "ref_transcript": "Hey PAIcom, open the browser",
-            "hyp_transcript": "hey paicom open the browser"}
+            "ref_transcript": "Hey Demo, open the test page",
+            "hyp_transcript": "hey demo open the test page"}
 
 
 def test_gate1_pass():
@@ -40,5 +40,5 @@ def test_gate1_first_boot_ldd_and_warm_cache_pair():
 def test_gate1_transcript_tolerance():
     ok, wer = transcript_match("Hello, World!", "hello world")
     assert ok and wer == 0.0
-    ok2, wer2 = transcript_match("open the browser please", "close the window now")
+    ok2, wer2 = transcript_match("open the test page please", "close the ledger now")
     assert not ok2 and wer2 > 0.2

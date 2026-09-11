@@ -22,7 +22,7 @@ def test_gate2_pass_with_sidecar_threshold():
     golden = _img(128)
     actual = _img(130)  # tiny rendering difference (Win font smoothing style)
     r = evaluate(actual, golden, {"ssim_threshold": 0.90},
-                 ocr_func=lambda roi: "Opening the browser",
+                  ocr_func=lambda roi: "Opening the test page",
                  active_window_roi=None, expected_text="Opening")
     assert r.passed, r.failures
     assert r.evidence["ssim"] >= 0.90
@@ -41,7 +41,7 @@ def test_gate2_ocr_forbidden_only_in_active_window():
     golden = _img(128)
     # forbidden text present but OCR is scoped to roi crop: fake ocr ignores background
     def ocr_scoped(roi):
-        return "Opening the browser"  # background log viewer errors excluded by scoping
+        return "Opening the test page"  # background log viewer errors excluded by scoping
     r = evaluate(golden, golden, {}, ocr_func=ocr_scoped,
                  active_window_roi=(0, 0, 32, 32), expected_text="Opening")
     assert r.passed, r.failures
