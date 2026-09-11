@@ -157,9 +157,15 @@ class _VirshSession:
                 f"({self._label()}): {err.strip()[:300]}")
         return out.strip()
 
-    def snapshot_create(self, domain: str, snapshot: str) -> str:
+    def snapshot_create(self, domain: str, snapshot: str,
+                        disk: str = "vda") -> str:
+        """Create a snapshot addressing the target disk explicitly. The bare
+        multi-device form fails on single-disk domains with 'too many disk
+        snapshot requests' (observed live); the explicit diskspec works.
+        Proven: create+delete round-trip on ubuntu-2204-stage."""
         rc, out, err = self._runner(
-            self._argv("snapshot-create-as", domain, snapshot))
+            self._argv("snapshot-create-as", domain, snapshot,
+                       "--diskspec", f"{disk},snapshot=internal"))
         if rc != 0:
             raise LibvirtConnectionError(
                 f"virsh snapshot-create failed for {domain!r}@{snapshot!r} "
