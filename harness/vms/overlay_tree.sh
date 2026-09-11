@@ -15,7 +15,7 @@
 #   responses, TestMic.monitor carries injections. See run.sh and the
 #   bring-up sequence, not this script, for launch details.
 #
-# Usage: overlay_tree.sh /tmp/fresh-base /home/sage/paicom/patched
+# Usage: overlay_tree.sh SRC DST (e.g. /tmp/fresh-base /srv/paicom/installed-tree)
 set -euo pipefail
 SRC="${1:?usage: overlay_tree.sh SRC DST}"
 DST="${2:?usage: overlay_tree.sh SRC DST}"
