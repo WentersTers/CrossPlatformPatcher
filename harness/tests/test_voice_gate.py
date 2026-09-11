@@ -190,14 +190,14 @@ def test_hallucinated_hot_is_caught():
 def test_dispatch_outcome_first_final_wins_over_retry_fails():
     lines = [
         "[oww] [oww-dispatch-final] Result: SUCCESS - Command executed: [ui-simulation] x",
-        "[oww] [oww-command] Resolved action: MatchPhrase='lets play five nights at paicoms', Token='fnap'",
+        "[oww] [oww-command] Resolved action: MatchPhrase='test command alpha', Token='alpha'",
         "[oww] [oww-dispatch-final] Result: FAILED - No dispatcher could execute the command.",
         "[oww] [oww-dispatch-final] Result: FAILED - No dispatcher could execute the command.",
     ]
     d = vg.dispatch_outcome(lines)
     assert d["verdict"] == "success"
     assert d["refires"] == 2
-    assert d["resolved"] == ["lets play five nights at paicoms"]
+    assert d["resolved"] == ["test command alpha"]
 
 
 def test_dispatch_outcome_none_without_final():
