@@ -45,6 +45,27 @@ public sealed class CorFlagsRewriterTests
     }
 
     [Fact]
+    public void TryReadCliFlags_Returns_Flags_On_Real_Managed_Assembly()
+    {
+        var pe = LoadRealManagedAssemblyBytes();
+
+        Assert.True(CorFlagsRewriter.TryReadCliFlags(pe, out var flags, out var error));
+        Assert.Null(error);
+        // Any real managed assembly carries ILONLY; the value itself is data.
+        Assert.NotEqual(0u, flags & 0x00000001u);
+    }
+
+    [Fact]
+    public void TryReadCliFlags_On_Non_Pe_Buffer_Returns_False_With_Error()
+    {
+        var garbage = new byte[512];
+
+        Assert.False(CorFlagsRewriter.TryReadCliFlags(garbage, out var flags, out var error));
+        Assert.Equal(0u, flags);
+        Assert.False(string.IsNullOrEmpty(error));
+    }
+
+    [Fact]
     public void TryGetCliFlagsOffset_On_Non_Pe_Buffer_Returns_False_With_Error()
     {
         var garbage = new byte[512];
