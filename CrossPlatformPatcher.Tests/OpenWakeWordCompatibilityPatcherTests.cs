@@ -690,6 +690,12 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
     public void Skips_WinForms_Methods_That_Only_Look_Audio_Related_In_Body()
     {
         // Arrange
+        // NOTE: the fake payload class must NOT be named like a real audio
+        // type: IsAudioRelatedMethod intentionally matches field/method
+        // operands by type name (obfuscated builds hide everything else),
+        // so an audio-named fixture would hook for the right reason.
+        // Over-hooking is the safe direction for a compat shim (missed real
+        // audio paths lose the product; extra hooks dedup as no-ops).
         using var temp = new TempDirectory();
         var source = """
             using System;
@@ -700,9 +706,12 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
                 public class Button { }
             }
 
-            public class WaveInEventArgs
+            public class SignalPayloadEventArgs
             {
-                public byte[] Buffer { get; set; } = Array.Empty<byte>();
+                // Get-only on purpose: a byte[] setter is hook-eligible by
+                // design (signature-driven rule for obfuscated builds), and
+                // this test is about UI-control methods, not setters.
+                public byte[] Buffer { get; } = Array.Empty<byte>();
                 public int BytesRecorded { get; set; }
             }
 
@@ -710,7 +719,7 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
             {
                 public static void OnStartup(System.Windows.Forms.TextBox textBox, System.Windows.Forms.Button button)
                 {
-                    var audio = new WaveInEventArgs();
+                    var audio = new SignalPayloadEventArgs();
                     Console.WriteLine(audio.BytesRecorded);
                 }
             }
