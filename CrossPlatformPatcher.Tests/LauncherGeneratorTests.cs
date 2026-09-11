@@ -178,6 +178,10 @@ public sealed class LauncherGeneratorTests
         
         // Assert - Probe CorFlags flag is correctly embedded (replaced with 0 or 1)
         Assert.Contains("PROBE_CORFLAGS_APPLIED=\"1\"", runShContent, StringComparison.Ordinal);
+
+        // Assert - Baked PE flags default to unknown when the caller has none
+        Assert.Contains("BAKED_EXE_CORFLAGS=\"unknown\"", runShContent, StringComparison.Ordinal);
+        Assert.Contains("BAKED_EXE_32BIT=\"unknown\"", runShContent, StringComparison.Ordinal);
         
         // Assert - Setup documentation files exist
         var setupLinuxPath = Path.Combine(outputDir, "SETUP_LINUX.md");
@@ -185,6 +189,26 @@ public sealed class LauncherGeneratorTests
         
         var setupMacPath = Path.Combine(outputDir, "SETUP_MAC.md");
         Assert.True(File.Exists(setupMacPath), "SETUP_MAC.md should be created");
+    }
+
+    [Fact]
+    public void Bakes_Measured_Cli_Flags_And_Bitness_Agreement_Check()
+    {
+        // Arrange: migrated image (ILONLY only) and unmigrated image.
+        using var temp = new TempDirectory();
+        using var temp2 = new TempDirectory();
+        LauncherGenerator.WriteAll(temp.Path, "Mig.exe", MigrationMode.Full, "x86", true, 0x00000001u);
+        LauncherGenerator.WriteAll(temp2.Path, "Unmig.exe", MigrationMode.Stable, "x86", false, 0x00020003u);
+
+        // Assert - measured flags baked, not asserted
+        var mig = File.ReadAllText(Path.Combine(temp.Path, "run.sh"));
+        Assert.Contains("BAKED_EXE_CORFLAGS=\"0x00000001\"", mig, StringComparison.Ordinal);
+        Assert.Contains("BAKED_EXE_32BIT=\"0\"", mig, StringComparison.Ordinal);
+        Assert.Contains("arch.bitness_mismatch=true", mig, StringComparison.Ordinal);
+        Assert.Contains("reason.code=PROBE_STILL_32BIT", mig, StringComparison.Ordinal);
+        var unmig = File.ReadAllText(Path.Combine(temp2.Path, "run.sh"));
+        Assert.Contains("BAKED_EXE_CORFLAGS=\"0x00020003\"", unmig, StringComparison.Ordinal);
+        Assert.Contains("BAKED_EXE_32BIT=\"1\"", unmig, StringComparison.Ordinal);
     }
 
     [Fact]

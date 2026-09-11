@@ -27,11 +27,11 @@ public static class LauncherGenerator
     internal static string ToUnixLineEndings(string content) =>
         content.Replace("\r\n", "\n");
 
-    public static void WriteAll(string outputDir, string exeFileName, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied)
+    public static void WriteAll(string outputDir, string exeFileName, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied, uint? bakedExeCorFlags = null)
     {
         Directory.CreateDirectory(outputDir);
 
-        WriteRunSh(outputDir, exeFileName, migrationMode, targetPeMachine, probeCorFlagsApplied);
+        WriteRunSh(outputDir, exeFileName, migrationMode, targetPeMachine, probeCorFlagsApplied, bakedExeCorFlags);
         WriteLaunchCommand(outputDir);
         WriteSetupWizardSh(outputDir, exeFileName, migrationMode, targetPeMachine);
         WriteSetupCommand(outputDir);
@@ -44,9 +44,12 @@ public static class LauncherGenerator
 
     // ── run.sh ────────────────────────────────────────────────────────────
 
-    private static void WriteRunSh(string dir, string exe, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied)
+    private static void WriteRunSh(string dir, string exe, MigrationMode migrationMode, string targetPeMachine, bool probeCorFlagsApplied, uint? bakedExeCorFlags = null)
     {
         var path = Path.Combine(dir, "run.sh");
+        var bakedHex = bakedExeCorFlags.HasValue ? $"0x{bakedExeCorFlags.Value:X8}" : "unknown";
+        var baked32 = !bakedExeCorFlags.HasValue ? "unknown"
+            : ((bakedExeCorFlags.Value & 0x00000002u) != 0 || (bakedExeCorFlags.Value & 0x00020000u) != 0) ? "1" : "0";
         var content = """
             #!/usr/bin/env sh
             # PAIcom Launcher - Linux / macOS
@@ -63,6 +66,8 @@ public static class LauncherGenerator
             DEFAULT_MIGRATION_MODE="__MIGRATION_MODE__"
             TARGET_PE_MACHINE="__TARGET_PE_MACHINE__"
             PROBE_CORFLAGS_APPLIED="__PROBE_CORFLAGS_APPLIED__"
+            BAKED_EXE_CORFLAGS="__BAKED_EXE_CORFLAGS__"
+            BAKED_EXE_32BIT="__BAKED_EXE_32BIT__"
             if [ -z "$WHISKY_BOTTLE" ]; then
                 WHISKY_BOTTLE="PAIcom"
             fi
@@ -124,6 +129,13 @@ public static class LauncherGenerator
                 else
                     export PAICOM_RUNTIME_VERIFIED_64BIT=0
                     log "arch.process_probe_failed=true"
+                fi
+                # Baked-vs-probed agreement: the PE flags measured at patch
+                # time outrank the runtime echo. Baked-migrated but runtime
+                # 32-bit means the probe migration did not take at runtime.
+                if [ "$BAKED_EXE_32BIT" = "0" ] && [ "$PAICOM_RUNTIME_VERIFIED_64BIT" != "1" ]; then
+                    log "arch.bitness_mismatch=true (baked $BAKED_EXE_CORFLAGS, runtime 32-bit)"
+                    log "reason.code=PROBE_STILL_32BIT"
                 fi
             }
 
@@ -427,7 +439,9 @@ public static class LauncherGenerator
             .Replace("__EXE__", exe)
             .Replace("__MIGRATION_MODE__", MigrationModeParser.ToCliString(migrationMode))
             .Replace("__TARGET_PE_MACHINE__", targetPeMachine)
-            .Replace("__PROBE_CORFLAGS_APPLIED__", probeCorFlagsApplied ? "1" : "0");
+            .Replace("__PROBE_CORFLAGS_APPLIED__", probeCorFlagsApplied ? "1" : "0")
+            .Replace("__BAKED_EXE_CORFLAGS__", bakedHex)
+            .Replace("__BAKED_EXE_32BIT__", baked32);
 
         File.WriteAllText(path, ToUnixLineEndings(content), Utf8NoBom);
 

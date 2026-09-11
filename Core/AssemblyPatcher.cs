@@ -153,19 +153,6 @@ public class AssemblyPatcher
                 }
             }
 
-            // Write native library manifest for verification
-            NativeManifestWriter.Write(
-                Path.Combine(outputDir, "NATIVES_MANIFEST.txt"),
-                new NativeManifestData(
-                    result.TargetMachine ?? string.Empty,
-                    effectiveArchitecture,
-                    result.OnnxNativeResource,
-                    result.ProbeCorFlagsAttempted,
-                    result.ProbeCorFlagsApplied,
-                    result.ProbeCorFlagsReason,
-                    _migrationMode,
-                    result.ExtractedNativeLibraries));
-
             bool probeCorFlagsApplied = false;
             var finalOutputPath = outputPath;
             var stagedOutputPath = Path.Combine(outputDir, Path.GetFileName(outputPath) + ".staged");
@@ -212,10 +199,45 @@ public class AssemblyPatcher
 
             File.Move(stagedOutputPath, finalOutputPath);
 
+            // Manifest AFTER the probe: result.ProbeCorFlags* now carry what
+            // actually happened. Writing it earlier asserts defaults over an
+            // applied rewrite (observed live: Attempted/Applied False on a
+            // migrated binary). Effects over acknowledgments, in our own paperwork.
+            NativeManifestWriter.Write(
+                Path.Combine(outputDir, "NATIVES_MANIFEST.txt"),
+                new NativeManifestData(
+                    result.TargetMachine ?? string.Empty,
+                    effectiveArchitecture,
+                    result.OnnxNativeResource,
+                    result.ProbeCorFlagsAttempted,
+                    result.ProbeCorFlagsApplied,
+                    result.ProbeCorFlagsReason,
+                    _migrationMode,
+                    result.ExtractedNativeLibraries));
+
+            // Bake the ACTUAL post-patch CLI flags into the launchers so the
+            // runtime gate compares against measured bytes, not assumptions.
+            uint bakedExeCorFlags = 0;
+            var bakedFlagsKnown = false;
+            try
+            {
+                var finalBytes = File.ReadAllBytes(finalOutputPath);
+                if (CrossPlatformPatcher.PeImage.CorFlagsRewriter.TryReadCliFlags(
+                        finalBytes, out var readFlags, out _))
+                {
+                    bakedExeCorFlags = readFlags;
+                    bakedFlagsKnown = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Bitness bake: could not read final CLI flags: {ex.GetType().Name}; launchers ship unknown.");
+            }
+
             Log($"Compat build: Wrote PAIcom.OWW.dll and dependencies to output directory.");
 
             // Generate OS launcher scripts alongside the patched exe
-            LauncherGenerator.WriteAll(outputDir, Path.GetFileName(finalOutputPath), _migrationMode, peMachineLabel, probeCorFlagsApplied);
+            LauncherGenerator.WriteAll(outputDir, Path.GetFileName(finalOutputPath), _migrationMode, peMachineLabel, probeCorFlagsApplied, bakedFlagsKnown ? (uint?)bakedExeCorFlags : null);
         }
 
         return result;
