@@ -176,6 +176,38 @@ def needs_redraw(draw_bytes: int, bus_peak: float,
     return draw_expectation(draw_bytes) == "audible" and bus_peak < thr
 
 
+def dispatch_outcome(log_lines: list[str]) -> dict:
+    """Verdict-relevant dispatch outcome for one command window.
+
+    Vosk refires 2-3x per utterance; retries short-circuit past the first
+    two dispatchers and FAIL after the first SUCCESS, with the animation
+    running once. Rule: the FIRST dispatch-final Result is the verdict;
+    post-SUCCESS [3/4]-FAIL lines are the retry shape, not verdicts.
+    Returns {"verdict": "success"|"failed"|None, "refires": n,
+    "resolved": [match phrases in order]}. Refire count rides as channel
+    data (utterance-gap splitting rate is now a known observable).
+    """
+    finals = []
+    resolved = []
+    for line in log_lines:
+        low = line.lower()
+        if "dispatch-final" in low and "result:" in low:
+            if "success" in low:
+                finals.append("success")
+            elif "failed" in low:
+                finals.append("failed")
+        if "resolved action:" in low:
+            m = ""
+            if "MatchPhrase=" in line:
+                m = line.split("MatchPhrase=")[-1].split(",")[0].strip("'\" ")
+            if m:
+                resolved.append(m)
+    verdict = finals[0] if finals else None
+    refires = max(0, len(finals) - 1)
+    return {"verdict": verdict, "refires": refires, "resolved": resolved}
+    return draw_expectation(draw_bytes) == "audible" and bus_peak < thr
+
+
 def adjudicate_redraw(first_peak: float, second_peak: float, refs: set[str],
                       second_text: str = "",
                       second_regions: list[tuple[float, float]] | None = None,

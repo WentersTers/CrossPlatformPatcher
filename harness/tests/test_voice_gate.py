@@ -187,6 +187,24 @@ def test_hallucinated_hot_is_caught():
     assert any("silent" in v for v in bad)
 
 
+def test_dispatch_outcome_first_final_wins_over_retry_fails():
+    lines = [
+        "[oww] [oww-dispatch-final] Result: SUCCESS - Command executed: [ui-simulation] x",
+        "[oww] [oww-command] Resolved action: MatchPhrase='lets play five nights at paicoms', Token='fnap'",
+        "[oww] [oww-dispatch-final] Result: FAILED - No dispatcher could execute the command.",
+        "[oww] [oww-dispatch-final] Result: FAILED - No dispatcher could execute the command.",
+    ]
+    d = vg.dispatch_outcome(lines)
+    assert d["verdict"] == "success"
+    assert d["refires"] == 2
+    assert d["resolved"] == ["lets play five nights at paicoms"]
+
+
+def test_dispatch_outcome_none_without_final():
+    d = vg.dispatch_outcome(["[oww] [vosk-speech] Transcript: hello"])
+    assert d == {"verdict": None, "refires": 0, "resolved": []}
+
+
 def test_gateplay_source_exercised_shape():
     assert "parec" in GATEPLAY_SOURCE and "no-onset" in GATEPLAY_SOURCE
     assert "baseline-held" in GATEPLAY_SOURCE and "max-total" in GATEPLAY_SOURCE
