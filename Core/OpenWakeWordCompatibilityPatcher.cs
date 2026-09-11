@@ -29,10 +29,20 @@ public static class OpenWakeWordCompatibilityPatcher
         MethodDef DescribeAudioArgMethod,
         MethodDef LogMethod);
 
-    public static int Patch(ModuleDefMD module, Action<string>? log = null)
+    public static int Patch(
+        ModuleDefMD module,
+        Action<string>? log = null,
+        OpenWakeWordSettings? settings = null,
+        long ticksPerMillisecond = 10000L)
     {
+        // Fallback preserves legacy behaviour when no settings are injected: the
+        // hard-coded 3000 ms lock duration. OpenWakeWordSettings carries LockDurationMs
+        // but has no ticks-multiplier field, so the DateTime ticks-per-millisecond
+        // (10000) is exposed as its own parameter defaulting to the legacy value.
+        var lockDurationMs = settings?.LockDurationMs ?? 3000;
+
         var patched = 0;
-        var helper = EnsureHelperMembers(module);
+        var helper = EnsureHelperMembers(module, lockDurationMs, ticksPerMillisecond);
 
         var methods = module.GetTypes()
             .SelectMany(t => t.Methods)
@@ -199,6 +209,11 @@ public static class OpenWakeWordCompatibilityPatcher
                 hasAudioCarrierParam = true;
         }
 
+        if (HasUiControlParameter(method))
+        {
+            return false;
+        }
+
         if (nameLooksAudio && (hasAudioTypedParam || hasAudioEventArgsParam || hasAudioCarrierParam))
             return true;
 
@@ -242,6 +257,24 @@ public static class OpenWakeWordCompatibilityPatcher
                fullTypeName.Contains("Wave", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool HasUiControlParameter(MethodDef method)
+    {
+        foreach (var param in method.Parameters)
+        {
+            if (param.IsHiddenThisParameter)
+                continue;
+
+            var fullName = param.Type?.FullName ?? string.Empty;
+            if (fullName.StartsWith("System.Windows.Forms.", StringComparison.Ordinal) ||
+                fullName.StartsWith("System.Drawing.", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool LooksLikeAudioCallbackName(string methodName)
     {
         if (string.IsNullOrWhiteSpace(methodName))
@@ -263,7 +296,7 @@ public static class OpenWakeWordCompatibilityPatcher
                methodName.Contains("mic", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static HelperMembers EnsureHelperMembers(ModuleDefMD module)
+    private static HelperMembers EnsureHelperMembers(ModuleDefMD module, int lockDurationMs, long ticksPerMillisecond)
     {
         var helperType = module.Find(HelperTypeName, isReflectionName: false) as TypeDef;
         if (helperType is null)
@@ -294,7 +327,7 @@ public static class OpenWakeWordCompatibilityPatcher
             ?? AddLogMethod(module, helperType);
 
         var initMethod = helperType.FindMethod("InitializeOpenWakeWord")
-            ?? AddInitMethod(module, helperType, initializedField, lockDurationMsField, logMethod);
+            ?? AddInitMethod(module, helperType, initializedField, lockDurationMsField, logMethod, lockDurationMs);
 
         var isLockedMethod = helperType.FindMethod("IsLocked")
             ?? AddIsLockedMethod(module, helperType, lockUntilTicksField);
@@ -306,7 +339,7 @@ public static class OpenWakeWordCompatibilityPatcher
             ?? AddDescribeAudioArgMethod(module, helperType);
 
         var onAudioMethod = helperType.FindMethod("OnAudioChunkAvailable")
-            ?? AddOnAudioMethod(module, helperType, initMethod, isLockedMethod, shouldTriggerWakeMethod, logMethod, describeAudioArgMethod, firstAudioLoggedField, lockUntilTicksField, lockDurationMsField);
+            ?? AddOnAudioMethod(module, helperType, initMethod, isLockedMethod, shouldTriggerWakeMethod, logMethod, describeAudioArgMethod, firstAudioLoggedField, lockUntilTicksField, lockDurationMsField, ticksPerMillisecond);
 
         return new HelperMembers(
             helperType,
@@ -373,7 +406,8 @@ public static class OpenWakeWordCompatibilityPatcher
         TypeDef helperType,
         FieldDef initializedField,
         FieldDef lockDurationMsField,
-        IMethod logMethod)
+        IMethod logMethod,
+        int lockDurationMs)
     {
         var method = new MethodDefUser(
             "InitializeOpenWakeWord",
@@ -388,7 +422,9 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, ret));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Stsfld, initializedField));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, 3000));
+        // Lock duration (ms) comes from the injected settings; falls back to the
+        // legacy 3000 ms default when no settings are provided.
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4, lockDurationMs));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Stsfld, lockDurationMsField));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "OpenWakeWord helper initialized"));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, logMethod));
@@ -456,7 +492,8 @@ public static class OpenWakeWordCompatibilityPatcher
         IMethod describeAudioArgMethod,
         FieldDef firstAudioLoggedField,
         FieldDef lockUntilTicksField,
-        FieldDef lockDurationMsField)
+        FieldDef lockDurationMsField,
+        long ticksPerMillisecond)
     {
         var method = new MethodDefUser(
             "OnAudioChunkAvailable",
@@ -554,7 +591,9 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, getTicks));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldsfld, lockDurationMsField));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Conv_I8));
-        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I8, 10000L));
+        // Ticks multiplier (10000 = DateTime ticks per millisecond). Injected as a
+        // parameter; defaults to the legacy 10000L when not overridden.
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I8, ticksPerMillisecond));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Mul));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Add));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Stsfld, lockUntilTicksField));
@@ -771,6 +810,7 @@ public static class OpenWakeWordCompatibilityPatcher
         var typeLocal = new Local(new ClassSig(typeRef));
         var fullNameLocal = new Local(module.CorLibTypes.String);
         var arrayLocal = new Local(new ClassSig(arrayRef));
+        var lengthLocal = new Local(module.CorLibTypes.Int32);
 
         var nonNull = Instruction.Create(OpCodes.Nop);
         var hasArray = Instruction.Create(OpCodes.Nop);
@@ -779,6 +819,7 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Variables.Add(typeLocal);
         method.Body.Variables.Add(fullNameLocal);
         method.Body.Variables.Add(arrayLocal);
+        method.Body.Variables.Add(lengthLocal);
 
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Brtrue_S, nonNull));
@@ -808,6 +849,8 @@ public static class OpenWakeWordCompatibilityPatcher
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, " length="));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloc, arrayLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, arrayGetLength));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Stloc, lengthLocal));
+        method.Body.Instructions.Add(Instruction.Create(OpCodes.Ldloca_S, lengthLocal));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, intToString));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Call, concat4));
         method.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));

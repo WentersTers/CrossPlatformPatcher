@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.ModelSelectionView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="*, Auto, Auto" Margin="40">
+    <StackPanel Spacing="15" VerticalAlignment="Center">
+      <TextBlock Text="Select Speech Recognition Model"
+                 FontSize="24"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+      <TextBlock Text="Choose a Vosk speech recognition model. Larger models provide better accuracy but require more disk space and memory."
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="450" />
+
+      <ListBox ItemsSource="{Binding AvailableModels}"
+               SelectedItem="{Binding SelectedModel}"
+               Margin="0,10"
+               DisplayMemberBinding="{Binding DisplayName}" />
+    </StackPanel>
+
+    <StackPanel Grid.Row="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Spacing="10"
+                Margin="0,10">
+      <Button Content="Back"
+              Command="{Binding GoToFolderPickerCommand}"
+              Padding="20,10" />
+      <Button Content="Download and Continue"
+              Command="{Binding DownloadModelCommand}"
+              Padding="20,10" />
+    </StackPanel>
+
+    <StackPanel Grid.Row="2"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Spacing="10"
+                Margin="0,5,0,30">
+      <Button Content="Skip (no speech recognition)"
+              Command="{Binding GoToDependencyCheckCommand}"
+              Padding="20,10" />
+    </StackPanel>
+  </Grid>
+</UserControl>

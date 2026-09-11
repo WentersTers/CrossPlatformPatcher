@@ -72,6 +72,9 @@ public static class OpenWakeWordHelper
     private static string? _fileCommandInputPath;
     private static bool _fileCommandInputThreadStarted;
     private static readonly object _fileCommandInputLock = new();
+    private static readonly object _exceptionHookLock = new();
+    private static bool _exceptionHooksInstalled;
+    private const int MaxExceptionStackLines = 12;
 
     private static readonly object _commandManifestLock = new();
     private static Lazy<IReadOnlyList<CommandManifestEntry>> KnownCommands = new(LoadKnownCommands, true);
@@ -1500,6 +1503,8 @@ public static class OpenWakeWordHelper
 
             try
             {
+                EnableUnhandledExceptionLogging();
+
                 // Report architecture diagnostics at startup
                 ReportStartupDiagnostics();
 
@@ -1507,7 +1512,7 @@ public static class OpenWakeWordHelper
                 var embeddedSettings = OpenWakeWordSettings.CreateDefault();
                 _settings = OpenWakeWordSettings.FromEnvironmentVariables();
 
-                var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "stable";
+                var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "full";
                 var processBitness = Environment.Is64BitProcess ? "64" : "32";
                 LogEvent($"arch.process_bitness={processBitness}");
                 if ((string.Equals(migrationMode, "probe", StringComparison.OrdinalIgnoreCase) ||
@@ -1533,6 +1538,9 @@ public static class OpenWakeWordHelper
                         KnownCommands = new Lazy<IReadOnlyList<CommandManifestEntry>>(CreateFallbackCommandManifest, true);
                     }
                 }
+
+                if (IsRuntimeDiagnosticEnabled())
+                    EnsureRuntimeDiagnosticStarted("startup");
                 
                 LogEvent($"Initialized with settings: {_settings}");
 
@@ -2064,6 +2072,207 @@ public static class OpenWakeWordHelper
         }
     }
 
+    private static void EnableUnhandledExceptionLogging()
+    {
+        var raw = Environment.GetEnvironmentVariable("PAICOM_LOG_UNHANDLED_EXCEPTIONS");
+        if (string.IsNullOrWhiteSpace(raw))
+            return;
+
+        var normalized = raw.Trim().ToLowerInvariant();
+        var enabled = normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+        if (!enabled)
+            return;
+
+        lock (_exceptionHookLock)
+        {
+            if (_exceptionHooksInstalled)
+                return;
+
+            AppDomain.CurrentDomain.UnhandledException += HandleUnhandledException;
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += HandleUnobservedTaskException;
+            TryHookWinFormsThreadException();
+            _exceptionHooksInstalled = true;
+            LogEvent("[oww-exception] Global exception logging enabled.");
+        }
+    }
+
+    private static void HandleUnhandledException(object? sender, UnhandledExceptionEventArgs args)
+    {
+        try
+        {
+            if (args.ExceptionObject is Exception ex)
+            {
+                LogException("unhandled", ex);
+                return;
+            }
+
+            LogEvent($"[oww-exception] unhandled {args.ExceptionObject}");
+        }
+        catch
+        {
+            // Best-effort only.
+        }
+    }
+
+    private static void HandleUnobservedTaskException(object? sender, System.Threading.Tasks.UnobservedTaskExceptionEventArgs args)
+    {
+        try
+        {
+            LogException("task-unobserved", args.Exception);
+            args.SetObserved();
+        }
+        catch
+        {
+            // Best-effort only.
+        }
+    }
+
+    private static void TryHookWinFormsThreadException()
+    {
+        try
+        {
+            var appType = Type.GetType("System.Windows.Forms.Application, System.Windows.Forms", throwOnError: false);
+            if (appType == null)
+                return;
+
+            var threadExceptionEvent = appType.GetEvent("ThreadException", BindingFlags.Public | BindingFlags.Static);
+            if (threadExceptionEvent?.EventHandlerType == null)
+                return;
+
+            var handlerMethod = typeof(OpenWakeWordHelper).GetMethod(
+                nameof(HandleWinFormsThreadException),
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            if (handlerMethod == null)
+                return;
+
+            var handler = Delegate.CreateDelegate(threadExceptionEvent.EventHandlerType, handlerMethod);
+            threadExceptionEvent.AddEventHandler(null, handler);
+            LogEvent("[oww-exception] WinForms ThreadException handler registered.");
+        }
+        catch (Exception ex)
+        {
+            LogEvent($"[oww-exception] WinForms ThreadException hook failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private static void HandleWinFormsThreadException(object? sender, object? args)
+    {
+        try
+        {
+            var ex = args?.GetType().GetProperty("Exception")?.GetValue(args) as Exception;
+            if (ex != null)
+            {
+                LogException("winforms-thread", ex);
+                return;
+            }
+
+            LogEvent("[oww-exception] winforms-thread exception raised (no Exception property)." );
+        }
+        catch (Exception ex)
+        {
+            LogEvent($"[oww-exception] winforms-thread handler failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private static void LogException(string category, Exception ex)
+    {
+        LogEvent($"[oww-exception] {category} {ex.GetType().Name}: {ex.Message}");
+
+        var stack = ex.StackTrace;
+        if (!string.IsNullOrWhiteSpace(stack))
+        {
+            var lines = stack.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < lines.Length && i < MaxExceptionStackLines; i++)
+            {
+                LogEvent($"[oww-exception] {category} {lines[i]}");
+            }
+        }
+
+        if (ex.InnerException != null)
+        {
+            LogEvent($"[oww-exception] {category} inner {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+        }
+
+        try
+        {
+            // Enumerate loaded native modules to help identify which native DLL may have caused the crash
+            var proc = System.Diagnostics.Process.GetCurrentProcess();
+            var modules = proc.Modules;
+            var count = Math.Min(modules.Count, 40);
+            LogEvent($"[oww-exception] {category} loaded_modules_count={modules.Count}");
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    var m = modules[i];
+                    LogEvent($"[oww-exception] {category} module={m.ModuleName};file={m.FileName};base=0x{m.BaseAddress.ToInt64():X};size={m.ModuleMemorySize}");
+                }
+                catch { }
+            }
+        }
+        catch
+        {
+            // Best-effort only
+        }
+
+        try
+        {
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            LogEvent($"[oww-exception] {category} managed_assemblies_count={assemblies.Length}");
+            foreach (var a in assemblies)
+            {
+                try
+                {
+                    var loc = string.Empty;
+                    try { loc = a.Location; } catch { loc = "<no-location>"; }
+                    LogEvent($"[oww-exception] {category} assembly={a.GetName().Name};version={a.GetName().Version};location={loc}");
+                }
+                catch { }
+            }
+        }
+        catch
+        {
+            // Best-effort only
+        }
+
+        try
+        {
+            // If we hit an AccessViolation, attempt to write a full memory minidump for native analysis
+            void TryWriteDump()
+            {
+                try
+                {
+                    var proc = System.Diagnostics.Process.GetCurrentProcess();
+                    var diagDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "diagnostics");
+                    Directory.CreateDirectory(diagDir);
+                    var dumpPath = Path.Combine(diagDir, $"native-crash-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.dmp");
+                    using (var fs = new FileStream(dumpPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        var hProcess = proc.Handle;
+                        var pid = (uint)proc.Id;
+                        const uint MiniDumpWithFullMemory = 0x00000002;
+                        var ok = MiniDumpWriteDump(hProcess, pid, fs.SafeFileHandle.DangerousGetHandle(), MiniDumpWithFullMemory, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                        LogEvent($"[oww-exception] dump_write_result={ok};dump_path={dumpPath}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { LogEvent($"[oww-exception] dump_write_failed={ex.Message}"); } catch { }
+                }
+            }
+
+            TryWriteDump();
+        }
+        catch
+        {
+            // Best-effort only
+        }
+
+        [System.Runtime.InteropServices.DllImport("Dbghelp.dll", SetLastError = true)]
+        static extern bool MiniDumpWriteDump(IntPtr hProcess, uint ProcessId, IntPtr hFile, uint DumpType, IntPtr ExceptionParam, IntPtr UserStreamParam, IntPtr CallbackParam);
+    }
+
     /// <summary>
     /// Report architecture and runtime diagnostics at process initialization.
     /// Logs information for later analysis and fallback decision-making.
@@ -2073,7 +2282,7 @@ public static class OpenWakeWordHelper
         try
         {
             var processBitness = Environment.Is64BitProcess ? "x64" : "x86";
-            var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "stable";
+            var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "full";
             var verifiedRuntime = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_VERIFIED_64BIT") ?? "unknown";
             var winePrefix = Environment.GetEnvironmentVariable("WINEPREFIX") ?? "<not-set>";
             var runtimeDiagnosticMode = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_DIAGNOSTIC_MODE") ?? "<not-set>";
@@ -2099,7 +2308,7 @@ public static class OpenWakeWordHelper
             }
 
             // Report Vosk bridge status
-            var voskEnabled = !Environment.Is64BitProcess ? "disabled:32bit_process" : "enabled";
+            var voskEnabled = "enabled";
             LogEvent($"[startup-diag] vosk.bridge_status={voskEnabled}");
         }
         catch (Exception ex)

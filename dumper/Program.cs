@@ -1,1 +1,24 @@
-using System; using System.Reflection; using System.Linq; namespace Dumper { class Program { static void Main() { var path = "/Users/sheryluglis/Downloads/CrossPlatformPatcher/PAIcom_Player_Folder/PAIcom_patched.exe"; var asm = Assembly.LoadFrom(path); Type[] types; try { types = asm.GetTypes(); } catch (ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray()!; } var formTypes = types.Where(t => t.BaseType != null && t.BaseType.FullName != null && t.BaseType.FullName.Contains("Form")); foreach (var t in formTypes) { Console.WriteLine("Form: " + t.FullName); var candidates = t.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Where(m => { if (m.IsSpecialName) return false; var parameters = m.GetParameters(); return parameters.Length == 1 && parameters[0].ParameterType == typeof(string); }); foreach (var m in candidates) { var ilLength = m.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0; Console.WriteLine($"  Method: {m.Name}, IL Size: {ilLength}"); } } } } }
+using System;
+using System.Reflection;
+
+namespace TestVosk {
+    class Program {
+        static void Main() {
+            try {
+                var owPath = @"D:\SteamLibrary\steamapps\common\CrossPlatformPatcher\PAIcom Test Folder\PAIcom.OWW.dll";
+                var asm = Assembly.LoadFrom(owPath);
+                var type = asm.GetType("CrossPlatformPatcher.PAIcom.OWW.VoskSpeechRecognizer");
+                var instance = Activator.CreateInstance(type, new object[] { null });
+                var method = type.GetMethod("Initialize");
+                
+                Environment.SetEnvironmentVariable("PAICOM_MIGRATION_MODE", "full");
+                Environment.SetEnvironmentVariable("PAICOM_VOSK_MODEL_PATH", @"D:\SteamLibrary\steamapps\common\CrossPlatformPatcher\PAIcom Test Folder\models\vosk-model-small-en-us-0.15\vosk-model-small-en-us-0.15");
+                
+                var result = method.Invoke(instance, null);
+                Console.WriteLine("Init result: " + result);
+            } catch (Exception ex) {
+                Console.WriteLine("Error: " + ex);
+            }
+        }
+    }
+}

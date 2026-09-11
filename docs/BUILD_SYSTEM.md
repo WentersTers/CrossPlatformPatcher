@@ -1,4 +1,4 @@
-# Build System Documentation
+# Build System Documentation (Updated: Cross-Platform SetupWizard Added)
 
 This document provides complete details on the CrossPlatformPatcher build pipeline, including all supported targets, build modes, and output artifacts.
 
@@ -51,25 +51,30 @@ Self-contained publishes bundle the entire .NET runtime, producing a single exec
 
 **Linux/macOS:**
 ```sh
-sh publish-all.sh
+sh scripts/publish-all.sh
 ```
 
 **Windows:**
 ```cmd
-publish-all.bat
+scripts\publish-all.bat
 ```
 
 **Output structure:**
 ```
 publish/
-  win/
-    CrossPlatformPatcher.exe          (Windows x64)
-  linux/
-    CrossPlatformPatcher             (Linux x64)
-  osx-x64/
-    CrossPlatformPatcher             (macOS Intel)
-  osx-arm64/
-    CrossPlatformPatcher             (macOS Apple Silicon)
+  CrossPlatformPatcher/
+    win-x64/
+      CrossPlatformPatcher-W-x64.exe
+      onnxruntime.dll
+    linux-x64/
+      CrossPlatformPatcher-L-x64
+      libonnxruntime.so
+    osx-x64/
+      CrossPlatformPatcher-M-x64
+      libonnxruntime.dylib
+    osx-arm64/
+      CrossPlatformPatcher-M-Arm
+      libonnxruntime.dylib
 ```
 
 ### 2.2 Individual Platform Publishes
@@ -81,7 +86,8 @@ dotnet publish CrossPlatformPatcher.csproj \
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
-  -o publish/win
+  -p:AssemblyName=CrossPlatformPatcher-W-x64 \
+  -o publish/CrossPlatformPatcher/win-x64
 ```
 
 **Linux (x64):**
@@ -91,7 +97,8 @@ dotnet publish CrossPlatformPatcher.csproj \
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
-  -o publish/linux
+  -p:AssemblyName=CrossPlatformPatcher-L-x64 \
+  -o publish/CrossPlatformPatcher/linux-x64
 ```
 
 **macOS (Intel):**
@@ -101,13 +108,20 @@ dotnet publish CrossPlatformPatcher.csproj \
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
-  -o publish/osx-x64
+  -p:AssemblyName=CrossPlatformPatcher-M-x64 \
+  -o publish/CrossPlatformPatcher/osx-x64
 ```
 
 **macOS (Apple Silicon):**
 ```sh
 dotnet publish CrossPlatformPatcher.csproj \
   -r osx-arm64 \
+  -c Release \
+  --self-contained true \
+  -p:PublishSingleFile=true \
+  -p:AssemblyName=CrossPlatformPatcher-M-Arm \
+  -o publish/CrossPlatformPatcher/osx-arm64
+```
   -c Release \
   --self-contained true \
   -p:PublishSingleFile=true \
@@ -276,7 +290,72 @@ codesign --force --deep --sign - SetupWizardMacApp/build/Release/SetupWizard.app
 
 ---
 
-## 6. Build Outputs Summary
+## 6. Cross-Platform SetupWizard (.NET 8.0 Avalonia)
+
+### 6.1 Overview
+
+The cross-platform SetupWizard is a .NET 8.0 Avalonia UI application that provides the same installer functionality as the macOS Swift app, but runs on **Windows, Linux, and macOS**.
+
+### 6.2 Project Layout
+
+```
+SetupWizardCore/              ← Shared class library (net8.0)
+  └── All non-UI business logic (services, models)
+
+SetupWizardWindows/           ← Avalonia UI app (net8.0)
+  └── Cross-platform GUI (Win/Linux/Mac)
+```
+
+**Dependency flow:** `Views → ViewModel → SetupWizardCore`
+
+### 6.3 Build Commands
+
+**One-command build (all platforms):**
+```sh
+bash scripts/build-setupwizard-all.sh
+```
+
+**Individual publishes:**
+```sh
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj -c Release -r win-x64 --self-contained true
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj -c Release -r linux-x64 --self-contained true
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj -c Release -r osx-x64 --self-contained true
+dotnet publish SetupWizardWindows/SetupWizardWindows.csproj -c Release -r osx-arm64 --self-contained true
+```
+
+### 6.4 AppImage Packaging
+
+```sh
+bash scripts/package-appimage.sh [path-to-appimagetool]
+```
+
+See [INSTALLER_GUIDE.md § 2.5](INSTALLER_GUIDE.md#25-appimage-packaging-linux) for details.
+
+### 6.5 Services Ported from Swift
+
+| Swift Service | C# Equivalent | Key Difference |
+|---|---|---|
+| `APIClient.swift` | `GitHubClient.cs` | `HttpClient` + `System.Text.Json` instead of `URLSession` + `JSONDecoder` |
+| `VoskModelDownloader.swift` | `ModelDownloader.cs` | `ZipFile.ExtractToDirectory()` instead of `/usr/bin/unzip` |
+| `ProcessRunner.swift` | `ProcessRunner.cs` | `System.Diagnostics.Process` instead of Foundation `Process` |
+| `DependencyChecker.swift` | `DependencyChecker.cs` | `RuntimeInformation` instead of `uname()` |
+| `DotNetInstaller.swift` | `DotNetInstaller.cs` | Added native Windows strategy via registry check |
+| `SetupStateManager.swift` | `SetupStateManager.cs` | `ApplicationData` directory instead of `~/.wine/` |
+| `Logger.swift` | `SetupWizardLogger.cs` | `ILogger`-style with file + console sinks |
+
+### 6.6 Platform-Specific Behavior
+
+| Feature | Windows | Linux | macOS |
+|---|---|---|---|
+| Folder picker | Avalonia `FolderPicker` | Avalonia `FolderPicker` | Avalonia `FolderPicker` |
+| Wine detection | N/A (native) | `PATH` + common paths | Whisky + Homebrew paths |
+| .NET install | Registry check + download | winetricks via system wine | winetricks via Whisky bottle |
+| State directory | `%APPDATA%/CrossPlatformPatcher/` | `~/.config/CrossPlatformPatcher/` | `~/Library/Application Support/` |
+| Log directory | Same as state | Same as state | Same as state |
+
+---
+
+## 7. Build Outputs Summary
 
 ### 6.1 Repository Build Artifacts
 
@@ -284,10 +363,13 @@ codesign --force --deep --sign - SetupWizardMacApp/build/Release/SetupWizard.app
 |------|----------|--------------|
 | `bin/Debug/` | Debug binaries | `dotnet build -c Debug` |
 | `bin/Release/` | Release binaries | `dotnet build -c Release` |
-| `publish/` | Platform-specific executables | `publish-all.sh` / platform publishes |
+| `publish/` | Platform-specific patcher executables | `publish-all.sh` / platform publishes |
 | `SetupWizardMacApp/build/Release/` | Native macOS setup wizard (.app) | `SetupWizardMacApp/build.sh` |
+| `SetupWizardWindows/bin/Release/net8.0/` | Cross-platform SetupWizard (Win/Linux/Mac) | `dotnet publish SetupWizardWindows` |
+| `SetupWizardCore/bin/Release/net8.0/` | Shared library (SetupWizardCore.dll) | `dotnet build SetupWizardCore` |
+| `SetupWizard-x86_64.AppImage` | Linux AppImage package | `scripts/package-appimage.sh` |
 
-### 6.2 User Artifacts (Generated During Patching)
+### 7.1 User Artifacts (Generated During Patching)
 
 When running `build-patch-and-launch.sh`:
 

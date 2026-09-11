@@ -14,7 +14,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Optimize>true</Optimize>
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
-    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
@@ -99,6 +99,18 @@
     <Compile Remove="FormAnalyzer\**\*.cs" />
     <EmbeddedResource Remove="FormAnalyzer\**\*" />
     <None Remove="FormAnalyzer\**\*" />
+    <Compile Remove="TestVosk\**\*.cs" />
+    <EmbeddedResource Remove="TestVosk\**\*" />
+    <None Remove="TestVosk\**\*" />
+    <Compile Remove="SetupWizardWindows\**\*.cs" />
+    <EmbeddedResource Remove="SetupWizardWindows\**\*" />
+    <None Remove="SetupWizardWindows\**\*" />
+    <Compile Remove="SetupWizardCore\**\*.cs" />
+    <EmbeddedResource Remove="SetupWizardCore\**\*" />
+    <None Remove="SetupWizardCore\**\*" />
+    <Compile Remove="SetupWizardCore.Tests\**\*.cs" />
+    <EmbeddedResource Remove="SetupWizardCore.Tests\**\*" />
+    <None Remove="SetupWizardCore.Tests\**\*" />
     <Compile Remove=".tmp-deps\**\*.cs" />
     <EmbeddedResource Remove=".tmp-deps\**\*" />
     <None Remove=".tmp-deps\**\*" />

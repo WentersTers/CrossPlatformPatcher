@@ -47,10 +47,10 @@ DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet test CrossPlatformPatcher.Tests/CrossPlatfo
 
 ## Common Workflows
 
-- Full validation: `./build-and-test.sh`
+- Full validation: `./scripts/build-and-test.sh`
 - Build only: `dotnet build CrossPlatformPatcher.csproj -c Release`
 - Tests only: `dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release`
-- Patch + launch flow: `./build-patch-and-launch.sh --migration-mode full`
+- Patch + launch flow: `./scripts/build-patch-and-launch.sh --migration-mode full`
 
 ## Logs and Diagnostics
 
