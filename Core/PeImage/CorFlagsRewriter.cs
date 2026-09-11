@@ -75,6 +75,32 @@ public static class CorFlagsRewriter
     }
 
     /// <summary>
+    /// Reads the CLI header <c>Flags</c> value from a PE image without
+    /// modifying anything. Lets callers bake the actual post-patch flags
+    /// into generated artifacts instead of asserting them.
+    /// </summary>
+    public static bool TryReadCliFlags(byte[] peBytes, out uint flags, out string? error)
+    {
+        flags = 0;
+        error = null;
+
+        if (!TryGetCliFlagsOffset(peBytes, out var offset, out error))
+        {
+            error ??= "CLI_HEADER_NOT_FOUND";
+            return false;
+        }
+
+        if (offset + 4 > peBytes.Length)
+        {
+            error = "CLI_FLAGS_OUT_OF_BOUNDS";
+            return false;
+        }
+
+        flags = BitConverter.ToUInt32(peBytes, offset);
+        return true;
+    }
+
+    /// <summary>
     /// Locates the file offset of the CLI header's <c>Flags</c> field within a
     /// PE image.  The CLI header is the first data directory entry of the
     /// optional header; the flags live 16 bytes into that header.
