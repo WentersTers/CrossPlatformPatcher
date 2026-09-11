@@ -46,6 +46,20 @@ def test_session_snapshot_verbs_and_typing():
         s.snapshot_revert("d", "nope")
 
 
+def test_snapshot_create_addresses_disk_explicitly():
+    from harness.preflight import _VirshSession
+    seen = []
+
+    def runner(cmd):
+        seen.append(cmd)
+        return 0, "created\n", ""
+
+    s = _VirshSession(HOP, runner)
+    assert s.snapshot_create("d", "v5") == "created"
+    assert seen[0] == HOP + ["snapshot-create-as", "d", "v5",
+                             "--diskspec", "vda,snapshot=internal"]
+
+
 class _VerbSession:
     """Fake connected session WITH virsh snapshot verbs."""
 
