@@ -85,9 +85,9 @@ def run(root: str | Path, ts: str | None = None, verbose: bool = True,
         em.state_change(prev, st, trigger="wake_word" if st == "listening" else "",
                         settle_ms=350)
         prev = st
-    em.speak_start("the browser is here")
+    em.speak_start("the test page is here")
     em.speak_end(2100)
-    em.vosk_result("hey pie com open the browser", 0.83)
+    em.vosk_result("hey demo open the test page", 0.83)
     for line in em.lines:
         stream.ingest_line(line)
     for aid, kind in (("click-1", "click"), ("type-1", "type")):
@@ -116,13 +116,13 @@ def run(root: str | Path, ts: str | None = None, verbose: bool = True,
              "env": {"PAICOM_MIGRATION_MODE": "full",
                      "PAICOM_RUNTIME_VERIFIED_64BIT": "1"},
              "libs": [],
-             "ref_transcript": "hey pie com open the browser",
-             "hyp_transcript": "hey pie com open the browser"})
+             "ref_transcript": "hey demo open the test page",
+             "hyp_transcript": "hey demo open the test page"})
     shot = sprite("speaking")
     r2 = g2(shot, shot, {"ssim_threshold": 0.90},
-            ocr_func=lambda roi: "the browser is here",
-            active_window_roi=(30, 30, 60, 60), expected_text="browser",
-            step_name="speaking")
+             ocr_func=lambda roi: "the test page is here",
+             active_window_roi=(30, 30, 60, 60), expected_text="test page",
+             step_name="speaking")
     assert r1.passed and r2.passed
     final = reconcile("idle", stream.claimed_state()[0], res.observed[-1].state,
                       stream_reliable=stream.reliable, heartbeat_alive=True)
@@ -135,7 +135,7 @@ def run(root: str | Path, ts: str | None = None, verbose: bool = True,
         sidecar = {"step": i, "state": st, "synthetic": True,
                    "cmd": "assert_state_sequence", "exit_code": 0,
                    "log_tail": "[launcher] arch.selected_runtime=native",
-                   "transcript": "hey pie com open the browser",
+                    "transcript": "hey demo open the test page",
                    "expected_text": "browser" if st == "speaking" else "",
                    "gate_results": {"g1": r1.passed, "g2": r2.evidence["ssim"]},
                    "state_classification": {"state": st, "confidence": 0.95,

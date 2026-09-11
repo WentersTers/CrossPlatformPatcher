@@ -49,8 +49,8 @@ def test_trust_empty_raw_caught():
 
 
 def test_member_matched():
-    refs = {"i can hear you loud and eager"}
-    b, _ = vg.adjudicate_say(771876, 0.48, [(12.0, 14.0, "I can hear you! Loud and eager.")], refs)
+    refs = {"the harbor lantern glows at midnight"}
+    b, _ = vg.adjudicate_say(771876, 0.48, [(12.0, 14.0, "Harbor lantern! Glowing at midnight.")], refs)
     assert b == vg.MEMBER_MATCHED
 
 
@@ -62,7 +62,7 @@ def test_expected_silence_big_member():
 def test_silent_audible_member_is_not_a_verdict():
     assert vg.needs_redraw(3381084, 0.0) is True
     assert vg.needs_redraw(12527212, 0.0) is False
-    b, d = vg.adjudicate_say(3381084, 0.0, [], {"you didn't care"})
+    b, d = vg.adjudicate_say(3381084, 0.0, [], {"the garden gate stood open"})
     assert b == vg.OBSERVE_RECORD and "redraw" in d
 
 
@@ -72,8 +72,8 @@ def test_silent_gap_draw_is_bracketing_datum():
 
 
 def test_fragment_never_matches():
-    b, d = vg.adjudicate_say(771876, 0.48, [(20.0, 21.0, "Can you do that one?")],
-                             {"i can hear you loud and eager"})
+    b, d = vg.adjudicate_say(771876, 0.48, [(20.0, 21.0, "Lantern glows.")],
+                             {"the harbor lantern glows at midnight"})
     assert b == vg.FRAGMENT_INCONCLUSIVE
     assert vg.is_fragment(1.0) and not vg.is_fragment(1.5)
 
@@ -84,8 +84,8 @@ def test_known_bug_entry():
 
 
 def test_redraw_terminal_rule():
-    refs = {"you didn't care"}
-    b, _ = vg.adjudicate_redraw(0.0, 0.41, refs, "You didn't care.")
+    refs = {"the garden gate stood open"}
+    b, _ = vg.adjudicate_redraw(0.0, 0.41, refs, "Garden gate stood open.")
     assert b == vg.MEMBER_MATCHED
     b, d = vg.adjudicate_redraw(0.0, 0.0, refs)
     assert b == vg.OBSERVE_RECORD and "systematic suspicion" in d
@@ -98,35 +98,35 @@ def test_redraw_fragment_is_inconclusive():
 
 
 def test_redraw_draw_prior_match():
-    refs = {"dont be stressed here we fucking go"}
-    b, d = vg.adjudicate_redraw(0.0, 0.33, refs, "Three straps. Here we go.",
+    refs = {"the copper kettle sings at dawn"}
+    b, d = vg.adjudicate_redraw(0.0, 0.33, refs, "Sturdy kettle sings at midnight.",
                                 second_regions=[(24.0, 26.0)],
-                                draw_audio="tourist.wav",
-                                member_audio="tourist.wav")
+                                draw_audio="kettle.wav",
+                                member_audio="kettle.wav")
     assert b == vg.MEMBER_MATCHED and "draw-prior" in d
 
 
 def test_overlap_variant_match():
-    refs = {"before i shut down i want to ask you did you ever hear"}
-    assert vg.say_overlap("Before I shut down, I must ask you.", refs)
+    refs = {"the old lighthouse keeper tallied every ship"}
+    assert vg.say_overlap("Lighthouse keeper tallied them all.", refs)
     assert not vg.say_overlap("Listen.", {"curse calibration complete"})
 
 
 def test_draw_prior_match():
-    refs = {"start in vr mode so you can erp without touching anything"}
-    b, d = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "In the air mode. So you...")],
-                             refs, draw_audio="vrmode.wav",
-                             member_audio="vrmode.wav")
+    refs = {"the northern depot dispatches freight without delay"}
+    b, d = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "At the depot, they say.")],
+                             refs, draw_audio="depot.wav",
+                             member_audio="depot.wav")
     assert b == vg.MEMBER_MATCHED and "draw-prior" in d
     # confabulation-length regions without shared content do not ride it
     b, _ = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "Completely other words here")],
-                             refs, draw_audio="vrmode.wav",
-                             member_audio="vrmode.wav")
+                             refs, draw_audio="depot.wav",
+                             member_audio="depot.wav")
     assert b == vg.OBSERVE_RECORD
     # wrong file draws never match even with shared words
-    b, _ = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "In the air mode. So you...")],
+    b, _ = vg.adjudicate_say(2000000, 0.40, [(24.0, 27.0, "At the depot, they say.")],
                              refs, draw_audio="other.wav",
-                             member_audio="vrmode.wav")
+                             member_audio="depot.wav")
     assert b == vg.OBSERVE_RECORD
 
 

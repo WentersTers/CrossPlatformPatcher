@@ -64,7 +64,7 @@ def test_verify_full_wake_word_sequence():
               + ["speaking"] * 5 + ["idle"] * 4)
     res, sleeps = asyncio.run(_run(script, expected,
                                    event_log=["wake_word_detected at 1.2s"],
-                                   ocr="the browser is here"))
+                                    ocr="the test page is here"))
     assert res.passed, res.divergence_point
     assert [f.state for f in res.observed][:1] == ["idle"]
 
