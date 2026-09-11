@@ -4452,7 +4452,13 @@ public static class OpenWakeWordHelper
                     var blocking = playSyncMethod ?? playMethod;
                     System.Threading.Tasks.Task.Run(() =>
                     {
-                        try { blocking.Invoke(player, null); } catch { }
+                        // Never swallow: a silent worker is an undiagnosable
+                        // silence on the bus (residual-1 class). Log everything.
+                        try { blocking.Invoke(player, null); }
+                        catch (Exception innerEx)
+                        {
+                            LogEvent($"[animation-script-error] Background playback failed: {innerEx.GetType().Name}: {innerEx.Message}");
+                        }
                     });
                     LogEvent($"[animation-script-action] Audio playing: {audioFile}");
                 }
