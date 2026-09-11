@@ -48,11 +48,22 @@ def manifest_lines(manifest_path: str | Path) -> int:
         return -1
 
 
-def check_freshness(source_root: str | Path, installed: dict[str, int]) -> TreeDrift:
+def check_freshness(source_root: str | Path, installed: dict[str, int],
+                    exclude: tuple[str, ...] = ()) -> TreeDrift:
     """installed: inventory() of the remote tree (names+sizes only: cheap
     to pull). Manifest-line drift is covered separately by manifest_gap
-    (line sets, not counts: which commands are unreachable)."""
+    (line sets, not counts: which commands are unreachable).
+
+    exclude: path prefixes skipped on both sides. Staged additions are
+    not divergence: the in-tree wine bottle, models, generated launchers
+    and outputs, and logs all live here, or the gate false-alarms on
+    every prefix file."""
     src = inventory(source_root)
+    if exclude:
+        src = {p: s for p, s in src.items()
+               if not p.startswith(exclude)}
+        installed = {p: s for p, s in installed.items()
+                     if not p.startswith(exclude)}
     drift = TreeDrift()
     for path, size in src.items():
         if path not in installed:
