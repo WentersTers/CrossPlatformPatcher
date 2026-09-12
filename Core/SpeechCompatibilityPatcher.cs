@@ -597,7 +597,7 @@ public static class SpeechCompatibilityPatcher
 
     private static CilBody BuildBridgeTextDispatchBody(ModuleDefMD module, MethodDef logMethod)
     {
-        var body = new CilBody { InitLocals = true, MaxStack = 5 };
+        var body = new CilBody { InitLocals = true, MaxStack = 8 };
 
         var stringSig = module.CorLibTypes.String;
         var objectSig = module.CorLibTypes.Object;
@@ -633,6 +633,11 @@ public static class SpeechCompatibilityPatcher
                 runtimeTypeHandleRef.ToTypeSig()),
             typeRef);
 
+        var typeLocal = new Local(typeRef.ToTypeSig());
+        body.Variables.Add(typeLocal);
+        var methodLocal = new Local(methodBaseRef.ToTypeSig());
+        body.Variables.Add(methodLocal);
+
         var ins = body.Instructions;
         var exceptionType = module.CorLibTypes.GetTypeRef("System", "Exception");
 
@@ -642,11 +647,15 @@ public static class SpeechCompatibilityPatcher
         ins.Add(tryStart);
         ins.Add(Instruction.Create(OpCodes.Ldstr, "PAIcom.OWW"));
         ins.Add(Instruction.Create(OpCodes.Call, loadMethod));
+        ins.Add(Instruction.Create(OpCodes.Pop));
         ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcher.Core.OpenWakeWordHelper"));
         ins.Add(Instruction.Create(OpCodes.Call, getTypeMethod));
-        ins.Add(Instruction.Create(OpCodes.Dup));
+        ins.Add(Instruction.Create(OpCodes.Stloc, typeLocal));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, typeLocal));
         ins.Add(Instruction.Create(OpCodes.Ldstr, "HandleRecognizedSpeech"));
         ins.Add(Instruction.Create(OpCodes.Callvirt, getMethodMethod));
+        ins.Add(Instruction.Create(OpCodes.Stloc, methodLocal));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, methodLocal));
         ins.Add(Instruction.Create(OpCodes.Ldnull));
         ins.Add(Instruction.Create(OpCodes.Ldc_I4_1));
         ins.Add(Instruction.Create(OpCodes.Newarr, module.CorLibTypes.Object));
