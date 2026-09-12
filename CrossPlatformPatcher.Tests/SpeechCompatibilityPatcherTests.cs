@@ -468,9 +468,10 @@ public sealed class SpeechCompatibilityPatcherTests
         SpeechCompatibilityPatcher.Patch(module, logAction);
 
         // Assert
-        Assert.Equal(2, logMessages.Count);
+        Assert.Equal(3, logMessages.Count);
         Assert.Contains(logMessages, m => m.Contains("System.Speech safety wrappers applied") && m.Contains("1"));
         Assert.Contains(logMessages, m => m.Contains("System.Speech event probes applied") && m.Contains("1"));
+        Assert.Contains(logMessages, m => m.Contains("System.Speech emulate hardening applied") && m.Contains("0"));
     }
 
     [Fact]
@@ -775,5 +776,155 @@ public sealed class SpeechCompatibilityPatcherTests
         Assert.NotNull(eh.HandlerStart);
         Assert.NotNull(eh.TryEnd);
         Assert.NotNull(eh.HandlerEnd);
+    }
+
+    [Fact]
+    public void Emulate_Call_Is_Rewritten_To_Resilient_Helper()
+    {
+        // Arrange
+        using var temp = new TempDirectory();
+        var source = """
+            using System.Speech.Recognition;
+
+            public static class FixtureEmulate
+            {
+                public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
+                {
+                    return engine.EmulateRecognize(text);
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-emulate", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+
+        // Act
+        var patchCount = SpeechCompatibilityPatcher.Patch(module);
+
+        // Assert: the method still counts as wrapped (backstop installed).
+        Assert.Equal(1, patchCount);
+
+        var method = module.Types
+            .FirstOrDefault(t => t.Name == "FixtureEmulate")?
+            .Methods.FirstOrDefault(m => m.Name == "Dispatch");
+
+        Assert.NotNull(method);
+        Assert.True(method!.HasBody);
+
+        // No direct EmulateRecognize call may remain.
+        Assert.DoesNotContain(method.Body.Instructions, i =>
+            (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt) &&
+            i.Operand is IMethod called &&
+            called.Name == "EmulateRecognize");
+
+        // The resilient helper exists and is the new callee.
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherCompat");
+        Assert.NotNull(helperType);
+        var helper = helperType!.Methods.FirstOrDefault(m => m.Name == "EmulateRecognizeResilient");
+        Assert.NotNull(helper);
+
+        Assert.Contains(method.Body.Instructions, i =>
+            i.OpCode == OpCodes.Call && Equals(i.Operand, helper));
+
+        // Backstop catch is still in place.
+        Assert.Single(method.Body.ExceptionHandlers);
+    }
+
+    [Fact]
+    public void Emulate_Hardening_Is_Idempotent()
+    {
+        // Arrange
+        using var temp = new TempDirectory();
+        var source = """
+            using System.Speech.Recognition;
+
+            public static class FixtureEmulateIdem
+            {
+                public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
+                {
+                    return engine.EmulateRecognize(text);
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-emulate-idem", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+
+        // Act
+        var first = SpeechCompatibilityPatcher.Patch(module);
+        var second = SpeechCompatibilityPatcher.Patch(module);
+
+        // Assert
+        Assert.Equal(1, first);
+        Assert.Equal(0, second);
+
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherCompat");
+        Assert.NotNull(helperType);
+        Assert.Single(helperType!.Methods.Where(m => m.Name == "EmulateRecognizeResilient"));
+    }
+
+    [Fact]
+    public void Hardened_Dispatch_Completes_With_Null_Engine()
+    {
+        // Arrange: the missing-recognizer case must complete (not throw),
+        // returning null so callers degrade exactly like the old skip path.
+        using var temp = new TempDirectory();
+        var source = """
+            using System.Speech.Recognition;
+
+            public static class FixtureEmulateNull
+            {
+                public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
+                {
+                    return engine.EmulateRecognize(text);
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-emulate-null", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        Assert.Equal(1, SpeechCompatibilityPatcher.Patch(module));
+
+        var patchedPath = System.IO.Path.Combine(temp.Path, "fixture-emulate-null.patched.dll");
+        module.Write(patchedPath);
+
+        // The fixture references System.Speech, which .NET 8 does not resolve
+        // from the Framework GAC at runtime. Stage the reference beside the
+        // patched copy so signature/type resolution succeeds; the test never
+        // executes speech code (null engine short-circuits first).
+        var speechPath = FindSystemSpeechAssembly();
+        Assert.True(File.Exists(speechPath), "System.Speech reference assembly not found for execution.");
+        File.Copy(speechPath, System.IO.Path.Combine(temp.Path, "System.Speech.dll"), overwrite: true);
+
+        // Act: null engine must not throw (this also JIT-verifies the
+        // injected helper body, including its exception tables).
+        var loaded = System.Reflection.Assembly.LoadFrom(patchedPath);
+        var dispatch = loaded.GetType("FixtureEmulateNull")!.GetMethod("Dispatch")!;
+        object? result = null;
+        var ex = Record.Exception(() => result = dispatch.Invoke(null, new object?[] { null, "hello" }));
+
+        // Assert
+        Assert.Null(ex);
+        Assert.Null(result);
+    }
+
+    private static string FindSystemSpeechAssembly()
+    {
+        const string gacSpeechPath = @"C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Speech\v4.0_4.0.0.0__31bf3856ad364e35\System.Speech.dll";
+        if (File.Exists(gacSpeechPath))
+            return gacSpeechPath;
+
+        try
+        {
+            var loaded = System.Reflection.Assembly.Load(new System.Reflection.AssemblyName("System.Speech"));
+            if (!string.IsNullOrWhiteSpace(loaded.Location) && File.Exists(loaded.Location))
+                return loaded.Location;
+        }
+        catch
+        {
+            // Fall through to the failure message below.
+        }
+
+        return string.Empty;
     }
 }
