@@ -42,16 +42,32 @@ public sealed class FuzzyMatcher
         var inputWords = inputNormalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         var inputLength = inputNormalized.Length;
 
+        // Keyword stages run on stopword-filtered input: unfiltered input
+        // words let stopwords fire keyword routes (the~weather, some~someone).
+        // Lev/overlap below intentionally keep the full input (replay shape).
+        var keywordWords = inputWords.Where(w => !IsStopWord(w)).ToArray();
+
         // Build keyword index for unique word detection
         var keywordIndex = BuildKeywordIndex(knownCommands);
         logger?.Invoke($"[oww-fuzzy] Built keyword index with {keywordIndex.Count} unique keywords");
+        var sharedIndex = BuildSharedKeywordIndex(knownCommands);
 
         // Stage 1: Try exact keyword match first
-        var keywordMatch = TryKeywordMatch(inputNormalized, inputWords, keywordIndex, knownCommands, logger);
+        var keywordMatch = TryKeywordMatch(inputNormalized, keywordWords, keywordIndex, knownCommands, logger);
         if (keywordMatch != null)
         {
             logger?.Invoke($"[oww-fuzzy] KEYWORD MATCH: '{input}' -> '{keywordMatch.Value.command}' via keyword '{keywordMatch.Value.keyword}'");
             return new FuzzyMatchResult(keywordMatch.Value.command, keywordMatch.Value.confidence);
+        }
+
+        // Stage 1b: Shared keyword with disambiguation. Manifest growth
+        // de-uniquifies working commands (discord); the shared word picks the
+        // candidate set and shared-word count plus edit distance disambiguates.
+        var sharedMatch = TrySharedKeywordMatch(inputNormalized, keywordWords, sharedIndex, logger);
+        if (sharedMatch != null)
+        {
+            logger?.Invoke($"[oww-fuzzy] SHARED KEYWORD MATCH: '{input}' -> '{sharedMatch.Value.command}' via keyword '{sharedMatch.Value.keyword}' ({sharedMatch.Value.sharedCount} shared words)");
+            return new FuzzyMatchResult(sharedMatch.Value.command, sharedMatch.Value.confidence);
         }
 
         // Stage 2: Calculate similarity score for each known command
@@ -186,6 +202,112 @@ public sealed class FuzzyMatcher
         }
 
         return wordToCommand;
+    }
+
+    /// <summary>
+    /// Builds the companion map for words shared by two or more commands.
+    /// Manifest growth de-uniquifies working commands; the shared map keeps
+    /// them routable via <see cref="TrySharedKeywordMatch"/> instead of
+    /// dropping them from keyword routing entirely.
+    /// </summary>
+    private static Dictionary<string, List<string>> BuildSharedKeywordIndex(IEnumerable<string> commands)
+    {
+        var wordCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var materialized = commands.ToList();
+
+        foreach (var command in materialized)
+        {
+            var words = NormalizeString(command).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var uniqueWords = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var word in uniqueWords)
+            {
+                if (IsStopWord(word))
+                    continue;
+
+                wordCounts[word] = wordCounts.ContainsKey(word) ? wordCounts[word] + 1 : 1;
+            }
+        }
+
+        var shared = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var command in materialized)
+        {
+            var words = NormalizeString(command).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var uniqueWords = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var word in uniqueWords)
+            {
+                if (IsStopWord(word))
+                    continue;
+
+                if (wordCounts[word] > 1)
+                {
+                    if (!shared.TryGetValue(word, out var owners))
+                    {
+                        owners = new List<string>();
+                        shared[word] = owners;
+                    }
+
+                    if (!owners.Contains(command))
+                        owners.Add(command);
+                }
+            }
+        }
+
+        return shared;
+    }
+
+    /// <summary>
+    /// Disambiguates input words owned by several commands: the candidate
+    /// sharing the most input words wins, edit distance breaks ties.
+    /// Only fires on words literally present in the input, so it cannot
+    /// invent routes the input does not name.
+    /// </summary>
+    private static (string command, string keyword, float confidence, int sharedCount)? TrySharedKeywordMatch(
+        string inputNormalized,
+        string[] keywordWords,
+        Dictionary<string, List<string>> sharedIndex,
+        Action<string>? logger)
+    {
+        var inputSet = new HashSet<string>(keywordWords, StringComparer.OrdinalIgnoreCase);
+        string? bestCommand = null;
+        string? bestKeyword = null;
+        var bestCount = -1;
+        var bestDistance = int.MaxValue;
+
+        foreach (var word in keywordWords)
+        {
+            if (!sharedIndex.TryGetValue(word, out var owners))
+                continue;
+
+            foreach (var command in owners)
+            {
+                var commandWords = NormalizeString(command)
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => !IsStopWord(w))
+                    .ToList();
+                var count = commandWords.Count(w => inputSet.Contains(w));
+                var distance = LevenshteinDistance(inputNormalized, NormalizeString(command));
+
+                if (bestCommand == null || count > bestCount ||
+                    (count == bestCount && (distance < bestDistance ||
+                        (distance == bestDistance && string.Compare(command, bestCommand, StringComparison.Ordinal) > 0))))
+                {
+                    bestCommand = command;
+                    bestKeyword = word;
+                    bestCount = count;
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        if (bestCommand != null)
+        {
+            logger?.Invoke($"[oww-fuzzy] Shared keyword: '{bestKeyword}' -> '{bestCommand}' ({bestCount} shared words)");
+            return (bestCommand, bestKeyword!, 0.90f, bestCount);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -333,9 +455,23 @@ public sealed class FuzzyMatcher
         if (v1 == v2)
             return 0.96f;
 
-        // If one contains the other, high similarity
+        // Containment is similarity only for genuine affixation (five/fiver,
+        // pony/ponytail). Coincidence containment (chat in viarchat, the in
+        // weather, eat in weather) relocates hijacks instead of removing
+        // them, so it falls through to bigram scoring. Census: legit pairs
+        // sit at length ratio 0.80, hijack pairs at 0.50 or below; affixed
+        // compounds keep a 0.50 floor.
         if (s1.Contains(s2) || s2.Contains(s1))
-            return 0.90f;
+        {
+            var shortWord = s1.Length <= s2.Length ? s1 : s2;
+            var longWord = s1.Length <= s2.Length ? s2 : s1;
+            var ratio = (float)shortWord.Length / longWord.Length;
+            if (ratio >= 0.75f)
+                return 0.90f;
+            if (ratio >= 0.50f && (longWord.StartsWith(shortWord, StringComparison.Ordinal) ||
+                                   longWord.EndsWith(shortWord, StringComparison.Ordinal)))
+                return 0.90f;
+        }
 
         // Use character bigram overlap for short words
         if (s1.Length >= 3 && s2.Length >= 3)
@@ -496,6 +632,8 @@ public sealed class FuzzyMatcher
         ["chatgpt"] = "chat gi bi ti",
         ["chat g p t"] = "chat gi bi ti",
         ["fiverr"] = "fiver",
+        ["h b o"] = "hbo",
+        ["holy"] = "hulu",
         ["pin terest"] = "pinterest",
         ["vin tid"] = "vinted"
     };
