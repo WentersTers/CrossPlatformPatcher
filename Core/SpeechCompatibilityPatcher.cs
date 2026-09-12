@@ -820,10 +820,16 @@ public static class SpeechCompatibilityPatcher
 
     private static CilBody BuildSpeechLogMethodBody(ModuleDefMD module)
     {
-        var body = new CilBody { InitLocals = false, MaxStack = 3 };
+        // Prints: <prefix><label> :: <ExceptionType>: <message>
+        // The exception detail is load-bearing: several compat failures were
+        // diagnosed only after this line started naming the inner error.
+        var body = new CilBody { InitLocals = false, MaxStack = 4 };
 
         var consoleType = ResolveFrameworkType(module, "System", "Console", "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
         var stringType = module.CorLibTypes.String.TypeDefOrRef;
+        var objectType = module.CorLibTypes.Object.TypeDefOrRef;
+        var exceptionType = module.CorLibTypes.GetTypeRef("System", "Exception");
+        var typeType = module.CorLibTypes.GetTypeRef("System", "Type");
 
         var writeLineString = new MemberRefUser(
             module,
@@ -837,8 +843,42 @@ public static class SpeechCompatibilityPatcher
             MethodSig.CreateStatic(module.CorLibTypes.String, module.CorLibTypes.String, module.CorLibTypes.String),
             stringType);
 
+        var getType = new MemberRefUser(
+            module,
+            "GetType",
+            MethodSig.CreateInstance(typeType.ToTypeSig()),
+            objectType);
+
+        var getName = new MemberRefUser(
+            module,
+            "get_Name",
+            MethodSig.CreateInstance(module.CorLibTypes.String),
+            typeType);
+
+        var getMessage = new MemberRefUser(
+            module,
+            "get_Message",
+            MethodSig.CreateInstance(module.CorLibTypes.String),
+            exceptionType);
+
+        // t = prefix + label
         body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech][fallback] System.Speech unavailable in: "));
         body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
+        // t += " :: "
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, " :: "));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
+        // t += ex.GetType().Name
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_1));
+        body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, getType));
+        body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, getName));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
+        // t += ": "
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldstr, ": "));
+        body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
+        // t += ex.Message; WriteLine(t)
+        body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_1));
+        body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, getMessage));
         body.Instructions.Add(Instruction.Create(OpCodes.Call, concat2));
         body.Instructions.Add(Instruction.Create(OpCodes.Call, writeLineString));
         body.Instructions.Add(Instruction.Create(OpCodes.Ret));
