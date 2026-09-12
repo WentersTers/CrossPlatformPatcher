@@ -24,6 +24,9 @@ public static class SpeechCompatibilityPatcher
 
         foreach (var method in methods)
         {
+            if (IsCompatHelper(method))
+                continue;
+
             if (HasSpeechRecognitionEventArg(method))
             {
                 eventLogMethod ??= EnsureSpeechEventLogMethod(module);
@@ -44,9 +47,28 @@ public static class SpeechCompatibilityPatcher
                 patched++;
         }
 
+        // Second pass: harden EmulateRecognize call sites so text dispatch
+        // survives a missing/dead recognizer. The whole-method catch above
+        // stays as the backstop; this runs after wrapping on purpose so the
+        // backstop is in place before speech calls are rewritten.
+        var hardened = 0;
+        foreach (var method in methods)
+        {
+            if (IsCompatHelper(method))
+                continue;
+
+            hardened += TryHardenEmulateCalls(module, method, ref logMethod);
+        }
+
         log?.Invoke($"System.Speech safety wrappers applied: {patched}");
         log?.Invoke($"System.Speech event probes applied: {eventLogs}");
+        log?.Invoke($"System.Speech emulate hardening applied: {hardened}");
         return patched;
+    }
+
+    private static bool IsCompatHelper(MethodDef method)
+    {
+        return string.Equals(method.DeclaringType?.Name, "CrossPlatformPatcherCompat", StringComparison.Ordinal);
     }
 
     private static bool HasSpeechRecognitionEventArg(MethodDef method)
@@ -259,6 +281,280 @@ public static class SpeechCompatibilityPatcher
         body.OptimizeBranches();
         body.OptimizeMacros();
         return true;
+    }
+
+    /// <summary>
+    /// Rewrites direct <c>EmulateRecognize(string)</c> calls to a resilient
+    /// helper that tolerates a missing or idle recognizer (null engine,
+    /// no installed SAPI voices, recognition not started). The helper mirrors
+    /// the proven voice-dispatch pattern: stop, emulate, restart, each step
+    /// guarded, null engine short-circuits to a null result.
+    /// The whole-method catch installed by <see cref="TryWrapMethodWithCatch"/>
+    /// stays in place as the backstop, so a later null dereference degrades
+    /// to today's abort instead of a crash. Methods living on the injected
+    /// helper type are skipped (the helper itself calls EmulateRecognize).
+    /// Returns the number of call sites rewritten.
+    /// </summary>
+    private static int TryHardenEmulateCalls(ModuleDefMD module, MethodDef method, ref MethodDef? logMethod)
+    {
+        if (!method.HasBody)
+            return 0;
+
+        var body = method.Body;
+        var rewritten = 0;
+
+        for (int i = 0; i < body.Instructions.Count; i++)
+        {
+            var instr = body.Instructions[i];
+            if (instr.OpCode != OpCodes.Call && instr.OpCode != OpCodes.Callvirt)
+                continue;
+
+            if (instr.Operand is not IMethod called)
+                continue;
+
+            if (!IsEmulateRecognizeCall(called))
+                continue;
+
+            // Never rewrite tail calls: the callee shape changes.
+            if (i > 0 && body.Instructions[i - 1].OpCode == OpCodes.Tailcall)
+                continue;
+
+            var helper = EnsureEmulateResilientHelper(module, called, ref logMethod);
+            if (helper is null)
+                continue;
+
+            instr.OpCode = OpCodes.Call;
+            instr.Operand = helper;
+            rewritten++;
+        }
+
+        if (rewritten > 0)
+        {
+            body.OptimizeBranches();
+            body.OptimizeMacros();
+        }
+
+        return rewritten;
+    }
+
+    private static bool IsEmulateRecognizeCall(IMethod called)
+    {
+        if (!string.Equals(called.Name, "EmulateRecognize", StringComparison.Ordinal))
+            return false;
+
+        var sig = called.MethodSig;
+        if (sig is null || !sig.HasThis || sig.Params.Count != 1)
+            return false;
+
+        if (sig.Params[0].GetElementType() != ElementType.String)
+            return false;
+
+        // RecognitionResult-style reference return; void and value returns
+        // cannot carry a recognition outcome through the helper.
+        var ret = sig.RetType.GetElementType();
+        if (ret != ElementType.Class && ret != ElementType.Object &&
+            ret != ElementType.String && ret != ElementType.SZArray)
+            return false;
+
+        var declaring = called.DeclaringType?.FullName;
+        if (string.IsNullOrEmpty(declaring) ||
+            !declaring.StartsWith("System.Speech.", StringComparison.Ordinal))
+            return false;
+
+        return true;
+    }
+
+    private static MethodDef? EnsureEmulateResilientHelper(ModuleDefMD module, IMethod emulateCall, ref MethodDef? logMethod)
+    {
+        var sig = emulateCall.MethodSig;
+        var engineRef = emulateCall.DeclaringType;
+        if (sig is null || engineRef is null)
+            return null;
+
+        var engineSig = engineRef.ToTypeSig();
+        var retSig = sig.RetType;
+        var stringSig = module.CorLibTypes.String;
+
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherCompat")
+            ?? CreateHelperType(module, "CrossPlatformPatcherCompat");
+
+        var helperName = "EmulateRecognizeResilient";
+        var existing = helperType.Methods.FirstOrDefault(m => m.Name == helperName
+            && m.MethodSig is not null
+            && m.MethodSig.Params.Count == 2
+            && m.MethodSig.Params[0].FullName == engineSig.FullName
+            && m.MethodSig.RetType.FullName == retSig.FullName);
+        if (existing is not null)
+            return existing;
+
+        var methodSig = MethodSig.CreateStatic(retSig, engineSig, stringSig);
+        var helper = new MethodDefUser(
+            helperName,
+            methodSig,
+            MethodImplAttributes.IL | MethodImplAttributes.Managed,
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+
+        logMethod ??= EnsureSpeechLogMethod(module);
+        helper.Body = BuildEmulateResilientBody(module, engineRef, retSig, logMethod);
+        helperType.Methods.Add(helper);
+        return helper;
+    }
+
+    private static CilBody BuildEmulateResilientBody(
+        ModuleDefMD module,
+        ITypeDefOrRef engineRef,
+        TypeSig retSig,
+        MethodDef logMethod)
+    {
+        var body = new CilBody { InitLocals = true, MaxStack = 3 };
+
+        var result = new Local(retSig);
+        body.Variables.Add(result);
+        var exLocal = new Local(module.CorLibTypes.GetTypeRef("System", "Exception").ToTypeSig());
+        body.Variables.Add(exLocal);
+
+        var ins = body.Instructions;
+        var exceptionType = module.CorLibTypes.GetTypeRef("System", "Exception");
+
+        // Emits try { emitBody(); Leave join; } catch { Pop; Leave join; } join:.
+        // Every edge is an explicit branch so the stack calculator never sees
+        // fallthrough into a handler with the wrong depth.
+        void EmitGuarded(Action emitBody)
+        {
+            var tryStart = Instruction.Create(OpCodes.Nop);
+            var join = Instruction.Create(OpCodes.Nop);
+            var handlerStart = Instruction.Create(OpCodes.Pop);
+            ins.Add(tryStart);
+            emitBody();
+            ins.Add(Instruction.Create(OpCodes.Leave_S, join));
+            ins.Add(handlerStart);
+            ins.Add(Instruction.Create(OpCodes.Leave_S, join));
+            ins.Add(join);
+            body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+            {
+                TryStart = tryStart,
+                TryEnd = handlerStart,
+                HandlerStart = handlerStart,
+                HandlerEnd = join,
+                CatchType = exceptionType,
+            });
+        }
+
+        // if (engine == null) return null;
+        var hasEngine = Instruction.Create(OpCodes.Nop);
+        var postNullReturn = Instruction.Create(OpCodes.Nop);
+        ins.Add(Instruction.Create(OpCodes.Ldarg_0));
+        ins.Add(Instruction.Create(OpCodes.Brtrue_S, hasEngine));
+        ins.Add(Instruction.Create(OpCodes.Ldnull));
+        ins.Add(Instruction.Create(OpCodes.Stloc, result));
+        ins.Add(Instruction.Create(OpCodes.Br_S, postNullReturn));
+        ins.Add(hasEngine);
+
+        // Guarded pre-steps: RecognizeAsyncCancel(); RecognizeAsyncStop();
+        // Missing members resolve to tolerance (each in its own handler).
+        foreach (var name in new[] { "RecognizeAsyncCancel", "RecognizeAsyncStop" })
+        {
+            var target = FindEngineMethod(module, engineRef, name, 0) ??
+                new MemberRefUser(module, name, MethodSig.CreateInstance(module.CorLibTypes.Void), engineRef);
+            EmitGuarded(() =>
+            {
+                ins.Add(Instruction.Create(OpCodes.Ldarg_0));
+                ins.Add(Instruction.Create(OpCodes.Callvirt, target));
+            });
+        }
+
+        // try { result = engine.EmulateRecognize(text); restart; }
+        // catch { log; result = null; }
+        var emulateTarget = FindEngineMethod(module, engineRef, "EmulateRecognize", 1) ??
+            new MemberRefUser(
+                module,
+                "EmulateRecognize",
+                MethodSig.CreateInstance(retSig, module.CorLibTypes.String),
+                engineRef);
+        var startTarget = FindEngineMethod(module, engineRef, "RecognizeAsync", 0) ??
+            new MemberRefUser(module, "RecognizeAsync", MethodSig.CreateInstance(module.CorLibTypes.Void), engineRef);
+
+        var mainTryStart = Instruction.Create(OpCodes.Nop);
+        var mainJoin = Instruction.Create(OpCodes.Nop);
+        var mainHandlerStart = Instruction.Create(OpCodes.Stloc, exLocal);
+        ins.Add(mainTryStart);
+        ins.Add(Instruction.Create(OpCodes.Ldarg_0));
+        ins.Add(Instruction.Create(OpCodes.Ldarg_1));
+        ins.Add(Instruction.Create(OpCodes.Callvirt, emulateTarget));
+        ins.Add(Instruction.Create(OpCodes.Stloc, result));
+
+        // Best-effort restart inside the protected region.
+        var restartTryStart = Instruction.Create(OpCodes.Nop);
+        var restartJoin = Instruction.Create(OpCodes.Nop);
+        var restartHandlerStart = Instruction.Create(OpCodes.Pop);
+        ins.Add(restartTryStart);
+        ins.Add(Instruction.Create(OpCodes.Ldarg_0));
+        ins.Add(Instruction.Create(OpCodes.Callvirt, startTarget));
+        ins.Add(Instruction.Create(OpCodes.Leave_S, restartJoin));
+        ins.Add(restartHandlerStart);
+        ins.Add(Instruction.Create(OpCodes.Leave_S, restartJoin));
+        ins.Add(restartJoin);
+        body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            TryStart = restartTryStart,
+            TryEnd = restartHandlerStart,
+            HandlerStart = restartHandlerStart,
+            HandlerEnd = restartJoin,
+            CatchType = exceptionType,
+        });
+
+        ins.Add(Instruction.Create(OpCodes.Leave_S, mainJoin));
+        ins.Add(mainHandlerStart);
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcherCompat.EmulateRecognizeResilient"));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, exLocal));
+        ins.Add(Instruction.Create(OpCodes.Call, logMethod));
+        ins.Add(Instruction.Create(OpCodes.Ldnull));
+        ins.Add(Instruction.Create(OpCodes.Stloc, result));
+        ins.Add(Instruction.Create(OpCodes.Leave_S, mainJoin));
+        ins.Add(mainJoin);
+        body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            TryStart = mainTryStart,
+            TryEnd = mainHandlerStart,
+            HandlerStart = mainHandlerStart,
+            HandlerEnd = mainJoin,
+            CatchType = exceptionType,
+        });
+
+        ins.Add(postNullReturn);
+        ins.Add(Instruction.Create(OpCodes.Ldloc, result));
+        ins.Add(Instruction.Create(OpCodes.Ret));
+
+        body.OptimizeBranches();
+        body.OptimizeMacros();
+        return body;
+    }
+
+    private static IMethod? FindEngineMethod(ModuleDefMD module, ITypeDefOrRef engineRef, string name, int paramCount)
+    {
+        var engineName = engineRef.FullName;
+        foreach (var type in module.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (!method.HasBody)
+                    continue;
+
+                foreach (var instr in method.Body.Instructions)
+                {
+                    if (instr.Operand is IMethod called &&
+                        string.Equals(called.Name, name, StringComparison.Ordinal) &&
+                        called.MethodSig is not null &&
+                        called.MethodSig.Params.Count == paramCount &&
+                        string.Equals(called.DeclaringType?.FullName, engineName, StringComparison.Ordinal))
+                    {
+                        return called;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private static MethodDef EnsureSpeechLogMethod(ModuleDefMD module)
