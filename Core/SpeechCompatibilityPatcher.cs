@@ -637,6 +637,11 @@ public static class SpeechCompatibilityPatcher
         body.Variables.Add(typeLocal);
         var methodLocal = new Local(methodBaseRef.ToTypeSig());
         body.Variables.Add(methodLocal);
+        var asmLocal = new Local(assemblyRef.ToTypeSig());
+        body.Variables.Add(asmLocal);
+        var getTypeOnAssembly = new MemberRefUser(module, "GetType",
+            MethodSig.CreateInstance(typeRef.ToTypeSig(), stringSig),
+            assemblyRef);
 
         var ins = body.Instructions;
         var exceptionType = module.CorLibTypes.GetTypeRef("System", "Exception");
@@ -647,9 +652,10 @@ public static class SpeechCompatibilityPatcher
         ins.Add(tryStart);
         ins.Add(Instruction.Create(OpCodes.Ldstr, "PAIcom.OWW"));
         ins.Add(Instruction.Create(OpCodes.Call, loadMethod));
-        ins.Add(Instruction.Create(OpCodes.Pop));
+        ins.Add(Instruction.Create(OpCodes.Stloc, asmLocal));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, asmLocal));
         ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcher.Core.OpenWakeWordHelper"));
-        ins.Add(Instruction.Create(OpCodes.Call, getTypeMethod));
+        ins.Add(Instruction.Create(OpCodes.Callvirt, getTypeOnAssembly));
         ins.Add(Instruction.Create(OpCodes.Stloc, typeLocal));
         ins.Add(Instruction.Create(OpCodes.Ldloc, typeLocal));
         ins.Add(Instruction.Create(OpCodes.Ldstr, "HandleRecognizedSpeech"));
