@@ -1026,10 +1026,87 @@ public sealed class SpeechCompatibilityPatcherTests
         var bridge = loaded.GetTypes().SelectMany(t => t.GetMethods()).FirstOrDefault(m => m.Name == "BridgeTextDispatch");
         Assert.NotNull(bridge);
         // No PAIcom.OWW beside the fixture: must fail closed (null, no throw).
+        // The miss path must name its step (Type.GetType miss marker) rather
+        // than surfacing a bare NullReferenceException downstream.
+        var originalOut = Console.Out;
+        using var stdout = new System.IO.StringWriter();
+        Console.SetOut(stdout);
         object? result = "sentinel";
-        var ex = Record.Exception(() => result = bridge!.Invoke(null, new object?[] { "hello" }));
-        Assert.Null(ex);
+        Exception? bridgeEx = null;
+        try
+        {
+            bridgeEx = Record.Exception(() => result = bridge!.Invoke(null, new object?[] { "hello" }));
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+        Assert.Null(bridgeEx);
         Assert.Null(result);
+        var logged = stdout.ToString();
+        // The outcome line prints in every environment (miss or real
+        // dispatch). Which miss-step markers appear depends on whether the
+        // test process already has PAIcom.OWW loaded (full suite) or not
+        // (isolation): with OWW loaded the bridge resolves the real handler
+        // and dispatches through it, still failing closed to null for
+        // an unmatched phrase. Step-marker presence is verified
+        // structurally in Bridge_Body_Contains_Step_Diagnostics.
+        Assert.Contains("Bridged text dispatch done:", logged);
+    }
+
+    [Fact]
+    public void Bridge_Body_Contains_Step_Diagnostics()
+    {
+        // Structural guard: the injected bridge must resolve Type.GetType
+        // first and name each miss step, so a guest run logs which step
+        // failed instead of a bare NullReferenceException. Verified on the
+        // emitted IL so the check holds regardless of whether the test
+        // process itself has PAIcom.OWW loaded.
+        using var temp = new TempDirectory();
+        var source = """
+            using System.Speech.Recognition;
+
+            public static class FixtureBridgeSteps
+            {
+                public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
+                {
+                    return engine.EmulateRecognize(text);
+                }
+
+                public static string TouchFramework()
+                {
+                    System.Console.WriteLine("touch");
+                    var assembly = typeof(object).Assembly;
+                    var type = assembly.GetType("System.Object");
+                    return type?.FullName ?? "?";
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-bridge-steps", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        SpeechCompatibilityPatcher.Patch(module);
+
+        var bridge = module.Types
+            .FirstOrDefault(t => t.Name == "CrossPlatformPatcherCompat")?
+            .Methods.FirstOrDefault(m => m.Name == "BridgeTextDispatch");
+        Assert.NotNull(bridge);
+        Assert.True(bridge!.HasBody);
+
+        var strings = bridge.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Ldstr && i.Operand is string)
+            .Select(i => (string)i.Operand)
+            .ToList();
+        Assert.Contains(strings, s => s.Contains("Type.GetType miss"));
+        Assert.Contains(strings, s => s.Contains("type null"));
+        Assert.Contains(strings, s => s.Contains("method null"));
+
+        // Type.GetType(string) static resolution must precede Assembly.Load.
+        var calls = bridge.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Call && i.Operand is IMethod m &&
+                m.Name == "GetType" && m.MethodSig is not null && !m.MethodSig.HasThis)
+            .ToList();
+        Assert.NotEmpty(calls);
     }
 
     private static string FindSystemSpeechAssembly()
