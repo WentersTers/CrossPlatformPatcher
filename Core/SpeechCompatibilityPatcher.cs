@@ -571,6 +571,10 @@ public static class SpeechCompatibilityPatcher
     /// no new static references). Returns the assistant line, or null when
     /// the bridge is unavailable; every failure is logged through the shared
     /// compat log method.
+    /// Resolution is <c>Type.GetType</c>-first (loaded assemblies, no throw
+    /// on miss) with an <c>Assembly.Load</c> fallback, and each miss step
+    /// writes a distinct console marker so a guest run names the failing
+    /// step instead of surfacing a bare NullReferenceException.
     /// </summary>
     private static MethodDef EnsureBridgeTextDispatchHelper(ModuleDefMD module, ref MethodDef? logMethod)
     {
@@ -619,7 +623,7 @@ public static class SpeechCompatibilityPatcher
         var loadMethod = new MemberRefUser(module, "Load",
             MethodSig.CreateStatic(assemblyRef.ToTypeSig(), stringSig),
             assemblyRef);
-        var getTypeMethod = new MemberRefUser(module, "GetType",
+        var typeGetTypeStatic = new MemberRefUser(module, "GetType",
             MethodSig.CreateStatic(typeRef.ToTypeSig(), stringSig), typeRef);
         var getMethodMethod = new MemberRefUser(module, "GetMethod",
             MethodSig.CreateInstance(methodInfoRef.ToTypeSig(), stringSig),
@@ -643,6 +647,17 @@ public static class SpeechCompatibilityPatcher
             MethodSig.CreateInstance(typeRef.ToTypeSig(), stringSig),
             assemblyRef);
 
+        // Console helpers are declared up front: the miss-step markers inside
+        // the try region need them before the outcome log below is emitted.
+        var consoleRef = ResolveFrameworkType(module, "System", "Console",
+            "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
+        var writeLine = new MemberRefUser(module, "WriteLine",
+            MethodSig.CreateStatic(voidSig, stringSig),
+            consoleRef);
+        var concat = new MemberRefUser(module, "Concat",
+            MethodSig.CreateStatic(stringSig, stringSig, stringSig),
+            stringSig.TypeDefOrRef);
+
         var ins = body.Instructions;
         var exceptionType = module.CorLibTypes.GetTypeRef("System", "Exception");
 
@@ -650,6 +665,19 @@ public static class SpeechCompatibilityPatcher
         var join = Instruction.Create(OpCodes.Nop);
         var handlerStart = Instruction.Create(OpCodes.Stloc, exLocal);
         ins.Add(tryStart);
+        // Step 1: Type.GetType with the assembly-qualified name. Searches
+        // loaded assemblies first and returns null (no throw) on a miss,
+        // which covers the already-loaded case without a Load context trip.
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcher.Core.OpenWakeWordHelper, PAIcom.OWW"));
+        ins.Add(Instruction.Create(OpCodes.Call, typeGetTypeStatic));
+        ins.Add(Instruction.Create(OpCodes.Stloc, typeLocal));
+        var hasType = Instruction.Create(OpCodes.Nop);
+        ins.Add(Instruction.Create(OpCodes.Ldloc, typeLocal));
+        ins.Add(Instruction.Create(OpCodes.Brtrue_S, hasType));
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech] BridgeTextDispatch: Type.GetType miss; trying Assembly.Load"));
+        ins.Add(Instruction.Create(OpCodes.Call, writeLine));
+        // Step 2 (fallback): Assembly.Load + Assembly.GetType. A missing DLL
+        // throws here and lands in the handler below (fail closed, logged).
         ins.Add(Instruction.Create(OpCodes.Ldstr, "PAIcom.OWW"));
         ins.Add(Instruction.Create(OpCodes.Call, loadMethod));
         ins.Add(Instruction.Create(OpCodes.Stloc, asmLocal));
@@ -657,10 +685,25 @@ public static class SpeechCompatibilityPatcher
         ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcher.Core.OpenWakeWordHelper"));
         ins.Add(Instruction.Create(OpCodes.Callvirt, getTypeOnAssembly));
         ins.Add(Instruction.Create(OpCodes.Stloc, typeLocal));
+        ins.Add(hasType);
+        ins.Add(Instruction.Create(OpCodes.Ldloc, typeLocal));
+        var hasType2 = Instruction.Create(OpCodes.Nop);
+        ins.Add(Instruction.Create(OpCodes.Brtrue_S, hasType2));
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech] BridgeTextDispatch: type null; bridge unavailable"));
+        ins.Add(Instruction.Create(OpCodes.Call, writeLine));
+        ins.Add(Instruction.Create(OpCodes.Leave_S, join));
+        ins.Add(hasType2);
         ins.Add(Instruction.Create(OpCodes.Ldloc, typeLocal));
         ins.Add(Instruction.Create(OpCodes.Ldstr, "HandleRecognizedSpeech"));
         ins.Add(Instruction.Create(OpCodes.Callvirt, getMethodMethod));
         ins.Add(Instruction.Create(OpCodes.Stloc, methodLocal));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, methodLocal));
+        var hasMethod = Instruction.Create(OpCodes.Nop);
+        ins.Add(Instruction.Create(OpCodes.Brtrue_S, hasMethod));
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech] BridgeTextDispatch: method null; bridge unavailable"));
+        ins.Add(Instruction.Create(OpCodes.Call, writeLine));
+        ins.Add(Instruction.Create(OpCodes.Leave_S, join));
+        ins.Add(hasMethod);
         ins.Add(Instruction.Create(OpCodes.Ldloc, methodLocal));
         ins.Add(Instruction.Create(OpCodes.Ldnull));
         ins.Add(Instruction.Create(OpCodes.Ldc_I4_1));
@@ -689,14 +732,6 @@ public static class SpeechCompatibilityPatcher
         });
 
         // Log the outcome (assistant line or empty) for validation readability.
-        var consoleRef = ResolveFrameworkType(module, "System", "Console",
-            "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
-        var writeLine = new MemberRefUser(module, "WriteLine",
-            MethodSig.CreateStatic(voidSig, stringSig),
-            consoleRef);
-        var concat = new MemberRefUser(module, "Concat",
-            MethodSig.CreateStatic(stringSig, stringSig, stringSig),
-            stringSig.TypeDefOrRef);
         ins.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech] Bridged text dispatch done: "));
         ins.Add(Instruction.Create(OpCodes.Ldloc, result));
         ins.Add(Instruction.Create(OpCodes.Call, concat));
