@@ -868,6 +868,8 @@ public sealed class SpeechCompatibilityPatcherTests
     {
         // Arrange: the missing-recognizer case must complete (not throw),
         // returning null so callers degrade exactly like the old skip path.
+        // The null-engine branch routes the phrase through the bridge, which
+        // fails closed here (no PAIcom.OWW beside the fixture) and logs it.
         using var temp = new TempDirectory();
         var source = """
             using System.Speech.Recognition;
@@ -877,6 +879,16 @@ public sealed class SpeechCompatibilityPatcherTests
                 public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
                 {
                     return engine.EmulateRecognize(text);
+                }
+
+                // Forces framework assembly references (Console, Runtime)
+                // so the injected helpers resolve outside mscorlib-only modules.
+                public static string TouchFramework()
+                {
+                    System.Console.WriteLine("touch");
+                    var assembly = typeof(object).Assembly;
+                    var type = assembly.GetType("System.Object");
+                    return type?.FullName ?? "?";
                 }
             }
             """;
@@ -897,13 +909,125 @@ public sealed class SpeechCompatibilityPatcherTests
         File.Copy(speechPath, System.IO.Path.Combine(temp.Path, "System.Speech.dll"), overwrite: true);
 
         // Act: null engine must not throw (this also JIT-verifies the
-        // injected helper body, including its exception tables).
-        var loaded = System.Reflection.Assembly.LoadFrom(patchedPath);
-        var dispatch = loaded.GetType("FixtureEmulateNull")!.GetMethod("Dispatch")!;
+        // injected helper bodies, including their exception tables).
+        // Capture console: the bridge failure path logs its label.
+        var originalOut = Console.Out;
+        using var stdout = new System.IO.StringWriter();
+        Console.SetOut(stdout);
         object? result = null;
-        var ex = Record.Exception(() => result = dispatch.Invoke(null, new object?[] { null, "hello" }));
+        Exception? ex = null;
+        try
+        {
+            var loaded = System.Reflection.Assembly.LoadFrom(patchedPath);
+            var dispatch = loaded.GetType("FixtureEmulateNull")!.GetMethod("Dispatch")!;
+            ex = Record.Exception(() => result = dispatch.Invoke(null, new object?[] { null, "hello" }));
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
 
         // Assert
+        Assert.Null(ex);
+        Assert.Null(result);
+        var logged = stdout.ToString();
+        Assert.True(
+            logged.Contains("BridgeTextDispatch") || logged.Contains("Bridged text dispatch"),
+            "expected the bridge attempt to be logged, got: " + logged);
+    }
+
+    [Fact]
+    public void Injected_Framework_Refs_Resolve_Within_Module_Refs()
+    {
+        // Regression guard: every framework MemberRef the patcher injects
+        // must live in an assembly the target module actually references.
+        // A wrong scope is a runtime TypeLoad that can even silence console
+        // output itself (observed as a startup death with an empty log).
+        using var temp = new TempDirectory();
+        var source = """
+            using System.Speech.Recognition;
+
+            public static class FixtureScopes
+            {
+                public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
+                {
+                    return engine.EmulateRecognize(text);
+                }
+
+                public static string TouchFramework()
+                {
+                    System.Console.WriteLine("touch");
+                    var assembly = typeof(object).Assembly;
+                    var type = assembly.GetType("System.Object");
+                    return type?.FullName ?? "?";
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-scopes", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        SpeechCompatibilityPatcher.Patch(module);
+
+        var refNames = module.GetAssemblyRefs().Select(a => a.Name.String).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var bad = new List<string>();
+        foreach (var type in module.Types.Where(t => t.Name == "CrossPlatformPatcherCompat"))
+        {
+            foreach (var method in type.Methods)
+            {
+                if (!method.HasBody)
+                    continue;
+                foreach (var instr in method.Body.Instructions)
+                {
+                    if (instr.Operand is IMethod called &&
+                        called.DeclaringType?.Scope is dnlib.DotNet.AssemblyRef scope &&
+                        !refNames.Contains(scope.Name))
+                    {
+                        bad.Add($"{method.Name}: {called.DeclaringType?.FullName} scope {scope.Name}");
+                    }
+                }
+            }
+        }
+
+        Assert.True(bad.Count == 0, "Unresolvable injected refs:" + Environment.NewLine + string.Join(Environment.NewLine, bad));
+    }
+
+    [Fact]
+    public void Bridge_Fails_Closed_Without_Oww()
+    {        using var temp = new TempDirectory();
+        var source = """
+            using System.Speech.Recognition;
+
+            public static class FixtureBridge
+            {
+                public static RecognitionResult Dispatch(SpeechRecognitionEngine engine, string text)
+                {
+                    return engine.EmulateRecognize(text);
+                }
+
+                public static string TouchFramework()
+                {
+                    System.Console.WriteLine("touch");
+                    var assembly = typeof(object).Assembly;
+                    var type = assembly.GetType("System.Object");
+                    return type?.FullName ?? "?";
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-bridge", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        SpeechCompatibilityPatcher.Patch(module);
+        var patchedPath = System.IO.Path.Combine(temp.Path, "fixture-bridge.patched.dll");
+        module.Write(patchedPath);
+        var speechSrc = FindSystemSpeechAssembly();
+        if (File.Exists(speechSrc))
+            File.Copy(speechSrc, System.IO.Path.Combine(temp.Path, "System.Speech.dll"), overwrite: true);
+        var loaded = System.Reflection.Assembly.LoadFrom(patchedPath);
+        var bridge = loaded.GetTypes().SelectMany(t => t.GetMethods()).FirstOrDefault(m => m.Name == "BridgeTextDispatch");
+        Assert.NotNull(bridge);
+        // No PAIcom.OWW beside the fixture: must fail closed (null, no throw).
+        object? result = "sentinel";
+        var ex = Record.Exception(() => result = bridge!.Invoke(null, new object?[] { "hello" }));
         Assert.Null(ex);
         Assert.Null(result);
     }
