@@ -440,11 +440,18 @@ public static class SpeechCompatibilityPatcher
             });
         }
 
-        // if (engine == null) return null;
+        // Null engine: the text path has no recognizer to emulate through.
+        // Bridge the phrase into the patcher's own phrase dispatcher as a
+        // side effect (same treatment voice gets), then return null to honor
+        // the caller contract. The outcome is logged by the bridge itself.
         var hasEngine = Instruction.Create(OpCodes.Nop);
         var postNullReturn = Instruction.Create(OpCodes.Nop);
+        var bridgeMethod = EnsureBridgeTextDispatchHelper(module, ref logMethod);
         ins.Add(Instruction.Create(OpCodes.Ldarg_0));
         ins.Add(Instruction.Create(OpCodes.Brtrue_S, hasEngine));
+        ins.Add(Instruction.Create(OpCodes.Ldarg_1));
+        ins.Add(Instruction.Create(OpCodes.Call, bridgeMethod));
+        ins.Add(Instruction.Create(OpCodes.Pop));
         ins.Add(Instruction.Create(OpCodes.Ldnull));
         ins.Add(Instruction.Create(OpCodes.Stloc, result));
         ins.Add(Instruction.Create(OpCodes.Br_S, postNullReturn));
@@ -557,8 +564,169 @@ public static class SpeechCompatibilityPatcher
         return null;
     }
 
-    private static MethodDef EnsureSpeechLogMethod(ModuleDefMD module)
+    /// <summary>
+    /// Injects (once) a helper that routes a raw command phrase through the
+    /// patcher's own phrase dispatcher (<c>HandleRecognizedSpeech</c> in the
+    /// PAIcom.OWW assembly, resolved at runtime so the product module needs
+    /// no new static references). Returns the assistant line, or null when
+    /// the bridge is unavailable; every failure is logged through the shared
+    /// compat log method.
+    /// </summary>
+    private static MethodDef EnsureBridgeTextDispatchHelper(ModuleDefMD module, ref MethodDef? logMethod)
     {
+        var helperType = module.Types.FirstOrDefault(t => t.Name == "CrossPlatformPatcherCompat")
+            ?? CreateHelperType(module, "CrossPlatformPatcherCompat");
+
+        const string helperName = "BridgeTextDispatch";
+        var existing = helperType.Methods.FirstOrDefault(m => m.Name == helperName);
+        if (existing is not null)
+            return existing;
+
+        var stringSig = module.CorLibTypes.String;
+        var helper = new MethodDefUser(
+            helperName,
+            MethodSig.CreateStatic(stringSig, stringSig),
+            MethodImplAttributes.IL | MethodImplAttributes.Managed,
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+
+        logMethod ??= EnsureSpeechLogMethod(module);
+        helper.Body = BuildBridgeTextDispatchBody(module, logMethod);
+        helperType.Methods.Add(helper);
+        return helper;
+    }
+
+    private static CilBody BuildBridgeTextDispatchBody(ModuleDefMD module, MethodDef logMethod)
+    {
+        var body = new CilBody { InitLocals = true, MaxStack = 5 };
+
+        var stringSig = module.CorLibTypes.String;
+        var objectSig = module.CorLibTypes.Object;
+        var voidSig = module.CorLibTypes.Void;
+        var exSig = module.CorLibTypes.GetTypeRef("System", "Exception").ToTypeSig();
+
+        var result = new Local(stringSig);
+        body.Variables.Add(result);
+        var exLocal = new Local(exSig);
+        body.Variables.Add(exLocal);
+
+        var runtimeAssemblies = new[] { "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard" };
+        var assemblyRef = ResolveFrameworkType(module, "System.Reflection", "Assembly", runtimeAssemblies);
+        var typeRef = ResolveFrameworkType(module, "System", "Type", runtimeAssemblies);
+        var methodBaseRef = ResolveFrameworkType(module, "System.Reflection", "MethodBase", runtimeAssemblies);
+        var methodInfoRef = ResolveFrameworkType(module, "System.Reflection", "MethodInfo", runtimeAssemblies);
+        var runtimeTypeHandleRef = ResolveFrameworkType(module, "System", "RuntimeTypeHandle", runtimeAssemblies);
+
+        var loadMethod = new MemberRefUser(module, "Load",
+            MethodSig.CreateStatic(assemblyRef.ToTypeSig(), stringSig),
+            assemblyRef);
+        var getTypeMethod = new MemberRefUser(module, "GetType",
+            MethodSig.CreateStatic(typeRef.ToTypeSig(), stringSig), typeRef);
+        var getMethodMethod = new MemberRefUser(module, "GetMethod",
+            MethodSig.CreateInstance(methodInfoRef.ToTypeSig(), stringSig),
+            typeRef);
+        var invokeMethod = new MemberRefUser(module, "Invoke",
+            MethodSig.CreateInstance(objectSig, objectSig,
+                new SZArraySig(objectSig)),
+            methodBaseRef);
+        var getTypeFromHandle = new MemberRefUser(module, "GetTypeFromHandle",
+            MethodSig.CreateStatic(typeRef.ToTypeSig(),
+                runtimeTypeHandleRef.ToTypeSig()),
+            typeRef);
+
+        var ins = body.Instructions;
+        var exceptionType = module.CorLibTypes.GetTypeRef("System", "Exception");
+
+        var tryStart = Instruction.Create(OpCodes.Nop);
+        var join = Instruction.Create(OpCodes.Nop);
+        var handlerStart = Instruction.Create(OpCodes.Stloc, exLocal);
+        ins.Add(tryStart);
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "PAIcom.OWW"));
+        ins.Add(Instruction.Create(OpCodes.Call, loadMethod));
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcher.Core.OpenWakeWordHelper"));
+        ins.Add(Instruction.Create(OpCodes.Call, getTypeMethod));
+        ins.Add(Instruction.Create(OpCodes.Dup));
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "HandleRecognizedSpeech"));
+        ins.Add(Instruction.Create(OpCodes.Callvirt, getMethodMethod));
+        ins.Add(Instruction.Create(OpCodes.Ldnull));
+        ins.Add(Instruction.Create(OpCodes.Ldc_I4_1));
+        ins.Add(Instruction.Create(OpCodes.Newarr, module.CorLibTypes.Object));
+        ins.Add(Instruction.Create(OpCodes.Dup));
+        ins.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+        ins.Add(Instruction.Create(OpCodes.Ldarg_0));
+        ins.Add(Instruction.Create(OpCodes.Stelem_Ref));
+        ins.Add(Instruction.Create(OpCodes.Callvirt, invokeMethod));
+        ins.Add(Instruction.Create(OpCodes.Isinst, module.CorLibTypes.String.TypeDefOrRef));
+        ins.Add(Instruction.Create(OpCodes.Stloc, result));
+        ins.Add(Instruction.Create(OpCodes.Leave_S, join));
+        ins.Add(handlerStart);
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "CrossPlatformPatcherCompat.BridgeTextDispatch"));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, exLocal));
+        ins.Add(Instruction.Create(OpCodes.Call, logMethod));
+        ins.Add(Instruction.Create(OpCodes.Leave_S, join));
+        ins.Add(join);
+        body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            TryStart = tryStart,
+            TryEnd = handlerStart,
+            HandlerStart = handlerStart,
+            HandlerEnd = join,
+            CatchType = exceptionType,
+        });
+
+        // Log the outcome (assistant line or empty) for validation readability.
+        var consoleRef = ResolveFrameworkType(module, "System", "Console",
+            "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
+        var writeLine = new MemberRefUser(module, "WriteLine",
+            MethodSig.CreateStatic(voidSig, stringSig),
+            consoleRef);
+        var concat = new MemberRefUser(module, "Concat",
+            MethodSig.CreateStatic(stringSig, stringSig, stringSig),
+            stringSig.TypeDefOrRef);
+        ins.Add(Instruction.Create(OpCodes.Ldstr, "[compat][speech] Bridged text dispatch done: "));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, result));
+        ins.Add(Instruction.Create(OpCodes.Call, concat));
+        ins.Add(Instruction.Create(OpCodes.Call, writeLine));
+        ins.Add(Instruction.Create(OpCodes.Ldloc, result));
+        ins.Add(Instruction.Create(OpCodes.Ret));
+
+        body.OptimizeBranches();
+        body.OptimizeMacros();
+        return body;
+    }
+
+    /// <summary>
+    /// Resolves a framework type by searching the module's referenced
+    /// assemblies. Framework/Mono modules (mscorlib present) resolve from
+    /// mscorlib, where these types canonically live; modern modules resolve
+    /// from their specific split assemblies. Getting the scope wrong produces
+    /// a runtime TypeLoad that can even break console output itself, so the
+    /// mscorlib check comes first whenever that reference exists.
+    /// </summary>
+    private static ITypeDefOrRef ResolveFrameworkType(
+        ModuleDefMD module, string @namespace, string name, params string[] assemblyNames)
+    {
+        var refs = module.GetAssemblyRefs().ToList();
+        bool isFramework = refs.Any(a =>
+            string.Equals(a.Name, "mscorlib", StringComparison.OrdinalIgnoreCase));
+
+        var ordered = isFramework
+            ? new[] { "mscorlib" }.Concat(assemblyNames).Distinct(StringComparer.OrdinalIgnoreCase)
+            : assemblyNames.Concat(new[] { "mscorlib" }).Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var assemblyName in ordered)
+        {
+            var assemblyRef = refs.FirstOrDefault(a =>
+                string.Equals(a.Name, assemblyName, StringComparison.OrdinalIgnoreCase));
+            if (assemblyRef is null)
+                continue;
+
+            return new TypeRefUser(module, @namespace, name, assemblyRef);
+        }
+
+        return module.CorLibTypes.GetTypeRef(@namespace, name);
+    }
+
+    private static MethodDef EnsureSpeechLogMethod(ModuleDefMD module)    {
         const string helperTypeName = "CrossPlatformPatcherCompat";
         const string helperMethodName = "LogSuppressedSpeechException";
 
@@ -654,7 +822,7 @@ public static class SpeechCompatibilityPatcher
     {
         var body = new CilBody { InitLocals = false, MaxStack = 3 };
 
-        var consoleType = module.CorLibTypes.GetTypeRef("System", "Console");
+        var consoleType = ResolveFrameworkType(module, "System", "Console", "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
         var stringType = module.CorLibTypes.String.TypeDefOrRef;
 
         var writeLineString = new MemberRefUser(
@@ -684,7 +852,7 @@ public static class SpeechCompatibilityPatcher
     {
         var body = new CilBody { InitLocals = false, MaxStack = 3 };
 
-        var consoleType = module.CorLibTypes.GetTypeRef("System", "Console");
+        var consoleType = ResolveFrameworkType(module, "System", "Console", "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
         var stringType = module.CorLibTypes.String.TypeDefOrRef;
 
         var writeLineString = new MemberRefUser(
@@ -714,7 +882,7 @@ public static class SpeechCompatibilityPatcher
     {
         var body = new CilBody { InitLocals = false, MaxStack = 5 };
 
-        var consoleType = module.CorLibTypes.GetTypeRef("System", "Console");
+        var consoleType = ResolveFrameworkType(module, "System", "Console", "System.Console", "System.Runtime", "mscorlib", "System.Private.CoreLib", "netstandard");
         var stringType = module.CorLibTypes.String.TypeDefOrRef;
         var convertType = module.CorLibTypes.GetTypeRef("System", "Convert");
 
