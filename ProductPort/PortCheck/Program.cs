@@ -7,12 +7,13 @@ using PAIcom.Product;
 
 namespace PortCheck
 {
-    // Compares the product port against twin-generated vectors.
-    // Usage: PortCheck <port-vectors.json> <commands-manifest.txt>
-    // The manifest is the release tree's commands file (wake-prefixed lines
-    // with optional "(ref)" suffixes, same shape the twin loads).
-    // Exit code: 0 when every vector matches (route exact, confidence
-    // within 0.002, stage class identical), 1 otherwise.
+        // Compares the product port against twin-generated vectors.
+        // Usage: PortCheck <port-vectors.json> <commands-manifest.txt>
+        //        PortCheck --bench <commands-manifest.txt> <iterations>
+        // The manifest is the release tree's commands file (wake-prefixed lines
+        // with optional "(ref)" suffixes, same shape the twin loads).
+        // Exit code: 0 when every vector matches (route exact, confidence
+        // within 0.002, stage class identical), 1 otherwise.
     internal static class Program
     {
         private static readonly string[] WakePrefixes =
@@ -22,9 +23,15 @@ namespace PortCheck
 
         private static int Main(string[] args)
         {
+            if (args.Length == 3 && args[0] == "--bench")
+            {
+                return RunBench(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture));
+            }
+
             if (args.Length != 2)
             {
                 Console.WriteLine("Usage: PortCheck <port-vectors.json> <commands-manifest.txt>");
+                Console.WriteLine("       PortCheck --bench <commands-manifest.txt> <iterations>");
                 return 2;
             }
 
@@ -64,6 +71,39 @@ namespace PortCheck
 
             Console.WriteLine("PORTCHECK: " + pass + "/" + (pass + fail) + " pass");
             return fail == 0 ? 0 : 1;
+        }
+
+        // Latency probe: mean/p95 per-match milliseconds over iterations x
+        // candidates. Same code path as validation (FindBestMatch full).
+        private static int RunBench(string manifestPath, int iterations)
+        {
+            List<string> candidates = LoadCandidates(manifestPath);
+            List<double> samples = new List<double>(candidates.Count);
+            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+            for (int it = 0; it < iterations; it++)
+            {
+                foreach (string c in candidates)
+                {
+                    sw.Restart();
+                    ProductCommandMatcher.FindBestMatch(c, candidates, 0.80f);
+                    sw.Stop();
+                    samples.Add(sw.Elapsed.TotalMilliseconds);
+                }
+            }
+            samples.Sort();
+            double sum = 0.0;
+            foreach (double s in samples)
+                sum += s;
+            double mean = sum / samples.Count;
+            double p50 = samples[(int)(samples.Count * 0.50)];
+            double p95 = samples[(int)(samples.Count * 0.95)];
+            double max = samples[samples.Count - 1];
+            Console.WriteLine("BENCH n=" + samples.Count +
+                " mean_ms=" + mean.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) +
+                " p50_ms=" + p50.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) +
+                " p95_ms=" + p95.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) +
+                " max_ms=" + max.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
+            return 0;
         }
 
         private static string StageClass(string how)
