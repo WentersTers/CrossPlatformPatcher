@@ -102,6 +102,9 @@
     <Compile Remove="TestVosk\**\*.cs" />
     <EmbeddedResource Remove="TestVosk\**\*" />
     <None Remove="TestVosk\**\*" />
+    <Compile Remove="ProductPort\**\*.cs" />
+    <EmbeddedResource Remove="ProductPort\**\*" />
+    <None Remove="ProductPort\**\*" />
     <Compile Remove="SetupWizardWindows\**\*.cs" />
     <EmbeddedResource Remove="SetupWizardWindows\**\*" />
     <None Remove="SetupWizardWindows\**\*" />
