@@ -63,8 +63,17 @@ public sealed class VoskSidecarClientTests
             "open the browser",
             VoskSidecarClient.ExtractField("{\"text\":\"open the browser\"}", "text"));
         Assert.Equal(
+            "open the browser",
+            VoskSidecarClient.ExtractField("{\"text\": \"open the browser\"}", "text"));
+        Assert.Equal(
+            "open the browser",
+            VoskSidecarClient.ExtractField("{ \"text\" : \"open the browser\" }", "text"));
+        Assert.Equal(
             "open hulu",
             VoskSidecarClient.ExtractField("{\"partial\":\"open hulu\"}", "partial"));
+        Assert.Equal(
+            "a \"quoted\" phrase",
+            VoskSidecarClient.ExtractField("{\"text\":\"a \\\"quoted\\\" phrase\"}", "text"));
         Assert.Null(VoskSidecarClient.ExtractField("{}", "text"));
         Assert.Null(VoskSidecarClient.ExtractField("{\"text\":\"\"}", "text"));
         Assert.Null(VoskSidecarClient.ExtractField("{\"text\":\"   \"}", "text"));
