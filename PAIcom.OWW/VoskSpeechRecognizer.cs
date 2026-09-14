@@ -75,11 +75,13 @@ public class VoskSpeechRecognizer : IDisposable
             // Sidecar first (before any native touchpoint: even SetLogLevel
             // can throw under wine-mono when libvosk is unloadable, which
             // would pre-empt a later branch). Absent on Windows (connection
-            // refused, fast) -> native path below, unchanged. Grammar is the
-            // same phonetic fallback the native path uses without a model.
+            // refused, fast) -> native path below, unchanged.
+            // Grammar is intentionally null (open recognizer): a fragment
+            // grammar over-constrains decode to alias soup and no real
+            // command can ever emerge; the matcher owns constraining.
             var sidecar = new VoskSidecarClient(null, LogEvent);
             if (sidecar.CheckHealth() &&
-                sidecar.Init(16000f, FuzzyMatcher.GetPhoneticGrammarTerms().ToArray()))
+                sidecar.Init(16000f, null))
             {
                 _sidecar = sidecar;
                 LogEvent("[vosk-speech] Vosk recognizer initialized successfully (sidecar)");
