@@ -72,6 +72,23 @@ public class VoskSpeechRecognizer : IDisposable
 
             LogEvent("[vosk-speech] backend.selected=vosk+onnx");
 
+            // Sidecar first (before any native touchpoint: even SetLogLevel
+            // can throw under wine-mono when libvosk is unloadable, which
+            // would pre-empt a later branch). Absent on Windows (connection
+            // refused, fast) -> native path below, unchanged. Grammar is the
+            // same phonetic fallback the native path uses without a model.
+            var sidecar = new VoskSidecarClient(null, LogEvent);
+            if (sidecar.CheckHealth() &&
+                sidecar.Init(16000f, FuzzyMatcher.GetPhoneticGrammarTerms().ToArray()))
+            {
+                _sidecar = sidecar;
+                LogEvent("[vosk-speech] Vosk recognizer initialized successfully (sidecar)");
+                LogEvent("[vosk-speech] backend.active=vosk-sidecar");
+                initStatus = "ok:sidecar";
+                return true;
+            }
+            sidecar.Dispose();
+
             // Try to load Vosk.dll from embedded resources
             if (!LoadVoskAssembly())
             {
@@ -146,20 +163,6 @@ public class VoskSpeechRecognizer : IDisposable
                     grammarTerms = FuzzyMatcher.GetPhoneticGrammarTerms().ToArray();
                     LogEvent($"[vosk-speech] Using built-in phonetic grammar fallback with {grammarTerms.Length} term(s)");
                 }
-
-                // Sidecar first: Linux-native x64 Vosk over loopback. Absent on
-                // Windows (connection refused, fast) -> native path below,
-                // unchanged. Grammar mirrors the native recognizer's terms.
-                var sidecar = new VoskSidecarClient(null, LogEvent);
-                if (sidecar.CheckHealth() && sidecar.Init(16000f, grammarTerms))
-                {
-                    _sidecar = sidecar;
-                    LogEvent("[vosk-speech] Vosk recognizer initialized successfully (sidecar)");
-                    LogEvent("[vosk-speech] backend.active=vosk-sidecar");
-                    initStatus = "ok:sidecar";
-                    return true;
-                }
-                sidecar.Dispose();
 
                 // Create recognizer
                 try
