@@ -227,8 +227,13 @@ public class VoskSpeechRecognizer : IDisposable
         {
             try
             {
+                LogEvent("[vosk-sidecar] accept enter len=" + (audioData != null ? audioData.Length : -1));
                 if (!_sidecar.Accept(audioData))
+                {
+                    LogEvent("[vosk-sidecar] accept returned false");
                     return null;
+                }
+                LogEvent("[vosk-sidecar] accept ok");
                 var sidecarPartial = _sidecar.GetPartial();
                 if (!string.IsNullOrEmpty(sidecarPartial) && sidecarPartial != "{}")
                 {
@@ -292,7 +297,9 @@ public class VoskSpeechRecognizer : IDisposable
         {
             try
             {
-                return _sidecar.GetFinal();
+                var finalText = _sidecar.GetFinal();
+                LogEvent("[vosk-sidecar] final text=" + (finalText != null ? ("len=" + finalText.Length) : "null"));
+                return finalText;
             }
             catch
             {
