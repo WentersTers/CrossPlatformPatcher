@@ -20,6 +20,7 @@ public class VoskSpeechRecognizer : IDisposable
     private readonly Action<string>? _logger;
     private dynamic? _voskModel;
     private dynamic? _voskRecognizer;
+    private VoskSidecarClient? _sidecar;
     private string? _lastPartialResult;
     private bool _disposed;
 
@@ -146,6 +147,20 @@ public class VoskSpeechRecognizer : IDisposable
                     LogEvent($"[vosk-speech] Using built-in phonetic grammar fallback with {grammarTerms.Length} term(s)");
                 }
 
+                // Sidecar first: Linux-native x64 Vosk over loopback. Absent on
+                // Windows (connection refused, fast) -> native path below,
+                // unchanged. Grammar mirrors the native recognizer's terms.
+                var sidecar = new VoskSidecarClient(null, LogEvent);
+                if (sidecar.CheckHealth() && sidecar.Init(16000f, grammarTerms))
+                {
+                    _sidecar = sidecar;
+                    LogEvent("[vosk-speech] Vosk recognizer initialized successfully (sidecar)");
+                    LogEvent("[vosk-speech] backend.active=vosk-sidecar");
+                    initStatus = "ok:sidecar";
+                    return true;
+                }
+                sidecar.Dispose();
+
                 // Create recognizer
                 try
                 {
@@ -203,6 +218,26 @@ public class VoskSpeechRecognizer : IDisposable
     /// </summary>
     public string? ProcessAudioChunk(byte[] audioData)
     {
+        if (_sidecar != null)
+        {
+            try
+            {
+                if (!_sidecar.Accept(audioData))
+                    return null;
+                var sidecarPartial = _sidecar.GetPartial();
+                if (!string.IsNullOrEmpty(sidecarPartial) && sidecarPartial != "{}")
+                {
+                    _lastPartialResult = sidecarPartial;
+                    LogEvent($"[vosk-speech] Partial: {sidecarPartial}");
+                }
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         if (_voskRecognizer == null)
             return null;
 
@@ -248,6 +283,18 @@ public class VoskSpeechRecognizer : IDisposable
     /// </summary>
     public string? GetFinalResult()
     {
+        if (_sidecar != null)
+        {
+            try
+            {
+                return _sidecar.GetFinal();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         if (_voskRecognizer == null)
             return null;
 
@@ -600,6 +647,8 @@ public class VoskSpeechRecognizer : IDisposable
         {
             _voskRecognizer?.Dispose();
             _voskModel?.Dispose();
+            _sidecar?.Dispose();
+            _sidecar = null;
         }
         catch { }
 
