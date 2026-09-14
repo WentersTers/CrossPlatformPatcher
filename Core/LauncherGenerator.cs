@@ -241,7 +241,6 @@ public static class LauncherGenerator
                     # broke every boot with Z:\files\yes.txt not found.
                     nohup python3 "$SCRIPT_DIR/vosk-sidecar.py" >>"$SCRIPT_DIR/vosk-sidecar.log" 2>&1 &
                     echo $! > "$SCRIPT_DIR/vosk-sidecar.pid"
-                    cd - >/dev/null 2>&1 || true
                     i=0
                     while [ "$i" -lt 6 ]; do
                         if python3 -c 'import urllib.request,os;urllib.request.urlopen(os.environ.get("PAICOM_VOSK_SIDECAR_URL","")+"health",timeout=3)' >/dev/null 2>&1; then
