@@ -224,6 +224,30 @@ public static class LauncherGenerator
                     log "Vosk model path set: $PAICOM_VOSK_MODEL_PATH"
                 fi
 
+                # Vosk sidecar (loopback speech recognition for 32-bit
+                # processes): the app cannot load the x64 native itself, so
+                # recognition runs beside it. Missing script/python skips
+                # silently (fail-closed: no voice, never a crash).
+                if command -v python3 >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/vosk-sidecar.py" ]; then
+                    PAICOM_VOSK_SIDECAR_URL="${PAICOM_VOSK_SIDECAR_URL:-http://127.0.0.1:18080/}"
+                    export PAICOM_VOSK_SIDECAR_URL
+                    export no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"
+                    export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
+                    pkill -9 -f "vosk-sidecar\.py" 2>/dev/null || true
+                    cd "$SCRIPT_DIR" && nohup python3 vosk-sidecar.py >>"$SCRIPT_DIR/vosk-sidecar.log" 2>&1 &
+                    echo $! > "$SCRIPT_DIR/vosk-sidecar.pid"
+                    cd - >/dev/null 2>&1 || true
+                    i=0
+                    while [ "$i" -lt 6 ]; do
+                        if python3 -c 'import urllib.request,os;urllib.request.urlopen(os.environ.get("PAICOM_VOSK_SIDECAR_URL","")+"health",timeout=3)' >/dev/null 2>&1; then
+                            log "vosk-sidecar healthy"
+                            break
+                        fi
+                        i=$((i + 1))
+                        sleep 2
+                    done
+                fi
+
                 printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
 
                 "$@" >> "$RUNTIME_LOG" 2>&1 &
@@ -237,6 +261,10 @@ public static class LauncherGenerator
 
                 kill "$TAIL_PID" 2>/dev/null || true
                 wait "$TAIL_PID" 2>/dev/null || true
+                if [ -f "$SCRIPT_DIR/vosk-sidecar.pid" ]; then
+                    kill "$(cat "$SCRIPT_DIR/vosk-sidecar.pid")" 2>/dev/null || true
+                    rm -f "$SCRIPT_DIR/vosk-sidecar.pid"
+                fi
 
                 set -e
                 log "Runtime exited with code: $EXIT_CODE"
