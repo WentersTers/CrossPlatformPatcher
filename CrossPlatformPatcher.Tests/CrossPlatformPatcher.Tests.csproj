@@ -24,6 +24,11 @@
     <!-- Keep the nested TestModuleTypes project out of this project's default
          **/*.cs glob so its sources and generated AssemblyInfo do not double-compile. -->
     <Compile Remove="TestModuleTypes/**" />
+    <!-- Shared-source include of the sidecar client (same pattern as the main
+         project's OWW-subset includes): tests the exact bytes that ship,
+         without referencing the OWW assembly (which would double the
+         CrossPlatformPatcher.Core type identity). -->
+    <Compile Include="..\PAIcom.OWW\VoskSidecarClient.cs" />
   </ItemGroup>
 
   <ItemGroup>
