@@ -12,7 +12,7 @@
 #   The FINAL libvirt domain adds an emulator TPM at import (libvirt manages
 #   swtpm lifecycle); the build itself stays hermetic (no swtpm daemon dance).
 #   Cost: SecureBoot-dependent features absent — irrelevant to the harness.
-# - Build disk is SATA, build NIC is e1000 (inbox drivers, zero extra ISOs).
+# - Build disk is IDE, build NIC is e1000 (inbox drivers, zero extra ISOs).
 #   Packer's user-mode net stays virtio-net (unused in guest); the e1000 rides
 #   the same netdev so hostfwd SSH works through a driven NIC.
 # - Communicator is SSH: OpenSSH.Server lands via FirstLogonCommands (needs
@@ -111,8 +111,18 @@ source "qemu" "windows-11-eval" {
   output_directory = var.output_directory
   vm_name          = var.vm_name
   disk_size        = var.disk_size
-  disk_interface   = "sata"
+  disk_interface   = "ide"
   format           = "qcow2"
+
+  # e1000: inbox driver on 25H2, so no driver ISO is needed for build-time
+  # network (packer's user-mode net + SSH hostfwd ride this NIC).
+  net_device = "e1000"
+
+  # Emulated TPM 2.0 at BUILD time (packer manages swtpm): the golden grows
+  # up with the TPM present, so import adds no device delta. LabConfig
+  # bypasses still carry the BIOS/MBR install; SecureBoot stays absent
+  # (fidelity note in header).
+  vtpm = true
 
   accelerator = "kvm"
   cpu_model   = "host"
@@ -137,19 +147,23 @@ source "qemu" "windows-11-eval" {
   ssh_username   = var.ssh_username
   ssh_password   = var.ssh_password
   ssh_timeout    = "45m"
+  # Win32-OpenSSH >= 9.1 scp returns non-zero (MOTW); SFTP is the
+  # documented workaround.
+  ssh_file_transfer_method = "sftp"
 
   shutdown_command = "shutdown /s /t 5 /f /c \"packer\""
 
   boot_wait = "45s"
 
+  # pc (i440fx) machine: inbox IDE + e1000 + USB HID everywhere, so no
+  # driver ISO is needed. (q35 has no IDE controller and QEMU 6.2 rejects
+  # -drive if=sata without an AHCI device — first-build finding.)
+  # Packer's own -machine default (with accel=kvm) is left intact.
   qemuargs = [
-    ["-machine", "q35"],
     ["-vga", "std"],
     ["-device", "qemu-xhci"],
     ["-device", "usb-tablet"],
     ["-device", "usb-kbd"],
-    # Driven NIC on packer's user-mode netdev (virtio-net stays undriven).
-    ["-device", "e1000-82545em,netdev=user.0"],
   ]
 }
 
