@@ -242,10 +242,11 @@ namespace PAIcom.Product
             if (NormalizeWordVariant(s1) == NormalizeWordVariant(s2))
                 return 0.96f;
 
-            // Containment counts only for genuine affixation. Coincidence
+            // Containment counts only for genuine prefix affixation. Coincidence
             // containment (chat in viarchat, the in weather) falls through
-            // to bigram scoring. Census: legit pairs at ratio 0.80, hijack
-            // pairs at 0.50 or below; affixed compounds keep a 0.50 floor.
+            // to bigram scoring. Census: legit pairs at ratio 0.80, sole
+            // floor pair a prefix compound (ponytail); suffix coincidence
+            // at 0.50 (chat IS a suffix of viarchat) must not qualify.
             if (s1.Contains(s2) || s2.Contains(s1))
             {
                 string shortWord = s1.Length <= s2.Length ? s1 : s2;
@@ -254,8 +255,7 @@ namespace PAIcom.Product
                 if (ratio >= ContainMinRatio)
                     return 0.90f;
                 if (ratio >= ContainAffixFloor &&
-                    (longWord.StartsWith(shortWord, StringComparison.Ordinal) ||
-                     longWord.EndsWith(shortWord, StringComparison.Ordinal)))
+                    longWord.StartsWith(shortWord, StringComparison.Ordinal))
                     return 0.90f;
             }
 
