@@ -200,11 +200,22 @@ namespace CrossPlatformPatcher.Core
         {
             if (string.IsNullOrEmpty(body) || string.IsNullOrEmpty(field))
                 return null;
-            string token = "\"" + field + "\":\"";
-            int start = body.IndexOf(token, StringComparison.Ordinal);
-            if (start < 0)
+            // Tolerate whitespace around the colon: server JSON uses
+            // standard separators ({"text": "..."}), so find "field",
+            // then the opening quote after the colon.
+            string token = "\"" + field + "\"";
+            int keyIndex = body.IndexOf(token, StringComparison.Ordinal);
+            if (keyIndex < 0)
                 return null;
-            start += token.Length;
+            int colon = body.IndexOf(':', keyIndex + token.Length);
+            if (colon < 0)
+                return null;
+            int start = colon + 1;
+            while (start < body.Length && char.IsWhiteSpace(body[start]))
+                start++;
+            if (start >= body.Length || body[start] != '"')
+                return null;
+            start++;
             StringBuilder sb = new StringBuilder();
             for (int i = start; i < body.Length; i++)
             {
