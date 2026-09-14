@@ -113,6 +113,25 @@ public sealed class FuzzyMatcherTests
     }
 
     [Fact]
+    public void FindClosestMatch_Rejects_Suffix_Coincidence_At_Floor()
+    {
+        // chat IS a suffix of viarchat at exactly 0.50: the affix floor is
+        // prefix-only, so no partial route may fire here.
+        var commands = new[]
+        {
+            "open the viarchat website",
+            "open torch"
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("chat", commands, 0.80f);
+
+        Assert.True(
+            match == null || match.MatchedCommand != "open the viarchat website",
+            "suffix coincidence must not route to viarchat, got: " +
+            (match == null ? "null" : match.MatchedCommand));
+    }
+
+    [Fact]
     public void FindClosestMatch_Keeps_Affixed_Compounds()
     {
         // five/fiver (0.80) and pony/ponytail (prefix, 0.50) are affixation.
