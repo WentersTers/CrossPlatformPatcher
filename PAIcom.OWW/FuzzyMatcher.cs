@@ -455,12 +455,14 @@ public sealed class FuzzyMatcher
         if (v1 == v2)
             return 0.96f;
 
-        // Containment is similarity only for genuine affixation (five/fiver,
-        // pony/ponytail). Coincidence containment (chat in viarchat, the in
-        // weather, eat in weather) relocates hijacks instead of removing
-        // them, so it falls through to bigram scoring. Census: legit pairs
-        // sit at length ratio 0.80, hijack pairs at 0.50 or below; affixed
-        // compounds keep a 0.50 floor.
+        // Containment is similarity only for genuine prefix affixation
+        // (five/fiver, pony/ponytail). Coincidence containment (chat in
+        // viarchat, the in weather, eat in weather) relocates hijacks
+        // instead of removing them, so it falls through to bigram scoring.
+        // Census: legit pairs sit at length ratio 0.80; the sole floor pair
+        // is a prefix compound (ponytail). Suffix coincidence at low ratios
+        // is distributionally accident: chat IS a suffix of viarchat at
+        // exactly 0.50 and must not qualify.
         if (s1.Contains(s2) || s2.Contains(s1))
         {
             var shortWord = s1.Length <= s2.Length ? s1 : s2;
@@ -468,8 +470,7 @@ public sealed class FuzzyMatcher
             var ratio = (float)shortWord.Length / longWord.Length;
             if (ratio >= 0.75f)
                 return 0.90f;
-            if (ratio >= 0.50f && (longWord.StartsWith(shortWord, StringComparison.Ordinal) ||
-                                   longWord.EndsWith(shortWord, StringComparison.Ordinal)))
+            if (ratio >= 0.50f && longWord.StartsWith(shortWord, StringComparison.Ordinal))
                 return 0.90f;
         }
 
