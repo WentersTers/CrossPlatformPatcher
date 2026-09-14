@@ -234,7 +234,12 @@ public static class LauncherGenerator
                     export no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"
                     export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
                     pkill -9 -f "vosk-sidecar\.py" 2>/dev/null || true
-                    cd "$SCRIPT_DIR" && nohup python3 vosk-sidecar.py >>"$SCRIPT_DIR/vosk-sidecar.log" 2>&1 &
+                    # NOTE: no cd here on purpose - the app resolves relative
+                    # paths (files\yes.txt) against the process working
+                    # directory, which must stay $SCRIPT_DIR (set at the top
+                    # of this script). An earlier revision cd-ed away and
+                    # broke every boot with Z:\files\yes.txt not found.
+                    nohup python3 "$SCRIPT_DIR/vosk-sidecar.py" >>"$SCRIPT_DIR/vosk-sidecar.log" 2>&1 &
                     echo $! > "$SCRIPT_DIR/vosk-sidecar.pid"
                     cd - >/dev/null 2>&1 || true
                     i=0
