@@ -4,6 +4,8 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
+    <!-- Reproducible release bytes: stable MVID per source (v0.1.1 DLL was pre-flag). -->
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
 
   <ItemGroup>
