@@ -168,4 +168,60 @@ public sealed class FuzzyMatcherTests
         Assert.NotNull(hulu);
         Assert.Equal("open hulu", hulu!.MatchedCommand);
     }
+
+    [Fact]
+    public void FindClosestMatch_Shared_Beats_Partial_On_Wake_Debris()
+    {
+        // Order-discriminating vector (Windows census pie-preemption):
+        // partial-first routed "pie" ~ "piece" to furniture; twin order
+        // (shared first) resolves play+some+music. Live-observed input.
+        var commands = new[]
+        {
+            "play some music",
+            "if you would be a piece of furniture what would you be"
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("the pie comb play some music music down", commands, 0.80f);
+
+        Assert.NotNull(match);
+        Assert.Equal("play some music", match!.MatchedCommand);
+    }
+
+    [Fact]
+    public void FindClosestMatch_Wake_Debris_Does_Not_Fire_Partial()
+    {
+        // "pie"/"comb"/"calm" are stopwords (manifest-gated, never command
+        // vocabulary): debris-only transcripts must safe-reject, never route.
+        // Pre-fix this partial-fired pie~piece to furniture.
+        var commands = new[]
+        {
+            "open youtube",
+            "if you would be a piece of furniture what would you be"
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("hey pie comb", commands, 0.80f);
+
+        Assert.True(
+            match == null || match.MatchedCommand != "if you would be a piece of furniture what would you be",
+            "debris must not route to furniture, got: " +
+            (match == null ? "null" : match.MatchedCommand));
+    }
+
+    [Fact]
+    public void FindClosestMatch_Partial_Still_Fires_Without_Shared_Content()
+    {
+        // The reorder must not kill legitimate partials: with no exact or
+        // shared content present, prefix containment within the floor still
+        // routes (spotif is contained in spotify at 6/7 = 0.857 >= 0.75).
+        var commands = new[]
+        {
+            "open spotify",
+            "if you would be a piece of furniture what would you be"
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("spotif", commands, 0.80f);
+
+        Assert.NotNull(match);
+        Assert.Equal("open spotify", match!.MatchedCommand);
+    }
 }

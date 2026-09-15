@@ -18,7 +18,14 @@ public sealed class FuzzyMatcher
     /// Find the best matching command from a set of known commands.
     ///
     /// Uses a multi-stage matching pipeline:
-    /// 1. Keyword matching (if a unique keyword like "roblox" is found)
+    /// 1. Keyword matching - exact unique keywords, then partial similarity
+    ///    (typos/misrecognitions). Partial stays inside Stage 1 (before
+    ///    shared) deliberately: singular/plural normalization (friend~friends,
+    ///    cinema~cinemas at 0.96) must beat shared-stage lev tiebreaks.
+    ///    Debris protection comes from stopwords + wake-strip, not order
+    ///    (order-diff 2026-09-14 proved a reorder regresses idx34/83-type
+    ///    rows while fixing pie rows).
+    /// 1b. Shared keyword with disambiguation (content-word candidate sets)
     /// 2. Levenshtein distance (fuzzy string matching)
     /// 3. Word overlap bonus
     ///
@@ -52,7 +59,8 @@ public sealed class FuzzyMatcher
         logger?.Invoke($"[oww-fuzzy] Built keyword index with {keywordIndex.Count} unique keywords");
         var sharedIndex = BuildSharedKeywordIndex(knownCommands);
 
-        // Stage 1: Try exact keyword match first
+        // Stage 1: Try keyword match: exact unique keywords, then partial
+        // similarity for typos/misrecognitions (inside Stage 1 by design).
         var keywordMatch = TryKeywordMatch(inputNormalized, keywordWords, keywordIndex, knownCommands, logger);
         if (keywordMatch != null)
         {
@@ -314,6 +322,9 @@ public sealed class FuzzyMatcher
     /// Tries to find a unique keyword match in the input.
     /// If a keyword like "roblox", "spotify", "aliexpress" appears in input
     /// and only belongs to ONE command, return that command immediately.
+    /// Falls through to partial similarity (same call) for typos and
+    /// singular/plural normalization, which must beat shared-stage lev
+    /// tiebreaks on sibling rivalries.
     /// </summary>
     private static (string command, string keyword, float confidence)? TryKeywordMatch(
         string input,
@@ -331,7 +342,7 @@ public sealed class FuzzyMatcher
             }
         }
 
-        // Also try partial matches: check if any keyword contains or is contained by input words
+        // Partial matches: check if any keyword contains or is contained by input words
         foreach (var word in inputWords)
         {
             if (IsStopWord(word))
@@ -563,7 +574,11 @@ public sealed class FuzzyMatcher
         "you", "your", "yours", "yourself", "yourselves", "he", "him", "his",
         "himself", "she", "her", "hers", "herself", "it", "its", "itself",
         "they", "them", "their", "theirs", "themselves", "what", "which", "who",
-        "whom", "this", "that", "these", "those", "am", "about"
+        "whom", "this", "that", "these", "those", "am", "about",
+        // Wake-word debris: ASR emits wake fragments ("hey pie comb") the
+        // exact prefixes miss. Manifest-gated 2026-09-14: no command body
+        // contains these as content vocabulary.
+        "pie", "comb", "calm",
     };
 
     /// <summary>
