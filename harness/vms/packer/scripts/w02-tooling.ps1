@@ -2,6 +2,9 @@
 # Pinned MSI from python.org (host egress proven). No Vosk model here —
 # the model lands at sidecar stage. .NET Framework is inbox; nothing to do.
 $ErrorActionPreference = "Stop"
+# Headless provisioner sessions have no console buffer; download progress
+# rendering throws (ReadConsoleOutput 0x5). Silence it (Win10 build finding).
+$ProgressPreference = "SilentlyContinue"
 
 $ver = "3.12.7"
 $msi = "$env:TEMP\python-$ver-amd64.exe"
