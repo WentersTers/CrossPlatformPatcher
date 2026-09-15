@@ -387,6 +387,16 @@ public static class OpenWakeWordHelper
         "paicom"
     };
 
+    /// <summary>
+    /// Wake-vocabulary tokens consumed from the leading region by
+    /// <see cref="NormalizeCommandText"/> after the exact-prefix pass.
+    /// Manifest-gated: no command body uses these as content vocabulary.
+    /// </summary>
+    private static readonly HashSet<string> WakeVocabulary = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "hey", "pie", "comb", "calm", "paicom", "com",
+    };
+
     private sealed class CommandManifestEntry
     {
         public CommandManifestEntry(string matchPhrase, string dispatchPhrase, string commandToken, string? scriptReference)
@@ -3510,6 +3520,18 @@ public static class OpenWakeWordHelper
                 break;
             }
         }
+
+        // Wake-vocabulary strip: ASR emits wake-word debris variants the exact
+        // prefixes miss ("hey pie comb", "hey pie calm", mid-string "the pie
+        // comb"). Consume leading wake-vocabulary tokens (bounded) after the
+        // exact-prefix pass. Manifest-gated 2026-09-14: no command body starts
+        // with or contains these tokens as content vocabulary.
+        var words = normalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        var eaten = 0;
+        while (eaten < words.Length && eaten < 4 && WakeVocabulary.Contains(words[eaten]))
+            eaten++;
+        if (eaten > 0)
+            normalized = string.Join(" ", words, eaten, words.Length - eaten);
 
         return normalized.TrimStart(',', '.', '!', '?', ':', ';');
     }
