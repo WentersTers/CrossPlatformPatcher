@@ -23,8 +23,13 @@
 #
 # ISO GATE (2026-09-15): the held windows-10-19041.1.iso (sha256 8a529c42…)
 # is ZERO-PAYLOAD (install.esd reads zeros, boot.wim XML unparsable) and
-# must NOT build. Place good media at iso_path, set iso_checksum + image_name
-# (read the NAME via wimlib-imagex info on the host), then build.
+# must NOT build. Good media: Win10 Enterprise LTSC 2021 x64 en-us
+# (21H2 19044.1288, MSDN SW_DVD9 MLF_X22-84414), sha256-verified against
+# archive.org metadata + rg-adguard + MS Q&A (c90a6df8…, size 4899461120),
+# structural check passed (boot.wim 2 images, install.wim MSWIM magic,
+# index 1 = Windows 10 Enterprise LTSC 2021). LTSC retail channel: no
+# 90-day eval clock (runs unactivated, watermark cosmetic) — eval-clock
+# discipline does not apply; note activation state at snapshot instead.
 
 packer {
   required_plugins {
@@ -55,18 +60,18 @@ variable "password_hash" {
 
 variable "iso_path" {
   type    = string
-  default = "/home/sage/iso/windows-10-good.iso"
+  default = "/home/sage/iso/w10-ltsc2021-en.iso"
 }
 
 variable "iso_checksum" {
   type    = string
-  default = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  description = "Zero-hash placeholder: set from good media before build; packer fails fast on mismatch."
+  default = "sha256:c90a6df8997bf49e56b9673982f3e80745058723a707aef8f22998ae6479597d"
+  description = "Win10 Enterprise LTSC 2021 x64 en-us MSDN (verified 2026-09-15)."
 }
 
 variable "image_name" {
   type    = string
-  default = "Windows 10 Enterprise Evaluation"
+  default = "Windows 10 Enterprise LTSC 2021"
   description = "Must equal an /IMAGE/NAME in the ISO (wimlib-imagex info); setup fails loud otherwise."
 }
 
