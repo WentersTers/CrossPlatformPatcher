@@ -82,7 +82,8 @@ variable "cpus" {
 
 variable "memory" {
   type    = number
-  default = 6144
+  default = 4096
+  description = "4GB: Win10 LTSC setup is comfortable here; host has 15GB with Win11 stage resident (6GB). Import domain gets 6GB later."
 }
 
 variable "disk_size" {
