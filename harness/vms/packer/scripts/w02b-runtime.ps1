@@ -11,6 +11,7 @@ if (-not (Test-Path $inst)) { throw "runtime installer missing at $inst" }
 Start-Process -FilePath $inst -ArgumentList "/install", "/quiet", "/norestart" -Wait
 $rt = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" -ErrorAction SilentlyContinue
 if (-not $rt) { throw "VC++ x64 runtime key absent after install" }
-if ([version]$rt.Version -lt [version]"14.44") { throw "VC++ x64 too old: $($rt.Version) (want >= 14.44)" }
+$ver = [version]($rt.Version -replace '^v', '')
+if ($ver -lt [version]"14.44") { throw "VC++ x64 too old: $($rt.Version) (want >= 14.44)" }
 Remove-Item "C:\Windows\Temp\packer-runtime" -Recurse -Force
 Write-Output "w02b-runtime done ($($rt.Version))"
