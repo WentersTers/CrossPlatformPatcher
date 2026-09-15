@@ -168,6 +168,12 @@ build {
   # Validated VC++ redist, staged on host from the Win11 census tree:
   # /home/sage/staging/win10-runtime/vc_redist.x64.exe
   # md5 486f81facf798678c3244c7cf35a557f (VC++ 14.44 x64).
+  # The file provisioner needs the destination dir to exist (it does not
+  # create parents), so mkdir runs first.
+  provisioner "powershell" {
+    inline = ["New-Item -ItemType Directory -Force -Path C:/Windows/Temp/packer-runtime | Out-Null"]
+  }
+
   provisioner "file" {
     source      = "/home/sage/staging/win10-runtime/vc_redist.x64.exe"
     destination = "C:/Windows/Temp/packer-runtime/vc_redist.x64.exe"
