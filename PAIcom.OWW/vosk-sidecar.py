@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Vosk sidecar: Linux-native x64 speech recognition over loopback HTTP.
+"""Vosk sidecar: native x64 speech recognition over loopback HTTP.
 
-Lets the 32-bit app process use 64-bit libvosk without loading it in-process.
+Lets the app process use 64-bit libvosk without loading it in-process.
 Stdlib only. Fail-closed by design: any error returns null/empty, never raises
 to the caller; the app treats that as Vosk-unavailable (existing path).
+Cross-platform: Linux loads libvosk.so, Windows loads libvosk.dll
+(same C API, same protocol, same twin expectations).
 
 Endpoints (all JSON):
   GET  /health -> {"ok": true, "model": bool}
@@ -12,7 +14,9 @@ Endpoints (all JSON):
   GET  /partial -> {"partial": "..."}
   GET  /final   -> {"text": "..."} (resets utterance)
 
-Usage: vosk-sidecar.py <model-dir> <libvosk.so> [port]
+Usage: vosk-sidecar.py <model-dir> <libvosk> [port]
+  (libvosk defaults: libvosk.dll beside the script on Windows,
+  libvosk.so beside the script or /usr/lib on Linux)
 Env overrides: PAICOM_VOSK_MODEL_PATH, PAICOM_VOSK_LIB, PAICOM_VOSK_SIDECAR_PORT.
 """
 import base64
@@ -193,7 +197,10 @@ def resolve_model_argv():
                 break
     if not lib:
         here = os.path.dirname(os.path.abspath(__file__))
-        for cand in (os.path.join(here, "libvosk.so"), "/usr/lib/x86_64-linux-gnu/libvosk.so"):
+        cands = [os.path.join(here, "libvosk.dll")] if os.name == "nt" else []
+        cands += [os.path.join(here, "libvosk.so"),
+                  "/usr/lib/x86_64-linux-gnu/libvosk.so"]
+        for cand in cands:
             if os.path.exists(cand):
                 lib = cand
                 break
@@ -204,7 +211,7 @@ def main():
     global ENGINE
     model, lib, port = resolve_model_argv()
     if not lib or not os.path.exists(lib):
-        print("vosk-sidecar: libvosk.so not found", flush=True)
+        print("vosk-sidecar: libvosk not found (want libvosk.dll on Windows, libvosk.so on Linux)", flush=True)
         raise SystemExit(2)
     ENGINE = VoskNative(lib, model)
     ENGINE.new_utterance(16000, None)
