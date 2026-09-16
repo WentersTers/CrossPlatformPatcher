@@ -25,13 +25,14 @@
 
 param(
     [string]$VBCableZip = "",
+    [string]$AppImagePath = "",
     [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $Version = "0.1.1"
-$ReleaseDir = Join-Path $RepoRoot "release\v0.1.1-win-x64"
+$ReleaseDir = Join-Path $RepoRoot "release\v0.1.1"
 
 function Gate($name, [scriptblock]$body) {
     Write-Host ""
@@ -160,6 +161,19 @@ Gate "stage release dir + SHA-256" {
     "$sha  CrossPlatformPatcher-0.1.1-win-x64.exe" | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
     Write-Host "staged: $staged"
     Write-Host "sha256: $sha"
+    if ($AppImagePath -ne "" -and (Test-Path $AppImagePath)) {
+        # Linux artifact, built + determinism-proven by
+        # scripts/release/build-appimage.sh (reproducible squashfs:
+        # fixed SOURCE_DATE_EPOCH, -all-root, pinned runtime).
+        $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-x86_64.AppImage"
+        Copy-Item $AppImagePath $aiStaged
+        $aiSha = (Get-FileHash $aiStaged -Algorithm SHA256).Hash
+        "$aiSha  CrossPlatformPatcher-0.1.1-x86_64.AppImage" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+        Write-Host "staged AppImage: $aiStaged"
+        Write-Host "sha256: $aiSha"
+    } elseif ($AppImagePath -ne "") {
+        Fail "AppImage path not found: $AppImagePath"
+    }
 }
 
 Gate "third-party notices + VB-CABLE" {
