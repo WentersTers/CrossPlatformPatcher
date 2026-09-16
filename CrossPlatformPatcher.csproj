@@ -5,10 +5,12 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>0.0.4</Version>
-    <AssemblyVersion>0.0.4</AssemblyVersion>
-    <FileVersion>0.0.4.0</FileVersion>
-    <InformationalVersion>0.0.4</InformationalVersion>
+    <Version>0.1.1</Version>
+    <AssemblyVersion>0.1.1</AssemblyVersion>
+    <FileVersion>0.1.1.0</FileVersion>
+    <InformationalVersion>0.1.1</InformationalVersion>
+    <!-- Reproducible release bytes: stable MVID per source (matches PAIcom.OWW flag). -->
+    <Deterministic>true</Deterministic>
     <AssemblyName>CrossPlatformPatcher</AssemblyName>
     <RootNamespace>CrossPlatformPatcher</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
