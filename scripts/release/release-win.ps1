@@ -308,12 +308,16 @@ function Write-VerifyBlock {
         $lines += '```'
         $lines += ""
     }
-    $lines += "Compare the output to the SHA-256 above. The exe and AppImage builds are deterministic:"
-    $lines += "rebuilding these sources produces byte-identical bytes, so anyone can"
-    $lines += "reproduce those hashes. No bundled verifier is shipped -- verify externally."
-    if ($hasBundle) {
-        $lines += "The bundle zip is transport packaging for the single download; its hash"
-        $lines += "covers this packaging run, while the exe/AppImage hashes are reproducible."
+    $lines += "Compare the output to the SHA-256 above. Every file above is reproducible:"
+    $lines += "the exe and AppImage are each built twice and compared byte-identical,"
+    $lines += "and the zips use fixed timestamps, so rebuilding this release from the"
+    $lines += "same sources reproduces these hashes. No bundled verifier is shipped -- verify externally."
+    $winZipEntry = @($entries | Where-Object { $_.File -like "*win-x64.zip" }).Count -gt 0
+    $linZipEntry = @($entries | Where-Object { $_.File -like "*linux-x86_64.zip" }).Count -gt 0
+    if ($winZipEntry -and $linZipEntry) {
+        $lines += "Pick the file for your system: the win-x64 zip for Windows"
+        $lines += "(includes the audio driver installer), the linux-x86_64 zip for"
+        $lines += "Linux (no driver needed). One download per system, nothing fetched twice."
     }
     if (-not $hasAppImage) {
         $lines += "v0.1.1 publishes Windows-first; the sha256sum line also verifies"
@@ -332,34 +336,56 @@ Gate "release notes Verify from SHA256SUMS (never by hand)" {
     Write-VerifyBlock
 }
 
-Gate "single bundle zip (first download is the only download)" {
-    # The release is ONE download: exe + AppImage + VB-CABLE pack +
-    # notices + notes. Driver setup still runs separately after extract
+Gate "platform zips, deterministic, proven twice (one download per system)" {
+    # The release is TWO downloads, each carrying exactly what its platform
+    # needs and nothing it doesn't:
+    #   PAIcom-Voice-v0.1.1-win-x64.zip       : exe + Pack45 + notices + notes
+    #   PAIcom-Voice-v0.1.1-linux-x86_64.zip  : AppImage + notices + notes (no cable)
+    # Zip members get fixed timestamps/sort order (bundle-zip.py), so the
+    # zips are reproducible too. Each zip is built twice and compared; any
+    # drift fails the release instead of shipping an unreproducible hash.
+    # Driver setup still runs separately after extract on Windows
     # (elevation + reboot are unavoidable), but nothing is fetched twice.
-    # Zip timestamps vary per run, so the bundle hash covers this packaging
-    # run; provenance lives in the deterministic inner artifacts.
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $epoch = "1757980800"
+    $zipScript = Join-Path $PSScriptRoot "bundle-zip.py"
+    $winZip = Join-Path $ReleaseDir "PAIcom-Voice-v0.1.1-win-x64.zip"
+    $linZip = Join-Path $ReleaseDir "PAIcom-Voice-v0.1.1-linux-x86_64.zip"
+    $noticesPath = Join-Path $ReleaseDir "THIRD-PARTY-NOTICES.txt"
     $exeStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-win-x64.exe"
     $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-x86_64.AppImage"
     $vbStaged = Join-Path $ReleaseDir "VBCABLE_Driver_Pack45.zip"
-    foreach ($need in @($exeStaged, $aiStaged, $vbStaged)) {
+    foreach ($need in @($exeStaged, $aiStaged, $vbStaged, $noticesPath, $notesPath)) {
         if (-not (Test-Path $need)) { Fail ("bundle member missing: " + $need) }
     }
-    $bundleName = "PAIcom-Voice-v0.1.1.zip"
-    $bundlePath = Join-Path $ReleaseDir $bundleName
-    if (Test-Path $bundlePath) { Remove-Item $bundlePath -Force }
-    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
-    Compress-Archive -Path $exeStaged, $aiStaged, $vbStaged, `
-        (Join-Path $ReleaseDir "THIRD-PARTY-NOTICES.txt"), $notesPath `
-        -DestinationPath $bundlePath
-    $bundleSha = (Get-FileHash $bundlePath -Algorithm SHA256).Hash
-    $innerLines = Get-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
-    $bundleLine = "$bundleSha  $bundleName"
-    @($bundleLine) + $innerLines | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
-    Write-Host "bundled: $bundlePath"
-    Write-Host "sha256: $bundleSha"
+    $tmp = Join-Path $env:TEMP "paicom-bundle"
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $winMembers = @($exeStaged, $vbStaged, $noticesPath, $notesPath)
+    $linMembers = @($aiStaged, $noticesPath, $notesPath)
+    python3 $zipScript (Join-Path $tmp "win-A.zip") $epoch $winMembers
+    if ($LASTEXITCODE -ne 0) { Fail "win bundle build A failed" }
+    python3 $zipScript (Join-Path $tmp "win-B.zip") $epoch $winMembers
+    if ($LASTEXITCODE -ne 0) { Fail "win bundle build B failed" }
+    python3 $zipScript (Join-Path $tmp "lin-A.zip") $epoch $linMembers
+    if ($LASTEXITCODE -ne 0) { Fail "linux bundle build A failed" }
+    python3 $zipScript (Join-Path $tmp "lin-B.zip") $epoch $linMembers
+    if ($LASTEXITCODE -ne 0) { Fail "linux bundle build B failed" }
+    $winA = (Get-FileHash (Join-Path $tmp "win-A.zip") -Algorithm SHA256).Hash
+    $winB = (Get-FileHash (Join-Path $tmp "win-B.zip") -Algorithm SHA256).Hash
+    $linA = (Get-FileHash (Join-Path $tmp "lin-A.zip") -Algorithm SHA256).Hash
+    $linB = (Get-FileHash (Join-Path $tmp "lin-B.zip") -Algorithm SHA256).Hash
+    if ($winA -ne $winB) { Fail "win bundle not reproducible" }
+    if ($linA -ne $linB) { Fail "linux bundle not reproducible" }
+    Copy-Item (Join-Path $tmp "win-A.zip") $winZip
+    Copy-Item (Join-Path $tmp "lin-A.zip") $linZip
+    "$winA  PAIcom-Voice-v0.1.1-win-x64.zip" | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    "$linA  PAIcom-Voice-v0.1.1-linux-x86_64.zip" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    Write-Host "win zip  : $winZip ($winA)"
+    Write-Host "linux zip : $linZip ($linA)"
 }
 
-Gate "release notes Verify refresh (bundle on top)" {
+Gate "release notes Verify refresh (both zips on top)" {
     Write-VerifyBlock
 }
 
