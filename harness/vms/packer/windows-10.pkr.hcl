@@ -194,5 +194,10 @@ build {
 }
 
 # Post-build, in order: import to libvirt (virt-install --import, usb-tablet,
-# 1920x1080, NO tpm), autologin lands on desktop, snapshot immediately
-# (the rollback point), ledger install date + eval re-arm note in ceremony.
+# 1920x1080, --sound ich9, NO tpm), autologin lands on desktop, snapshot
+# immediately (the rollback point), ledger install date + eval re-arm note
+# in ceremony. ich9 is Win11 parity (2026-09-15): without a render endpoint
+# the only playback is CABLE and app PLAY_AUDIO leaks into the voice path
+# (self-hearing feedback loop, ebay->joke->twitter photographed); with ich9,
+# defaults are playback=Speakers + recording=CABLE Output (AudioDeviceCmdlets),
+# and XML device changes need destroy+start (guest reboot is not enough).
