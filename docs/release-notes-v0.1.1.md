@@ -1,0 +1,89 @@
+# PAIcom Voice Release v0.1.1 — Release Notes (DRAFT for read-through)
+
+> Status: draft. Product-voice call before publish.
+
+## What this is
+
+A drop-in voice layer for PAIcom: place `CrossPlatformPatcher-0.1.1-win-x64.exe`
+beside `PAIcom.exe` and run it. The patcher auto-locates the game, installs
+what the voice chain needs, patches in place (backup optional), and runs the
+chain: wake word → offline speech recognition → command dispatch → action.
+
+Unsigned release. Verify the hash below before running.
+
+## Verify
+
+```
+CrossPlatformPatcher-0.1.1-win-x64.exe
+SHA-256: CB842B39EE9F5F209464B7CA273022AE2318AB0C1FE342F60489A9624A02E4A5
+```
+
+Windows (`certutil`):
+
+```
+certutil -hashfile CrossPlatformPatcher-0.1.1-win-x64.exe SHA256
+```
+
+Linux:
+
+```
+sha256sum CrossPlatformPatcher-0.1.1-win-x64.exe
+```
+
+Compare the output to the SHA-256 above. The build is deterministic:
+rebuilding these sources produces byte-identical bytes, so anyone can
+reproduce this hash. No bundled verifier is shipped — verify externally.
+
+## Measured, not asserted
+
+The v0.1.1 content was measured at 109-command scale on three platforms
+against the same twin, all with zero hijacks:
+
+- Linux: 109/109 correct-or-safe, 0 hijacks, audio alive.
+- Windows 11: 100 agree + 4 partial + 3 agree-reject + 2 miss, 0 hijacks,
+  Tier-0 output-verified (93 action-complete), sidecar fail-closed proven.
+- Windows 10 (LTSC 2021): 100 agree + 4 partial + 3 agree-reject + 2 miss,
+  0 hijacks, Tier-0 output-verified (92 action-complete), same twin.
+
+Wake-word debris survival differs by capture stack (Linux 5.2%,
+Windows 11 22.6%, Windows 10 26.9%) — the matcher's defenses held on all
+three, including the worst case.
+
+## What you need
+
+- Windows 10/11 x64, PAIcom installed.
+- The patcher handles: VC++ runtime (if missing), the voice model
+  (bundled), the offline recognizer sidecar (bundled, fail-closed —
+  the chain keeps routing even if the sidecar is down).
+- Virtual audio cable (only needed for injected-playback setups):
+  download `VBCABLE_Driver_Pack45.zip` from https://vb-cable.com,
+  extract, run `VBCABLE_Setup_x64.exe` as Administrator, reboot, and set
+  CABLE Output as the default recording device.
+  VB-CABLE is donationware by VB-Audio Software — if you find it useful,
+  please donate for your license on the VB-Audio webshop.
+
+## Integrity tripwire (opt-in peace of mind)
+
+On first boot after patching, a one-time popup reports whether the patched
+file still matches its patch-time baseline. It is permanently dismissable
+(delete the `.tripwire-seen` file next to the game to see it again) and
+never blocks the voice chain — warn-and-continue, always.
+
+Be honest about what it is: a tamper *signal* for your peace of mind, not
+a security boundary. It catches accidental modification, not a determined
+attacker.
+
+## Known items (open, tracked)
+
+- Re-nag behavior under review.
+- Network posture follow-ups queued.
+- Some bundled games remain unwired (Tier 4 revision work).
+- Mac .app ships with the Mac validation phase, not before its evidence exists.
+
+## Provenance
+
+- Sources: this repo at the v0.1.1 tag path, deterministic build
+  (`Deterministic=true`, publish-twice byte-identical verified).
+- Artifact audit per release (mechanical): embedded-resource allowlist +
+  product-marker byte scan — transformation-only, no product bytes.
+- Tests: 252/252 green at release time.
