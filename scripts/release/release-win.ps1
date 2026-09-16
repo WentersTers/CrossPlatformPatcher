@@ -53,14 +53,8 @@ Gate "build Release error-free" {
     if ($LASTEXITCODE -ne 0) { Fail "build errors" }
 }
 
-if (-not $SkipTests) {
-    Gate "full test suite green" {
-        dotnet test CrossPlatformPatcher.Tests\CrossPlatformPatcher.Tests.csproj -c Release --nologo 2>$null
-        if ($LASTEXITCODE -ne 0) { Fail "test failures" }
-    }
-} else {
-    Write-Host "SKIP: full test suite (--SkipTests)"
-}
+# NOTE: the test suite runs inside the determinism gate below (between the
+# two publishes), not here -- see the comment there.
 
 $PubA = Join-Path $env:TEMP "paicom-pub-A"
 $PubB = Join-Path $env:TEMP "paicom-pub-B"
@@ -74,7 +68,19 @@ Gate "publish win-x64 single-file (A)" {
     if ($LASTEXITCODE -ne 0) { Fail "publish A" }
 }
 
-Gate "determinism: publish twice byte-identical (B)" {
+Gate "determinism: publish twice byte-identical, test-interleaved (B)" {
+    # The test suite runs BETWEEN the two publishes on purpose: a past
+    # unexplained hash transition (E071->856E, no compiled-input change)
+    # suggested drift across interleaved dotnet operations. If the tree is
+    # truly deterministic, interleaving changes nothing; if not, this gate
+    # fails loudly instead of shipping a hash the next rebuild cannot honor.
+    if (-not $SkipTests) {
+        dotnet test CrossPlatformPatcher.Tests\CrossPlatformPatcher.Tests.csproj -c Release --nologo 2>$null
+        if ($LASTEXITCODE -ne 0) { Fail "test failures" }
+        Write-Host "interleaved test suite green"
+    } else {
+        Write-Host "SKIP: interleaved tests (--SkipTests)"
+    }
     if (Test-Path $PubB) { Remove-Item $PubB -Recurse -Force }
     dotnet @PublishArgs -o $PubB
     if ($LASTEXITCODE -ne 0) { Fail "publish B" }
@@ -215,18 +221,75 @@ Gate "third-party notices + VB-CABLE" {
     }
 }
 
-Gate "release notes Verify from SHA256SUMS (never by hand)" {
-    $sumsPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
-    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+function Replace-MarkedSection([string]$notes, [string]$beginStart, [string]$endMarker, [string]$block) {
+    $bi = $notes.IndexOf($beginStart)
+    if ($bi -lt 0) { Fail ("notes missing marker " + $beginStart) }
+    $lineEnd = $notes.IndexOf("`n", $bi)
+    $ei = $notes.IndexOf($endMarker)
+    if ($ei -lt 0 -or $ei -le $lineEnd) { Fail ("notes missing marker " + $endMarker) }
+    return $notes.Substring(0, $lineEnd + 1) + $block + "`r`n" + $notes.Substring($ei)
+}
+
+function Write-NotesFile([string]$notesPath, [string]$updated) {
+    # NOTE: [System.Text.Encoding]::UTF8 emits a BOM on Windows PowerShell 5.1;
+    # construct BOM-less explicitly so the notes diff stays content-only.
+    # The Edit tooling may also introduce a BOM; strip a leading one so
+    # regeneration is stable regardless of how the template was last saved.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    if ($updated.Length -gt 0 -and $updated[0] -eq [char]0xFEFF) {
+        $updated = $updated.Substring(1)
+    }
+    [System.IO.File]::WriteAllText($notesPath, $updated, $utf8NoBom)
+}
+
+function Get-SumsEntries([string]$sumsPath) {
     $entries = Get-Content $sumsPath | ForEach-Object {
         if ($_ -match '^\s*([0-9A-Fa-f]{64})\s+(.+?)\s*$') {
             [PSCustomObject]@{ Hash = $Matches[1].ToUpperInvariant(); File = $Matches[2].Trim() }
         }
     }
     if (@($entries).Count -eq 0) { Fail "no parsable entries in SHA256SUMS.txt" }
-    $hasAppImage = @($entries | Where-Object { $_.File -like "*.AppImage" }).Count -gt 0
+    return @($entries)
+}
+
+# Known issues as structured data (symptom + status), rendered into the
+# notes KNOWN block. Plain language, symptom first: the section exists to
+# stop duplicate reports, so each entry leads with what the user feels.
+$KnownItems = @(
+    @{ Title = "Pop-ups that keep coming back";
+       Symptom = "An info pop-up (for example the Discord invite) may appear every time the app starts, even after you dismiss it.";
+       Status = "Known, being worked on. Dismissing it is safe; nothing breaks." },
+    @{ Title = "Slow starts and browser-tab bursts on poor connections";
+       Symptom = "On a slow connection the app can take a while to start, and a voice command may open several browser tabs at once.";
+       Status = "Known, queued behind the network work." },
+    @{ Title = "Menu buttons that do nothing";
+       Symptom = "Some game buttons in the menu do not launch anything when clicked.";
+       Status = "Expected in this version; game wiring is planned work, not a broken install." }
+)
+
+Gate "release notes Known Issues from structured data" {
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $notes = [System.IO.File]::ReadAllText($notesPath, [System.Text.Encoding]::UTF8)
+    if ($notes.Length -gt 0 -and $notes[0] -eq [char]0xFEFF) { $notes = $notes.Substring(1) }
     $lines = @()
-    foreach ($e in @($entries)) {
+    foreach ($item in $KnownItems) {
+        $lines += ("- **" + $item["Title"] + ":** " + $item["Symptom"] + " " + $item["Status"])
+        $lines += ""
+    }
+    $block = $lines -join "`r`n"
+    $updated = Replace-MarkedSection $notes "<!-- KNOWN-BEGIN" "<!-- KNOWN-END -->" $block
+    Write-NotesFile $notesPath $updated
+    Write-Host ("known items rendered: {0}" -f $KnownItems.Count)
+}
+
+function Write-VerifyBlock {
+    $sumsPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $entries = Get-SumsEntries $sumsPath
+    $hasAppImage = @($entries | Where-Object { $_.File -like "*.AppImage" }).Count -gt 0
+    $hasBundle = @($entries | Where-Object { $_.File -like "*.zip" }).Count -gt 0
+    $lines = @()
+    foreach ($e in $entries) {
         $lines += '```'
         $lines += $e.File
         $lines += ("SHA-256: " + $e.Hash)
@@ -245,9 +308,13 @@ Gate "release notes Verify from SHA256SUMS (never by hand)" {
         $lines += '```'
         $lines += ""
     }
-    $lines += "Compare the output to the SHA-256 above. The build is deterministic:"
+    $lines += "Compare the output to the SHA-256 above. The exe and AppImage builds are deterministic:"
     $lines += "rebuilding these sources produces byte-identical bytes, so anyone can"
-    $lines += "reproduce this hash. No bundled verifier is shipped -- verify externally."
+    $lines += "reproduce those hashes. No bundled verifier is shipped -- verify externally."
+    if ($hasBundle) {
+        $lines += "The bundle zip is transport packaging for the single download; its hash"
+        $lines += "covers this packaging run, while the exe/AppImage hashes are reproducible."
+    }
     if (-not $hasAppImage) {
         $lines += "v0.1.1 publishes Windows-first; the sha256sum line also verifies"
         $lines += "the Windows exe before copying it over. The Linux .AppImage arrives"
@@ -256,19 +323,44 @@ Gate "release notes Verify from SHA256SUMS (never by hand)" {
     $block = $lines -join "`r`n"
     $block | Set-Content (Join-Path $ReleaseDir "VERIFY.txt")
     $notes = [System.IO.File]::ReadAllText($notesPath, [System.Text.Encoding]::UTF8)
-    $beginMarker = "<!-- VERIFY-BEGIN"
-    $endMarker = "<!-- VERIFY-END -->"
-    $bi = $notes.IndexOf($beginMarker)
-    if ($bi -lt 0) { Fail "notes missing VERIFY-BEGIN marker" }
-    $lineEnd = $notes.IndexOf("`n", $bi)
-    $ei = $notes.IndexOf($endMarker)
-    if ($ei -lt 0 -or $ei -le $lineEnd) { Fail "notes missing VERIFY-END marker" }
-    $updated = $notes.Substring(0, $lineEnd + 1) + $block + "`r`n" + $notes.Substring($ei)
-    # NOTE: [System.Text.Encoding]::UTF8 emits a BOM on Windows PowerShell 5.1;
-    # construct BOM-less explicitly so the notes diff stays content-only.
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($notesPath, $updated, $utf8NoBom)
-    Write-Host ("verify block: {0} artifact(s), notes rewritten" -f @($entries).Count)
+    $updated = Replace-MarkedSection $notes "<!-- VERIFY-BEGIN" "<!-- VERIFY-END -->" $block
+    Write-NotesFile $notesPath $updated
+    Write-Host ("verify block: {0} artifact(s), notes rewritten" -f $entries.Count)
+}
+
+Gate "release notes Verify from SHA256SUMS (never by hand)" {
+    Write-VerifyBlock
+}
+
+Gate "single bundle zip (first download is the only download)" {
+    # The release is ONE download: exe + AppImage + VB-CABLE pack +
+    # notices + notes. Driver setup still runs separately after extract
+    # (elevation + reboot are unavoidable), but nothing is fetched twice.
+    # Zip timestamps vary per run, so the bundle hash covers this packaging
+    # run; provenance lives in the deterministic inner artifacts.
+    $exeStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-win-x64.exe"
+    $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-x86_64.AppImage"
+    $vbStaged = Join-Path $ReleaseDir "VBCABLE_Driver_Pack45.zip"
+    foreach ($need in @($exeStaged, $aiStaged, $vbStaged)) {
+        if (-not (Test-Path $need)) { Fail ("bundle member missing: " + $need) }
+    }
+    $bundleName = "PAIcom-Voice-v0.1.1.zip"
+    $bundlePath = Join-Path $ReleaseDir $bundleName
+    if (Test-Path $bundlePath) { Remove-Item $bundlePath -Force }
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    Compress-Archive -Path $exeStaged, $aiStaged, $vbStaged, `
+        (Join-Path $ReleaseDir "THIRD-PARTY-NOTICES.txt"), $notesPath `
+        -DestinationPath $bundlePath
+    $bundleSha = (Get-FileHash $bundlePath -Algorithm SHA256).Hash
+    $innerLines = Get-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    $bundleLine = "$bundleSha  $bundleName"
+    @($bundleLine) + $innerLines | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    Write-Host "bundled: $bundlePath"
+    Write-Host "sha256: $bundleSha"
+}
+
+Gate "release notes Verify refresh (bundle on top)" {
+    Write-VerifyBlock
 }
 
 Write-Host ""
