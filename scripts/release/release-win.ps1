@@ -246,7 +246,10 @@ Gate "release notes Verify from SHA256SUMS (never by hand)" {
     $ei = $notes.IndexOf($endMarker)
     if ($ei -lt 0 -or $ei -le $lineEnd) { Fail "notes missing VERIFY-END marker" }
     $updated = $notes.Substring(0, $lineEnd + 1) + $block + "`r`n" + $notes.Substring($ei)
-    [System.IO.File]::WriteAllText($notesPath, $updated, [System.Text.Encoding]::UTF8)
+    # NOTE: [System.Text.Encoding]::UTF8 emits a BOM on Windows PowerShell 5.1;
+    # construct BOM-less explicitly so the notes diff stays content-only.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($notesPath, $updated, $utf8NoBom)
     Write-Host ("verify block: {0} artifact(s), notes rewritten" -f @($entries).Count)
 }
 
