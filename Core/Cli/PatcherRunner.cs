@@ -123,6 +123,20 @@ public static class PatcherRunner
 
             logger("");
             logger($"[OK] Patched assembly written to: {outputPath}");
+
+            // ── Tripwire baseline (non-fatal) ──────────────────────────
+            // Hash of the freshly patched bytes; the injected runtime half
+            // (TripwireCheck) compares this at first boot. A missing or
+            // unwritable baseline must never fail a good patch.
+            try
+            {
+                TripwireBaseline.WriteBaseline(outputPath, logger);
+            }
+            catch (Exception twEx)
+            {
+                warnings.Add($"[WARN] Tripwire baseline unwritten: {twEx.GetType().Name}: {twEx.Message}");
+            }
+
             return new PatcherRunOutcome(0, outputPath, sha256, result.PatchPointsFound, result.PatchPointsApplied, warnings, errors, SkippedDueToDryRun: false);
         }
         catch (Exception ex)
