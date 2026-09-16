@@ -53,7 +53,7 @@ public static class TripwireCheck
         hash = "";
         if (string.IsNullOrEmpty(text))
             return false;
-        var first = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var first = text!.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
         if (first.Length == 0)
             return false;
         var line = first[0].Trim();
@@ -102,7 +102,7 @@ public static class TripwireCheck
             log("[tripwire] skipped: host executable path unknown.");
             return;
         }
-        RunOnce(exePath, log);
+        RunOnce(exePath!, log);
     }
 
     /// <summary>
@@ -164,7 +164,7 @@ public static class TripwireCheck
     {
         if (string.IsNullOrWhiteSpace(raw))
             return null;
-        var clean = raw.Trim();
+        var clean = raw!.Trim();
         if (clean.Length != 64)
             return null;
         foreach (var ch in clean)
