@@ -197,8 +197,12 @@ Gate "third-party notices + VB-CABLE" {
     )
     $notices | Set-Content (Join-Path $ReleaseDir "THIRD-PARTY-NOTICES.txt")
     if ($VBCableZip -ne "" -and (Test-Path $VBCableZip)) {
-        Copy-Item $VBCableZip (Join-Path $ReleaseDir "VBCABLE_Driver_Pack45.zip")
+        $vbStaged = Join-Path $ReleaseDir "VBCABLE_Driver_Pack45.zip"
+        Copy-Item $VBCableZip $vbStaged
+        $vbSha = (Get-FileHash $vbStaged -Algorithm SHA256).Hash
+        "$vbSha  VBCABLE_Driver_Pack45.zip" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
         Write-Host "bundled VB-CABLE pack (operator-staged, unmodified)."
+        Write-Host "sha256: $vbSha"
     } else {
         @(
             "VB-CABLE is NOT in this folder (download-on-demand path).",
