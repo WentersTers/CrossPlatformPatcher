@@ -7,9 +7,10 @@
 One download per system gives you a voice layer for PAIcom: talk to the
 game instead of clicking through menus. Pick the file for your system:
 the Windows zip holds the patcher plus the virtual-audio driver installer;
-the Linux zip holds the Linux patcher and needs nothing else. Place the
-patcher beside `PAIcom.exe` and run it: it finds the game, sets up what
-the voice needs, patches a copy (keeping a backup if you ask), and starts
+the Linux zip holds the Linux patcher and needs nothing else. Copy the
+patcher into your PAIcom folder and run it from a terminal there (see
+"How to run it" below) — double-clicking it only shows the help text.
+It patches a copy of the game (keeping a backup if you ask), and starts
 the chain. Say the wake word, say a command, and the game responds.
 
 This release is unsigned. The Verify section at the bottom shows how to
@@ -31,13 +32,40 @@ If something below matches what you see, we already know — no need to report i
 - Mac: there is no Mac download in this release. A Mac version ships after
   Mac testing exists, not before.
 
+## How to run it
+
+You run it from a terminal, in your PAIcom folder, naming the game file.
+(Double-clicking the patcher only flashes the help text.)
+
+Windows (Command Prompt, in the PAIcom folder):
+
+```
+CrossPlatformPatcher-0.1.1-win-x64.exe PAIcom.exe --backup
+PAIcom.patched.exe
+```
+
+Linux (shell, with the game path adjusted to yours):
+
+```
+chmod +x CrossPlatformPatcher-0.1.1-x86_64.AppImage
+./CrossPlatformPatcher-0.1.1-x86_64.AppImage /path/to/PAIcom.exe --backup
+```
+
+The first command writes `PAIcom.patched.exe` next to the original (and
+`PAIcom.exe.bak` as a backup, because of `--backup`). The second command
+starts the patched game — that is the file you play from now on. Add
+`--dry-run` to the first command to preview what would change without
+writing anything.
+
 ## What you need
 
 - Windows 10/11 x64 (for the `.exe`) or 64-bit Linux (for the `.AppImage`),
   with PAIcom installed.
-- The patcher takes care of: the VC++ runtime if yours is missing, the
-  voice model (included), and the offline speech component (included — if
-  it ever crashes, commands still route safely instead of misfiring).
+- The patcher brings its own voice model and speech component (both
+  included — if the speech component ever crashes, commands still route
+  safely instead of misfiring). It does not install system software: if
+  anything ever asks for the VC++ runtime, that is the free Microsoft
+  installer most gaming PCs already have.
 - Virtual audio cable (only needed if you play game audio back into the
   voice input): included as `VBCABLE_Driver_Pack45.zip`, unmodified.
   Extract it, run `VBCABLE_Setup_x64.exe` as Administrator, reboot, and set
