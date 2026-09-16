@@ -11,6 +11,10 @@ Do **not** replace them unless you are upgrading the Vosk version.
 | `vosk-win-gcc.dll` | Windows x64 + Wine | GCC runtime (libgcc_s_seh-1) |
 | `vosk-win-stdc.dll` | Windows x64 + Wine | C++ stdlib (libstdc++-6) |
 | `vosk-win-pthread.dll` | Windows x64 + Wine | pthread runtime (libwinpthread-1) |
+| `vosk-win-x86.dll` | Windows x86 (32-bit game) | Main Vosk library, 0.3.42 (C ABI stable vs managed 0.3.38) |
+| `vosk-win-gcc-x86.dll` | Windows x86 | GCC runtime (libgcc_s_sjlj-1) |
+| `vosk-win-stdc-x86.dll` | Windows x86 | C++ stdlib (libstdc++-6) |
+| `vosk-win-pthread-x86.dll` | Windows x86 | pthread runtime (libwinpthread-1) |
 | `libvosk-linux-x64.so` | Linux x64 | |
 | `libvosk-osx-universal.dylib` | macOS (Intel + Apple Silicon) | Universal binary |
 
@@ -34,6 +38,17 @@ cp out/libwinpthread-1.dll ../Core/NativeLibraries/vosk-win-pthread.dll
 # From NuGet cache (~/.nuget/packages/vosk/NEW_VERSION/build/lib/)
 cp linux-x64/libvosk.so        ../Core/NativeLibraries/libvosk-linux-x64.so
 cp osx-universal/libvosk.dylib ../Core/NativeLibraries/libvosk-osx-universal.dylib
+```
+
+The x86 set does NOT come from NuGet (win-x86 natives were dropped after
+0.3.38). Source: `vosk-win32-0.3.42.zip` from vosk-api releases
+(C ABI stable across 0.3.x):
+
+```sh
+cp libvosk.dll          ../Core/NativeLibraries/vosk-win-x86.dll
+cp libgcc_s_sjlj-1.dll  ../Core/NativeLibraries/vosk-win-gcc-x86.dll
+cp libstdc++-6.dll      ../Core/NativeLibraries/vosk-win-stdc-x86.dll
+cp libwinpthread-1.dll  ../Core/NativeLibraries/vosk-win-pthread-x86.dll
 ```
 
 Also update `Vosk.dll` in `Core/ManagedLibraries/` to the same version.

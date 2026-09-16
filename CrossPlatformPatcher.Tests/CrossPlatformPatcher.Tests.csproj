@@ -30,6 +30,7 @@
          CrossPlatformPatcher.Core type identity). -->
     <Compile Include="..\PAIcom.OWW\VoskSidecarClient.cs" />
     <Compile Include="..\PAIcom.OWW\TripwireCheck.cs" />
+    <Compile Include="..\PAIcom.OWW\VoskModelDownloader.cs" />
   </ItemGroup>
 
   <ItemGroup>
