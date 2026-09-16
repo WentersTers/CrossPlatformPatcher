@@ -510,8 +510,23 @@ public class VoskSpeechRecognizer : IDisposable
             LogEvent($"[vosk-speech] model.search.no_match_under={normalizedRoot}");
         }
 
-        LogEvent("[vosk-speech] No usable model found.");
-        LogEvent("[vosk-speech] Place a model zip in ./VoskModels/zips and rebuild, or set PAICOM_VOSK_MODEL_PATH.");
+        LogEvent("[vosk-speech] No usable model found in search roots; trying first-run fetch.");
+
+        var fetchUrl = VoskModelDownloader.ResolveDownloadUrl();
+        if (fetchUrl == null)
+        {
+            LogEvent("[vosk-speech] Model fetch disabled (PAICOM_VOSK_MODEL_URL set-but-empty) or no usable URL.");
+        }
+        else
+        {
+            var fetched = VoskModelDownloader.DownloadAndExtract(
+                fetchUrl, VoskModelDownloader.HomeModelsRoot(), LogEvent);
+            if (!string.IsNullOrWhiteSpace(fetched))
+                return fetched;
+        }
+
+        LogEvent("[vosk-speech] No usable model found and fetch did not produce one.");
+        LogEvent("[vosk-speech] Fix: place an extracted vosk-model-small-en-us-0.15 under %USERPROFILE%\\.paicom\\models (user-placed models always win), or set PAICOM_VOSK_MODEL_PATH to a model directory, then restart.");
         return null;
     }
 
