@@ -1138,6 +1138,17 @@ public static class OpenWakeWordHelper
                 // Report architecture diagnostics at startup
                 ReportStartupDiagnostics();
 
+                // Tamper-evident tripwire: one-time, warn-and-continue,
+                // non-fatal by construction (see TripwireCheck).
+                try
+                {
+                    TripwireCheck.RunOnceForCurrentProcess(LogEvent);
+                }
+                catch (Exception tripEx)
+                {
+                    LogEvent($"[tripwire] check failed (non-fatal): {tripEx.GetType().Name}");
+                }
+
                 // Load settings from environment or use embedded defaults
                 var embeddedSettings = OpenWakeWordSettings.CreateDefault();
                 _settings = OpenWakeWordSettings.FromEnvironmentVariables();
