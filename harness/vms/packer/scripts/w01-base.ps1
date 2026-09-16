@@ -8,6 +8,18 @@ Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name WallPaper -Value ""
 Set-ItemProperty -Path "HKCU:\Control Panel\Colors" -Name Background -Value "0 0 0"
 RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters 1, $true
 
+# Win10 LTSC lesson (2026-09-15): the console autologon user is
+# Administrator, not the SSH build user, so an HKCU-only pin leaves the
+# default blue wallpaper on the console. Pin every loaded user hive plus
+# .DEFAULT so the console session and future profiles inherit solid black.
+foreach ($hive in (Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue)) {
+    if ($hive.Name -match '_Classes$') { continue }
+    $desk = "$($hive.Name)\Control Panel\Desktop"
+    $cols = "$($hive.Name)\Control Panel\Colors"
+    try { Set-ItemProperty -Path "Registry::$desk" -Name WallPaper -Value "" -ErrorAction Stop } catch {}
+    try { Set-ItemProperty -Path "Registry::$cols" -Name Background -Value "0 0 0" -ErrorAction Stop } catch {}
+}
+
 # Power: never sleep/hibernate/blank on AC (the noblank equivalent).
 powercfg /change standby-timeout-ac 0 | Out-Null
 powercfg /change monitor-timeout-ac 0 | Out-Null
