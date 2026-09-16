@@ -197,6 +197,59 @@ Gate "third-party notices + VB-CABLE" {
     }
 }
 
+Gate "release notes Verify from SHA256SUMS (never by hand)" {
+    $sumsPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $entries = Get-Content $sumsPath | ForEach-Object {
+        if ($_ -match '^\s*([0-9A-Fa-f]{64})\s+(.+?)\s*$') {
+            [PSCustomObject]@{ Hash = $Matches[1].ToUpperInvariant(); File = $Matches[2].Trim() }
+        }
+    }
+    if (@($entries).Count -eq 0) { Fail "no parsable entries in SHA256SUMS.txt" }
+    $hasAppImage = @($entries | Where-Object { $_.File -like "*.AppImage" }).Count -gt 0
+    $lines = @()
+    foreach ($e in @($entries)) {
+        $lines += '```'
+        $lines += $e.File
+        $lines += ("SHA-256: " + $e.Hash)
+        $lines += '```'
+        $lines += ""
+        $lines += "Windows (certutil):"
+        $lines += ""
+        $lines += '```'
+        $lines += ("certutil -hashfile " + $e.File + " SHA256")
+        $lines += '```'
+        $lines += ""
+        $lines += "Linux (sha256sum):"
+        $lines += ""
+        $lines += '```'
+        $lines += ("sha256sum " + $e.File)
+        $lines += '```'
+        $lines += ""
+    }
+    $lines += "Compare the output to the SHA-256 above. The build is deterministic:"
+    $lines += "rebuilding these sources produces byte-identical bytes, so anyone can"
+    $lines += "reproduce this hash. No bundled verifier is shipped -- verify externally."
+    if (-not $hasAppImage) {
+        $lines += "v0.1.1 publishes Windows-first; the sha256sum line also verifies"
+        $lines += "the Windows exe before copying it over. The Linux .AppImage arrives"
+        $lines += "with its own hash in its own release entry."
+    }
+    $block = $lines -join "`r`n"
+    $block | Set-Content (Join-Path $ReleaseDir "VERIFY.txt")
+    $notes = [System.IO.File]::ReadAllText($notesPath, [System.Text.Encoding]::UTF8)
+    $beginMarker = "<!-- VERIFY-BEGIN"
+    $endMarker = "<!-- VERIFY-END -->"
+    $bi = $notes.IndexOf($beginMarker)
+    if ($bi -lt 0) { Fail "notes missing VERIFY-BEGIN marker" }
+    $lineEnd = $notes.IndexOf("`n", $bi)
+    $ei = $notes.IndexOf($endMarker)
+    if ($ei -lt 0 -or $ei -le $lineEnd) { Fail "notes missing VERIFY-END marker" }
+    $updated = $notes.Substring(0, $lineEnd + 1) + $block + "`r`n" + $notes.Substring($ei)
+    [System.IO.File]::WriteAllText($notesPath, $updated, [System.Text.Encoding]::UTF8)
+    Write-Host ("verify block: {0} artifact(s), notes rewritten" -f @($entries).Count)
+}
+
 Write-Host ""
 Write-Host "RELEASE PIPELINE COMPLETE: $ReleaseDir"
 Get-ChildItem $ReleaseDir | Select-Object Name, Length
