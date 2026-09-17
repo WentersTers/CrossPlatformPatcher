@@ -50,6 +50,7 @@ public static class OpenWakeWordHelper
     private static int _pcmClipLogCount;
     private static bool _voskInitAttempted;
     private static bool _voskListening;
+    private static int _sapiFallbackActive;
     private static long _wakeSequenceCounter;
     private static long _activeWakeSequenceId;
     private static long _firstQueuedAudioMarkerWakeId;
@@ -1913,7 +1914,8 @@ public static class OpenWakeWordHelper
         if (_voskRecognizer == null)
         {
             LogTimingMarker("vosk_unavailable", wakeId);
-            LogEvent("Vosk recognizer not available; speech recognition skipped");
+            LogEvent("Vosk recognizer not available; trying Windows speech fallback...");
+            TryRunSapiFallback(wakeId);
             return;
         }
 
@@ -1930,6 +1932,51 @@ public static class OpenWakeWordHelper
         System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
         {
             ProcessSpeechRecognitionLocked();
+        }, null);
+    }
+
+    /// <summary>
+    /// Tier 3 input: Windows speech, only when every Vosk tier failed.
+    /// Runs on a ThreadPool worker (bounded by the lock window plus a small
+    /// buffer) and injects any transcript at the same downstream point as
+    /// Vosk results (<see cref="HandleRecognizedSpeech"/>). At most one
+    /// fallback window runs at a time; overlapping wakes skip.
+    /// </summary>
+    private static void TryRunSapiFallback(long wakeId)
+    {
+        if (Interlocked.CompareExchange(ref _sapiFallbackActive, 1, 0) != 0)
+        {
+            LogTimingMarker("sapi_fallback_skip", wakeId, "already_running=true");
+            LogEvent("Windows speech fallback already running; skipping this wake");
+            return;
+        }
+
+        var settings = _settings ?? OpenWakeWordSettings.CreateDefault();
+        var budgetMs = settings.LockDurationMs + 1500;
+        LogTimingMarker("sapi_fallback_start", wakeId, $"budget.ms={budgetMs}");
+        System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
+        {
+            try
+            {
+                var transcript = SapiFallbackRecognizer.TryRecognize(budgetMs, LogEvent);
+                if (string.IsNullOrWhiteSpace(transcript))
+                {
+                    LogTimingMarker("sapi_fallback_end", wakeId, "result=empty");
+                    return;
+                }
+                LogTimingMarker("sapi_fallback_end", wakeId, $"result=transcript,chars={transcript.Length}");
+                LogEvent("[sapi-fallback] backend.active=sapi-fallback");
+                HandleRecognizedSpeech(transcript);
+            }
+            catch (Exception ex)
+            {
+                LogTimingMarker("sapi_fallback_end", wakeId, "result=exception");
+                LogEvent($"[sapi-fallback] window failed ({ex.GetType().Name}); continuing.");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _sapiFallbackActive, 0);
+            }
         }, null);
     }
 
