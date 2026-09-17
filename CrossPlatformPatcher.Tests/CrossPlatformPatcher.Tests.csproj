@@ -34,6 +34,7 @@
     <Compile Include="..\PAIcom.OWW\SapiFallbackRecognizer.cs" />
     <Compile Include="..\PAIcom.OWW\DispatchDedup.cs" />
     <Compile Include="..\PAIcom.OWW\DispatcherOrdering.cs" />
+    <Compile Include="..\PAIcom.OWW\SapiSuppression.cs" />
   </ItemGroup>
 
   <ItemGroup>
