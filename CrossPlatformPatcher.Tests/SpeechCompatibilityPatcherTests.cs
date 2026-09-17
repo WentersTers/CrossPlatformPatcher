@@ -468,8 +468,9 @@ public sealed class SpeechCompatibilityPatcherTests
         SpeechCompatibilityPatcher.Patch(module, logAction);
 
         // Assert
-        Assert.Equal(4, logMessages.Count);
+        Assert.Equal(5, logMessages.Count);
         Assert.Contains(logMessages, m => m.Contains("Product SAPI suppression applied") && m.Contains("1"));
+        Assert.Contains(logMessages, m => m.Contains("OnSpeechRecognized") && m.Contains("suppressed"));
         Assert.Contains(logMessages, m => m.Contains("System.Speech safety wrappers applied") && m.Contains("1"));
         Assert.Contains(logMessages, m => m.Contains("System.Speech event probes applied") && m.Contains("1"));
         Assert.Contains(logMessages, m => m.Contains("System.Speech emulate hardening applied") && m.Contains("0"));
