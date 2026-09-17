@@ -99,10 +99,11 @@ public static class OpenWakeWordHelper
         bool isWine = IsRunningUnderWine();
         bool isRealWindows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) && !isWine;
 
+        ICommandDispatcher[] pipeline;
         if (isRealWindows)
         {
             // Real Windows: try game reflection first, then fall back to processes
-            return commonDispatchers.Concat(new ICommandDispatcher[]
+            pipeline = commonDispatchers.Concat(new ICommandDispatcher[]
             {
                 new ReflectionCommandDispatcher(),
                 new ProcessFallbackCommandDispatcher()
@@ -113,12 +114,18 @@ public static class OpenWakeWordHelper
             // Unix (macOS/Linux) or Wine on Unix: try native process commands BEFORE game reflection
             // This ensures commands like "show steam friends" or "open task manager"
             // execute natively instead of trying to call into the Wine-running game
-            return commonDispatchers.Concat(new ICommandDispatcher[]
+            pipeline = commonDispatchers.Concat(new ICommandDispatcher[]
             {
                 new ProcessFallbackCommandDispatcher(),
                 new ReflectionCommandDispatcher(),
             }).ToArray();
         }
+
+        // First-success-wins needs the slow emulation channel last so fast
+        // channels claim the command first (see DispatcherOrdering).
+        var orderedNames = DispatcherOrdering.MoveEmulationLast(pipeline.Select(d => d.Name).ToArray());
+        var byName = pipeline.ToDictionary(d => d.Name, StringComparer.Ordinal);
+        return orderedNames.Select(n => byName[n]).ToArray();
     }
 
     /// <summary>
@@ -2279,25 +2286,47 @@ public static class OpenWakeWordHelper
         LogEvent($"[oww-dispatch] Starting dispatch for command token: '{action.CommandToken}'");
         LogEvent($"[oww-dispatch] Dispatchers will be tried in order: {string.Join(", ", CommandDispatchers.Select(d => d.Name))}");
 
-        // Try all dispatchers (don't stop on first success) so animations and batch files both execute
+        // First-success-wins (v0.1.2): one dispatch event must produce one
+        // action. Previously every dispatcher ran and each success acted,
+        // so a single command fanned out into 2-3 visible executions (plus
+        // the slow emulation channel landing seconds later). The pipeline is
+        // ordered fast-first / emulation-last, so the winner is the fastest
+        // capable channel; later channels are logged as channel-skips, and
+        // animation scripts still run on success below.
         var results = new List<string>();
         var anySucceeded = false;
-        
+        string? winner = null;
+
         for (int i = 0; i < CommandDispatchers.Length; i++)
         {
             var dispatcher = CommandDispatchers[i];
             LogEvent($"[oww-dispatch] Trying dispatcher [{i+1}/{CommandDispatchers.Length}]: {dispatcher.Name}");
-            
+
             if (dispatcher.TryDispatch(action, out var dispatchDetail))
             {
                 anySucceeded = true;
+                winner = dispatcher.Name;
                 results.Add($"[{dispatcher.Name}] {dispatchDetail}");
                 LogEvent($"[oww-dispatch-success] Dispatcher '{dispatcher.Name}' succeeded: {dispatchDetail}");
+                break;
             }
             else
             {
                 results.Add($"[{dispatcher.Name}] skipped: {dispatchDetail}");
                 LogEvent($"[oww-dispatch-skip] Dispatcher '{dispatcher.Name}' skipped: {dispatchDetail}");
+            }
+        }
+
+        if (anySucceeded)
+        {
+            for (int i = 0; i < CommandDispatchers.Length; i++)
+            {
+                var name = CommandDispatchers[i].Name;
+                if (!string.Equals(name, winner, StringComparison.Ordinal))
+                {
+                    results.Add($"[{name}] skipped: superseded by first-success-wins (winner='{winner}')");
+                    LogEvent($"[oww-dispatch-skip] Dispatcher '{name}' skipped: superseded by first-success-wins (winner='{winner}')");
+                }
             }
         }
 
