@@ -1289,7 +1289,10 @@ public static class OpenWakeWordHelper
                     {
                         LogEvent("[vosk-speech] Pre-warming Vosk recognizer at startup...");
                         if (EnsureVoskInitialized(0))
+                        {
                             LogEvent("[vosk-speech] Pre-warm complete: Vosk ready before first wake.");
+                            LogMemoryFootprint("post-prewarm");
+                        }
                         else
                             LogEvent("[vosk-speech] Pre-warm did not produce a recognizer; wakes use the fallback chain.");
                     }
@@ -2015,6 +2018,31 @@ public static class OpenWakeWordHelper
     internal static void NoteSapiProof()
     {
         Interlocked.Exchange(ref _lastSapiProofUtcTicks, DateTime.UtcNow.Ticks);
+    }
+
+    /// <summary>
+    /// Memory footprint snapshot for boot diagnostics (v0.1.2): the 32-bit
+    /// process shares a 4GB space with a 234MB image plus the voice model,
+    /// so pressure is a suspect class worth one log line, not a theory.
+    /// Never throws.
+    /// </summary>
+    private static void LogMemoryFootprint(string stage)
+    {
+        try
+        {
+            using (var proc = Process.GetCurrentProcess())
+            {
+                LogEvent(string.Format(
+                    "[mem] stage={0} workingset_mb={1} private_mb={2} gc_mb={3}",
+                    stage,
+                    proc.WorkingSet64 / 1048576,
+                    proc.PrivateMemorySize64 / 1048576,
+                    GC.GetTotalMemory(false) / 1048576));
+            }
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>
