@@ -1272,29 +1272,40 @@ public static class OpenWakeWordHelper
                 // wake, which reads as "something else answered first".
                 // Warm it now on a worker; the wake path shares the same
                 // once-lock, so an early wake simply waits for it.
-                // Kill-switch (boot diagnosis): PAICOM_VOSK_PREWARM=0 skips.
-                var prewarmRaw = Environment.GetEnvironmentVariable("PAICOM_VOSK_PREWARM");
-                var prewarmOff = !string.IsNullOrWhiteSpace(prewarmRaw) &&
-                    (prewarmRaw.Trim() == "0" ||
-                     prewarmRaw.Trim().Equals("false", StringComparison.OrdinalIgnoreCase));
-                if (prewarmOff)
+                // Diagnosis modes (boot crash bisect): PAICOM_VOSK_PREWARM=0
+                // skips entirely; =nosidecar skips only the sidecar probe;
+                // =nonative stops before native Model/recognizer creation.
+                var prewarmRaw = Environment.GetEnvironmentVariable("PAICOM_VOSK_PREWARM") ?? string.Empty;
+                var prewarmMode = prewarmRaw.Trim().ToLowerInvariant();
+                if (prewarmMode == "0" || prewarmMode == "false")
                 {
                     LogEvent("[vosk-speech] Pre-warm disabled by PAICOM_VOSK_PREWARM=0; first wake initializes.");
                 }
                 else
                 {
+                var allowSidecar = prewarmMode != "nosidecar";
+                var allowNative = prewarmMode != "nonative";
+                if (!allowSidecar || !allowNative)
+                    LogEvent($"[vosk-speech] Pre-warm diagnostic mode '{prewarmMode}': sidecar={allowSidecar}, native={allowNative}.");
                 System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
                 {
                     try
                     {
                         LogEvent("[vosk-speech] Pre-warming Vosk recognizer at startup...");
-                        if (EnsureVoskInitialized(0))
+                        if (EnsureVoskInitialized(0, allowSidecar, allowNative))
                         {
                             LogEvent("[vosk-speech] Pre-warm complete: Vosk ready before first wake.");
                             LogMemoryFootprint("post-prewarm");
                         }
                         else
+                        {
                             LogEvent("[vosk-speech] Pre-warm did not produce a recognizer; wakes use the fallback chain.");
+                            if (!allowSidecar || !allowNative)
+                            {
+                                ResetVoskInitAttempted();
+                                LogEvent("[vosk-speech] Partial pre-warm mode: reset init gate so first wake initializes fully.");
+                            }
+                        }
                     }
                     catch (Exception preEx)
                     {
@@ -1915,7 +1926,7 @@ public static class OpenWakeWordHelper
     /// failed attempt is not retried (the fallback chain owns recovery).
     /// Returns true when a usable recognizer exists afterwards.
     /// </summary>
-    private static bool EnsureVoskInitialized(long wakeIdForLog)
+    private static bool EnsureVoskInitialized(long wakeIdForLog, bool allowSidecar = true, bool allowNative = true)
     {
         lock (_voskInitLock)
         {
@@ -1929,7 +1940,7 @@ public static class OpenWakeWordHelper
             try
             {
                 _voskRecognizer = new VoskSpeechRecognizer(LogEvent);
-                if (!_voskRecognizer.Initialize())
+                if (!_voskRecognizer.Initialize(allowSidecar, allowNative))
                 {
                     LogTimingMarker("vosk_init_end", wakeIdForLog, "status=failed");
                     LogEvent("Vosk initialization failed; speech recognition unavailable");
@@ -1948,6 +1959,20 @@ public static class OpenWakeWordHelper
                 _voskRecognizer = null;
                 return false;
             }
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic support: let a partial pre-warm mode yield so the first
+    /// wake performs a full initialization.
+    /// </summary>
+    internal static void ResetVoskInitAttempted()
+    {
+        lock (_voskInitLock)
+        {
+            _voskRecognizer?.Dispose();
+            _voskRecognizer = null;
+            _voskInitAttempted = false;
         }
     }
 
