@@ -51,6 +51,7 @@ public static class OpenWakeWordHelper
     private static bool _voskInitAttempted;
     private static bool _voskListening;
     private static int _sapiFallbackActive;
+    private static long _lastSapiProofUtcTicks;
     private static long _wakeSequenceCounter;
     private static long _activeWakeSequenceId;
     private static long _firstQueuedAudioMarkerWakeId;
@@ -1943,6 +1944,33 @@ public static class OpenWakeWordHelper
     }
 
     /// <summary>
+    /// Product speech-loop suppression gate (v0.1.2): called from patched
+    /// product recognition handlers. When true, the product's own SAPI
+    /// action must stand down because the OWW bridge owns dispatch.
+    /// Suppressed while Vosk is alive, or while our own SAPI fallback keeps
+    /// proving itself (each successful SAPI transcript refreshes a window);
+    /// when neither can dispatch, the product loop runs free as the ultimate
+    /// fallback. Pure decision in <see cref="ShouldSuppressProductSpeech"/>.
+    /// </summary>
+    public static bool IsProductSpeechSuppressed()
+    {
+        return SapiSuppression.ShouldSuppress(
+            _voskRecognizer != null,
+            Interlocked.Read(ref _lastSapiProofUtcTicks),
+            DateTime.UtcNow.Ticks);
+    }
+
+    internal static bool ShouldSuppressProductSpeech(bool voskAlive, long proofTicks, long nowTicks)
+    {
+        return SapiSuppression.ShouldSuppress(voskAlive, proofTicks, nowTicks);
+    }
+
+    internal static void NoteSapiProof()
+    {
+        Interlocked.Exchange(ref _lastSapiProofUtcTicks, DateTime.UtcNow.Ticks);
+    }
+
+    /// <summary>
     /// Tier 3 input: Windows speech, only when every Vosk tier failed.
     /// Runs on a ThreadPool worker (bounded by the lock window plus a small
     /// buffer) and injects any transcript at the same downstream point as
@@ -1973,6 +2001,7 @@ public static class OpenWakeWordHelper
                 }
                 LogTimingMarker("sapi_fallback_end", wakeId, $"result=transcript,chars={transcript.Length}");
                 LogEvent("[sapi-fallback] backend.active=sapi-fallback");
+                NoteSapiProof();
                 HandleRecognizedSpeech(transcript);
             }
             catch (Exception ex)

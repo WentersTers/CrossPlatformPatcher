@@ -22,6 +22,13 @@ public static class SpeechCompatibilityPatcher
             .Where(m => m.HasBody)
             .ToList();
 
+        // Product SAPI suppression first: SpeechRecognized handlers stand
+        // down when the OWW bridge owns dispatch. Runs before probes so the
+        // probe logs stay first in the method body, and before the safety
+        // wrapping below so the early return is converted like any other.
+        var sapiSuppressed = ApplySapiSuppression(module, methods, log);
+        log?.Invoke($"Product SAPI suppression applied: {sapiSuppressed}");
+
         foreach (var method in methods)
         {
             if (IsCompatHelper(method))
@@ -153,6 +160,126 @@ public static class SpeechCompatibilityPatcher
         return string.Equals(fullName, "System.Speech.Recognition.SpeechRecognizedEventArgs", StringComparison.Ordinal) ||
                string.Equals(fullName, "System.Speech.Recognition.SpeechHypothesizedEventArgs", StringComparison.Ordinal) ||
                string.Equals(fullName, "System.Speech.Recognition.RecognizeCompletedEventArgs", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Product SAPI suppression (v0.1.2): the product's own recognition loop
+    /// executes commands in parallel with the OWW bridge on fully-alive
+    /// Windows (observed as 2-3 executions per utterance). For each void
+    /// handler taking a SpeechRecognizedEventArgs, injects an early return
+    /// gated on <c>OpenWakeWordHelper.IsProductSpeechSuppressed()</c> from
+    /// the deployed PAIcom.OWW assembly. Probe logs (inserted later by the
+    /// normal pass) stay first, so suppressed executions remain observable.
+    /// Only void, handler-free methods are touched: a raw return inside an
+    /// existing try region would be invalid IL, and non-void handlers need a
+    /// value the suppressor cannot invent. Idempotent for re-patching.
+    /// Returns the number of handlers suppressed.
+    /// </summary>
+    public static int ApplySapiSuppression(
+        ModuleDefMD module, IReadOnlyList<MethodDef> methods, Action<string>? log = null)
+    {
+        var suppressed = 0;
+        IMethod? guardMethod = null;
+
+        IMethod GetGuard()
+        {
+            if (guardMethod != null)
+                return guardMethod;
+            var owwAssemblyRef = module.GetAssemblyRefs()
+                .FirstOrDefault(a => a.Name == "PAIcom.OWW")
+                ?? new AssemblyRefUser("PAIcom.OWW", new Version(1, 0, 0, 0));
+            var helperTypeRef = new TypeRefUser(
+                module,
+                "CrossPlatformPatcher.Core",
+                "OpenWakeWordHelper",
+                owwAssemblyRef);
+            guardMethod = new MemberRefUser(
+                module,
+                "IsProductSpeechSuppressed",
+                MethodSig.CreateStatic(module.CorLibTypes.Boolean),
+                helperTypeRef);
+            return guardMethod;
+        }
+
+        foreach (var method in methods)
+        {
+            if (IsCompatHelper(method))
+                continue;
+            if (!method.HasBody || method.Body.Instructions.Count == 0)
+                continue;
+            if (method.Body.ExceptionHandlers.Count > 0)
+                continue;
+            if (method.MethodSig.RetType.GetElementType() != ElementType.Void)
+                continue;
+            var hasRecognizedArg = method.Parameters.Any(p =>
+                !p.IsHiddenThisParameter &&
+                string.Equals(p.Type?.FullName,
+                    "System.Speech.Recognition.SpeechRecognizedEventArgs",
+                    StringComparison.Ordinal));
+            if (!hasRecognizedArg)
+                continue;
+            if (CallsMethodNamed(method, "IsProductSpeechSuppressed"))
+                continue;
+
+            var body = method.Body;
+            var instrs = body.Instructions;
+
+            // Anchor after any probe preamble already present (re-patch or
+            // foreign instrumentation): skip Ldstr+Call(LogSpeechEvent[*])
+            // pairs so the suppression check never precedes the probes.
+            int idx = 0;
+            while (idx < instrs.Count && IsProbePreambleAt(instrs, idx, out int consumed))
+                idx += consumed;
+
+            var continueTarget = instrs[idx];
+            instrs.Insert(idx, Instruction.Create(OpCodes.Call, GetGuard()));
+            instrs.Insert(idx + 1, Instruction.Create(OpCodes.Brfalse_S, continueTarget));
+            instrs.Insert(idx + 2, Instruction.Create(OpCodes.Ret));
+
+            body.OptimizeBranches();
+            body.OptimizeMacros();
+            suppressed++;
+        }
+
+        return suppressed;
+    }
+
+    private static bool CallsMethodNamed(MethodDef method, string name)
+    {
+        foreach (var instr in method.Body.Instructions)
+        {
+            if (instr.OpCode == OpCodes.Call &&
+                instr.Operand is IMethod called &&
+                string.Equals(called.Name, name, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsProbePreambleAt(
+        IList<Instruction> instrs, int idx, out int consumed)
+    {
+        consumed = 0;
+        if (idx >= instrs.Count || instrs[idx].OpCode != OpCodes.Ldstr)
+            return false;
+        if (idx + 2 < instrs.Count &&
+            instrs[idx + 1].OpCode == OpCodes.Ldarg &&
+            instrs[idx + 2].OpCode == OpCodes.Call &&
+            instrs[idx + 2].Operand is IMethod detail &&
+            string.Equals(detail.Name, "LogSpeechEventDetail", StringComparison.Ordinal))
+        {
+            consumed = 3;
+            return true;
+        }
+        if (idx + 1 < instrs.Count &&
+            instrs[idx + 1].OpCode == OpCodes.Call &&
+            instrs[idx + 1].Operand is IMethod simple &&
+            string.Equals(simple.Name, "LogSpeechEvent", StringComparison.Ordinal))
+        {
+            consumed = 2;
+            return true;
+        }
+        return false;
     }
 
     private static bool ReferencesSystemSpeech(MethodDef method)
