@@ -1272,6 +1272,17 @@ public static class OpenWakeWordHelper
                 // wake, which reads as "something else answered first".
                 // Warm it now on a worker; the wake path shares the same
                 // once-lock, so an early wake simply waits for it.
+                // Kill-switch (boot diagnosis): PAICOM_VOSK_PREWARM=0 skips.
+                var prewarmRaw = Environment.GetEnvironmentVariable("PAICOM_VOSK_PREWARM");
+                var prewarmOff = !string.IsNullOrWhiteSpace(prewarmRaw) &&
+                    (prewarmRaw.Trim() == "0" ||
+                     prewarmRaw.Trim().Equals("false", StringComparison.OrdinalIgnoreCase));
+                if (prewarmOff)
+                {
+                    LogEvent("[vosk-speech] Pre-warm disabled by PAICOM_VOSK_PREWARM=0; first wake initializes.");
+                }
+                else
+                {
                 System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
                 {
                     try
@@ -1287,6 +1298,7 @@ public static class OpenWakeWordHelper
                         LogEvent($"[vosk-speech] Pre-warm failed (non-fatal): {preEx.GetType().Name}");
                     }
                 }, null);
+                }
 
                 // Initialize sequential method testing mode if enabled
                 InitializeMethodTestingMode();
