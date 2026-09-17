@@ -50,8 +50,10 @@ public static class OpenWakeWordHelper
     private static int _pcmClipLogCount;
     private static bool _voskInitAttempted;
     private static bool _voskListening;
+    private static readonly object _voskInitLock = new();
     private static int _sapiFallbackActive;
     private static long _lastSapiProofUtcTicks;
+    private static WeakReference<object>? _scriptPictureBox;
     private static long _wakeSequenceCounter;
     private static long _activeWakeSequenceId;
     private static long _firstQueuedAudioMarkerWakeId;
@@ -1265,7 +1267,27 @@ public static class OpenWakeWordHelper
                 }
                 
                 _initialized = true;
-                
+
+                // Vosk pre-warm (v0.1.2): cold init costs seconds at first
+                // wake, which reads as "something else answered first".
+                // Warm it now on a worker; the wake path shares the same
+                // once-lock, so an early wake simply waits for it.
+                System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        LogEvent("[vosk-speech] Pre-warming Vosk recognizer at startup...");
+                        if (EnsureVoskInitialized(0))
+                            LogEvent("[vosk-speech] Pre-warm complete: Vosk ready before first wake.");
+                        else
+                            LogEvent("[vosk-speech] Pre-warm did not produce a recognizer; wakes use the fallback chain.");
+                    }
+                    catch (Exception preEx)
+                    {
+                        LogEvent($"[vosk-speech] Pre-warm failed (non-fatal): {preEx.GetType().Name}");
+                    }
+                }, null);
+
                 // Initialize sequential method testing mode if enabled
                 InitializeMethodTestingMode();
                 
@@ -1873,6 +1895,48 @@ public static class OpenWakeWordHelper
     }
 
     /// <summary>
+    /// Initialize-once gate for the Vosk recognizer, shared by startup
+    /// pre-warm and the wake path. At-most-once semantics preserved: a
+    /// failed attempt is not retried (the fallback chain owns recovery).
+    /// Returns true when a usable recognizer exists afterwards.
+    /// </summary>
+    private static bool EnsureVoskInitialized(long wakeIdForLog)
+    {
+        lock (_voskInitLock)
+        {
+            if (_voskInitAttempted)
+            {
+                LogTimingMarker("vosk_init_end", wakeIdForLog, "status=cached");
+                return _voskRecognizer != null;
+            }
+            _voskInitAttempted = true;
+            LogTimingMarker("vosk_init_start", wakeIdForLog);
+            try
+            {
+                _voskRecognizer = new VoskSpeechRecognizer(LogEvent);
+                if (!_voskRecognizer.Initialize())
+                {
+                    LogTimingMarker("vosk_init_end", wakeIdForLog, "status=failed");
+                    LogEvent("Vosk initialization failed; speech recognition unavailable");
+                    _voskRecognizer?.Dispose();
+                    _voskRecognizer = null;
+                    return false;
+                }
+                LogTimingMarker("vosk_init_end", wakeIdForLog, "status=ok");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogTimingMarker("vosk_init_end", wakeIdForLog, "status=exception");
+                LogEvent($"Exception initializing Vosk: {ex.Message}");
+                _voskRecognizer?.Dispose();
+                _voskRecognizer = null;
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
     /// When wake word is detected, start speech recognition via Vosk.
     /// Runs in background thread to feed audio from lock queue to recognizer.
     /// </summary>
@@ -1885,39 +1949,10 @@ public static class OpenWakeWordHelper
 
         LogEvent("Wake-word lock issued; starting Vosk speech recognition...");
         EnsureMicrophoneCaptureStarted("wake-handoff", forceRestart: false);
-        
-        // Initialize Vosk if not already attempted
-        if (!_voskInitAttempted)
-        {
-            LogTimingMarker("vosk_init_start", wakeId);
-            _voskInitAttempted = true;
-            try
-            {
-                _voskRecognizer = new VoskSpeechRecognizer(LogEvent);
-                if (!_voskRecognizer.Initialize())
-                {
-                    LogTimingMarker("vosk_init_end", wakeId, "status=failed");
-                    LogEvent("Vosk initialization failed; speech recognition unavailable");
-                    _voskRecognizer?.Dispose();
-                    _voskRecognizer = null;
-                }
-                else
-                {
-                    LogTimingMarker("vosk_init_end", wakeId, "status=ok");
-                }
-            }
-            catch (Exception ex)
-            {
-                LogTimingMarker("vosk_init_end", wakeId, "status=exception");
-                LogEvent($"Exception initializing Vosk: {ex.Message}");
-                _voskRecognizer?.Dispose();
-                _voskRecognizer = null;
-            }
-        }
-        else
-        {
-            LogTimingMarker("vosk_init_end", wakeId, "status=cached");
-        }
+
+        // Initialize Vosk if not already attempted (usually pre-warmed at
+        // startup; a first wake racing pre-warm waits on the once-lock).
+        EnsureVoskInitialized(wakeId);
 
         if (_voskRecognizer == null)
         {
@@ -4294,7 +4329,24 @@ public static class OpenWakeWordHelper
 
             if (!TryInvokeOnUiThread(mainForm, () =>
             {
-                if (TryFindPictureBoxControl(mainForm, out var pictureBox))
+                object? pictureBox = null;
+                // Script stickiness (v0.1.2): HIDE_ALL + per-frame re-scoring
+                // can ping-pong between boxes mid-animation. Reuse the box
+                // this script already chose when it is still usable.
+                if (_scriptPictureBox != null &&
+                    _scriptPictureBox.TryGetTarget(out var remembered) &&
+                    HasImageAndVisibleProperties(remembered))
+                {
+                    pictureBox = remembered;
+                    LogEvent($"[animation-script-diag] Reusing script PictureBox: {DescribeControlState(pictureBox)}");
+                }
+                else if (TryFindPictureBoxControl(mainForm, out var fresh))
+                {
+                    pictureBox = fresh;
+                    _scriptPictureBox = new WeakReference<object>(pictureBox!);
+                }
+
+                if (pictureBox != null)
                 {
                     var ctrlType = pictureBox!.GetType();
                     LogEvent($"[animation-script-diag] Using form: {DescribeControlState(mainForm)}");
@@ -4386,10 +4438,12 @@ public static class OpenWakeWordHelper
                     var nameProperty = ctrlType.GetProperty("Name", BindingFlags.Instance | BindingFlags.Public);
                     var ctrlName = nameProperty?.GetValue(pictureBox)?.ToString() ?? "Unknown";
                     LogEvent($"[animation-script-action] Displayed frame {frameNum} in {ctrlName}");
+                    LogEvent($"[animation-script-diag] Post-state: {DescribeControlState(pictureBox)}");
+                    LogEvent($"[animation-script-diag] Post-chain: {DescribeControlChain(pictureBox)}");
                 }
                 else
                 {
-                    LogEvent("[animation-script-error] No PictureBox controls found to display frame");
+                    LogEvent("[animation-script-error] No usable PictureBox found (none exist, or all sit in hidden containers)");
                 }
             }))
             {
@@ -4734,6 +4788,27 @@ public static class OpenWakeWordHelper
         return TryFindBestPictureBoxControl(parent, requireVisible: false, out pictureBox);
     }
 
+    /// <summary>
+    /// Stickiness check: a remembered script box is reusable when it still
+    /// exposes the properties SHOW needs. Visibility itself is reasserted
+    /// by the caller (HIDE may have hidden it between frames).
+    /// </summary>
+    private static bool HasImageAndVisibleProperties(object? control)
+    {
+        if (control == null)
+            return false;
+        try
+        {
+            var ctrlType = control.GetType();
+            return ctrlType.GetProperty("Image", BindingFlags.Instance | BindingFlags.Public) != null &&
+                   ctrlType.GetProperty("Visible", BindingFlags.Instance | BindingFlags.Public) != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool TryFindVisiblePictureBoxControl(object parent, out object? pictureBox)
     {
         return TryFindBestPictureBoxControl(parent, requireVisible: true, out pictureBox);
@@ -4790,6 +4865,11 @@ public static class OpenWakeWordHelper
     private static int ScorePictureBoxControl(object control, bool requireVisible = false)
     {
         var score = 0;
+
+        // A box inside an invisible container can never display: exclude it
+        // outright rather than outscoring it (v0.1.2 blind-frame fix).
+        if (!AnimationBoxSelection.AncestorsVisible(control))
+            return int.MinValue;
 
         if (TryGetBoolProperty(control, "Visible", out var visible) && visible)
             score += 10;
