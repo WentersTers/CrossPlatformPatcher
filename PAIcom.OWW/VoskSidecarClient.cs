@@ -33,9 +33,22 @@ namespace CrossPlatformPatcher.Core
         {
             _baseUrl = NormalizeBaseUrl(ResolveBaseUrl(baseUrl));
             _log = logger;
+            // Loopback-only by design: never route through a proxy. Beyond
+            // correctness, this keeps the probe out of the process-global
+            // proxy auto-detect machinery (WPAD), which otherwise initializes
+            // concurrently with the host's own HTTP stack at startup.
             _http = handler != null
                 ? new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(3) }
-                : new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                : new HttpClient(CreateLoopbackHandler()) { Timeout = TimeSpan.FromSeconds(3) };
+        }
+
+        /// <summary>
+        /// Default transport: loopback only, proxy explicitly disabled (see
+        /// ctor comment). Internal for unit testing.
+        /// </summary>
+        internal static HttpMessageHandler CreateLoopbackHandler()
+        {
+            return new HttpClientHandler { UseProxy = false };
         }
 
         public string BaseUrl
