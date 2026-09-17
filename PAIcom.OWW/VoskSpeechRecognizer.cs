@@ -32,8 +32,10 @@ public class VoskSpeechRecognizer : IDisposable
     /// <summary>
     /// Initialize Vosk model and create recognizer instance.
     /// Returns true if successful, false if Vosk unavailable or model not found.
+    /// The diagnostic flags exist for boot-crash bisection (pre-warm modes):
+    /// wakes always call with both allowed.
     /// </summary>
-    public bool Initialize()
+    public bool Initialize(bool allowSidecar = true, bool allowNative = true)
     {
         var initStopwatch = Stopwatch.StartNew();
         var initStatus = "failed";
@@ -79,17 +81,25 @@ public class VoskSpeechRecognizer : IDisposable
             // Grammar is intentionally null (open recognizer): a fragment
             // grammar over-constrains decode to alias soup and no real
             // command can ever emerge; the matcher owns constraining.
-            var sidecar = new VoskSidecarClient(null, LogEvent);
-            if (sidecar.CheckHealth() &&
-                sidecar.Init(16000f, null))
+            // Diagnostic pre-warm modes may skip this stage (nosidecar).
+            if (allowSidecar)
             {
-                _sidecar = sidecar;
-                LogEvent("[vosk-speech] Vosk recognizer initialized successfully (sidecar)");
-                LogEvent("[vosk-speech] backend.active=vosk-sidecar");
-                initStatus = "ok:sidecar";
-                return true;
+                var sidecar = new VoskSidecarClient(null, LogEvent);
+                if (sidecar.CheckHealth() &&
+                    sidecar.Init(16000f, null))
+                {
+                    _sidecar = sidecar;
+                    LogEvent("[vosk-speech] Vosk recognizer initialized successfully (sidecar)");
+                    LogEvent("[vosk-speech] backend.active=vosk-sidecar");
+                    initStatus = "ok:sidecar";
+                    return true;
+                }
+                sidecar.Dispose();
             }
-            sidecar.Dispose();
+            else
+            {
+                LogEvent("[vosk-speech] sidecar stage skipped (diagnostic pre-warm mode).");
+            }
 
             // Try to load Vosk.dll from embedded resources
             if (!LoadVoskAssembly())
@@ -109,6 +119,14 @@ public class VoskSpeechRecognizer : IDisposable
             }
 
             LogEvent($"[vosk-speech] Model loaded from: {modelPath}");
+
+            // Diagnostic pre-warm modes may stop before native creation.
+            if (!allowNative)
+            {
+                initStatus = "skipped:nonative-mode";
+                LogEvent("[vosk-speech] native stage skipped (diagnostic pre-warm mode); wakes will initialize fully.");
+                return false;
+            }
 
             // Create Vosk model and recognizer
             try
