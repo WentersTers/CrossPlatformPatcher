@@ -2176,8 +2176,16 @@ public static class OpenWakeWordHelper
             LogEvent($"[oww-command] Assistant line: {action.AssistantLine}");
         }
 
+        if (DispatchDedup.IsDuplicate(action.CommandToken))
+        {
+            LogTimingMarker("dispatch_dedup_skip", wakeId, $"token={action.CommandToken}");
+            LogEvent($"[oww-dispatch-dedup] Duplicate suppressed: token='{action.CommandToken}' dispatched within window; skipping.");
+            return action.AssistantLine;
+        }
+
         if (DispatchCommandAction(action, out var dispatchDetail))
         {
+            DispatchDedup.Record(action.CommandToken);
             LogEvent($"[oww-command] Dispatch succeeded: {dispatchDetail}");
             LogTimingMarker("dispatch_success", wakeId, $"token={action.CommandToken}");
             
