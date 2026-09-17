@@ -6,18 +6,18 @@ namespace CrossPlatformPatcher.Core;
 /// Voice-dispatch deduplication (v0.1.2): the wake word can re-fire on the
 /// tail of the same utterance (or a quick repeat), producing the same
 /// command twice within seconds — observed as 2-3 browser windows from one
-/// spoken command. When the same token dispatched successfully less than
-/// the window ago, the repeat is suppressed with its own timing marker
-/// (not a failure). Only successful dispatches arm suppression, so failed
-/// commands stay retryable; file-input and test-queue paths bypass this
-/// (explicit invocations are intent, not echo).
-/// Tunable via PAICOM_DISPATCH_DEDUP_MS (milliseconds, default 8000);
-/// zero or negative disables.
+/// spoken command, with re-arms landing up to ~10s after the first dispatch.
+/// When the same token dispatched successfully inside the window, the repeat
+/// is suppressed with its own timing marker (not a failure). Only successful
+/// dispatches arm suppression, so failed commands stay retryable; file-input
+/// and test-queue paths bypass this (explicit invocations are intent, not echo).
+/// Tunable via PAICOM_DISPATCH_DEDUP_MS (milliseconds, default 12000 —
+/// user-measured re-arm max plus margin); zero or negative disables.
 /// </summary>
 public static class DispatchDedup
 {
     public const string WindowMsVariable = "PAICOM_DISPATCH_DEDUP_MS";
-    public const int DefaultWindowMs = 8000;
+    public const int DefaultWindowMs = 12000;
 
     private static readonly object _lock = new();
     private static string? _lastToken;
