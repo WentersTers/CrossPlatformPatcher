@@ -137,6 +137,23 @@ public sealed class SapiSuppressionTests
     }
 
     [Fact]
+    public void Disposition_Report_Names_Each_Handler_With_Reason()
+    {
+        using var temp = new TempDirectory();
+        using var module = LoadFixture(temp.Path);
+        var methods = module.GetTypes().SelectMany(t => t.Methods).Where(m => m.HasBody).ToList();
+        var logs = new List<string>();
+
+        var count = SpeechCompatibilityPatcher.ApplySapiSuppression(module, methods, logs.Add);
+
+        Assert.Equal(1, count);
+        Assert.Contains(logs, m => m.Contains("OnSpeechRecognized") && m.Contains("suppressed"));
+        Assert.Contains(logs, m => m.Contains("OnSpeechNonVoid") && m.Contains("skipped") && m.Contains("non-void"));
+        Assert.Contains(logs, m => m.Contains("OnSpeechGuarded") && m.Contains("skipped") && m.Contains("exception-handlers"));
+        Assert.DoesNotContain(logs, m => m.Contains("Unrelated"));
+    }
+
+    [Fact]
     public void Suppression_Decision_Matrix()
     {
         // The real injected decision unit: Vosk alive suppresses; otherwise

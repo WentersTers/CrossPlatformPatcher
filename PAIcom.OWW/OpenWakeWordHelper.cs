@@ -53,6 +53,13 @@ public static class OpenWakeWordHelper
     private static readonly object _voskInitLock = new();
     private static int _sapiFallbackActive;
     private static long _lastSapiProofUtcTicks;
+    // Product SAPI observation (Option A): the product's own recognition
+    // events arrive here as foreign payloads; the latest in-window result is
+    // kept so the bridge can defer on agreement instead of double-executing.
+    private static readonly object _productSapiLock = new();
+    private static string? _productSapiText;
+    private static double _productSapiConfidence;
+    private static long _productSapiWakeId;
     private static WeakReference<object>? _scriptPictureBox;
     private static long _wakeSequenceCounter;
     private static long _activeWakeSequenceId;
@@ -1658,6 +1665,40 @@ public static class OpenWakeWordHelper
                 var argType = audioArg?.GetType().FullName ?? "<null>";
                 LogEvent($"Unsupported audio argument type for OWW enqueue: {argType}");
             }
+            ObserveProductSpeechResult(audioArg);
+        }
+    }
+
+    /// <summary>
+    /// Option A observation: a foreign payload that unwraps to a product
+    /// SAPI recognition result is recorded (text + confidence + wake) for
+    /// the defer-on-agreement check at dispatch time. This is the same event
+    /// stream the "unsupported type" line above reports; here it becomes the
+    /// coordination channel instead of a dropped curiosity. Never throws.
+    /// </summary>
+    private static void ObserveProductSpeechResult(object? audioArg)
+    {
+        try
+        {
+            var result = SapiFallbackRecognizer.UnwrapRecognitionResult(audioArg);
+            if (result == null)
+                return;
+            var text = SapiFallbackRecognizer.ReadResultText(result);
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+            var confidence = SapiFallbackRecognizer.ReadResultConfidence(result) ?? 0.0;
+            var wakeId = Interlocked.Read(ref _activeWakeSequenceId);
+            var locked = _lockManager?.IsLocked == true;
+            lock (_productSapiLock)
+            {
+                _productSapiText = text.Trim();
+                _productSapiConfidence = confidence;
+                _productSapiWakeId = wakeId;
+            }
+            LogEvent($"[product-sapi] observed result in_window={locked}: text='{text.Trim()}' confidence={confidence:F2} wake={wakeId}");
+        }
+        catch
+        {
         }
     }
 
@@ -1991,6 +2032,12 @@ public static class OpenWakeWordHelper
         var wakeId = Interlocked.Increment(ref _wakeSequenceCounter);
         Interlocked.Exchange(ref _activeWakeSequenceId, wakeId);
         Interlocked.Exchange(ref _firstQueuedAudioMarkerWakeId, 0);
+        lock (_productSapiLock)
+        {
+            _productSapiText = null;
+            _productSapiConfidence = 0;
+            _productSapiWakeId = wakeId;
+        }
         LogTimingMarker("wake_detected", wakeId);
 
         LogEvent("Wake-word lock issued; starting Vosk speech recognition...");
@@ -2325,6 +2372,13 @@ public static class OpenWakeWordHelper
             return action.AssistantLine;
         }
 
+        if (ShouldDeferBridgeDispatchToProduct(action, wakeId, out var deferDetail))
+        {
+            LogTimingMarker("bridge_deferred", wakeId, deferDetail);
+            LogEvent($"[oww-dispatch-defer] Bridge deferred to product speech loop: {deferDetail}.");
+            return action.AssistantLine;
+        }
+
         if (DispatchCommandAction(action, out var dispatchDetail))
         {
             DispatchDedup.Record(action.CommandToken);
@@ -2414,6 +2468,35 @@ public static class OpenWakeWordHelper
     public static string? ResolveCommandResponse(string? transcript)
     {
         return ResolveCommandAction(transcript)?.AssistantLine;
+    }
+
+    /// <summary>
+    /// Option A deferral: when the product's own SAPI loop produced a result
+    /// during this wake and that result resolves (through our own matcher) to
+    /// the SAME command token we resolved, the product has already acted on
+    /// its grammar match, so our dispatch stands down. Agreement is on the
+    /// matched command, never on raw text: an unmapped or differently-mapped
+    /// product result never suppresses us (over-defer guard).
+    /// </summary>
+    private static bool ShouldDeferBridgeDispatchToProduct(CommandAction action, long wakeId, out string detail)
+    {
+        detail = string.Empty;
+        string? productText;
+        double productConfidence;
+        long productWake;
+        lock (_productSapiLock)
+        {
+            productText = _productSapiText;
+            productConfidence = _productSapiConfidence;
+            productWake = _productSapiWakeId;
+        }
+        if (productWake != wakeId || string.IsNullOrWhiteSpace(productText))
+            return false;
+        var productAction = ResolveCommandAction(productText);
+        if (!ProductSpeechDeferral.ShouldDefer(action.CommandToken, productAction?.CommandToken, productConfidence))
+            return false;
+        detail = $"bridge_deferred: product='{productText.Trim()}' ours='{action.CommandToken}' confidence={productConfidence:F2}";
+        return true;
     }
 
     private static bool DispatchCommandAction(CommandAction action, out string detail)

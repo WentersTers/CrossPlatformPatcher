@@ -205,12 +205,6 @@ public static class SpeechCompatibilityPatcher
         {
             if (IsCompatHelper(method))
                 continue;
-            if (!method.HasBody || method.Body.Instructions.Count == 0)
-                continue;
-            if (method.Body.ExceptionHandlers.Count > 0)
-                continue;
-            if (method.MethodSig.RetType.GetElementType() != ElementType.Void)
-                continue;
             var hasRecognizedArg = method.Parameters.Any(p =>
                 !p.IsHiddenThisParameter &&
                 string.Equals(p.Type?.FullName,
@@ -218,8 +212,27 @@ public static class SpeechCompatibilityPatcher
                     StringComparison.Ordinal));
             if (!hasRecognizedArg)
                 continue;
-            if (CallsMethodNamed(method, "IsProductSpeechSuppressed"))
+            var handlerName = $"{method.DeclaringType?.Name}.{method.Name}";
+            if (!method.HasBody || method.Body.Instructions.Count == 0)
+            {
+                log?.Invoke($"Product SAPI handler {handlerName}: skipped (no IL body).");
                 continue;
+            }
+            if (method.Body.ExceptionHandlers.Count > 0)
+            {
+                log?.Invoke($"Product SAPI handler {handlerName}: skipped (exception-handlers={method.Body.ExceptionHandlers.Count}; guard injection needs a handler-free body).");
+                continue;
+            }
+            if (method.MethodSig.RetType.GetElementType() != ElementType.Void)
+            {
+                log?.Invoke($"Product SAPI handler {handlerName}: skipped (non-void).");
+                continue;
+            }
+            if (CallsMethodNamed(method, "IsProductSpeechSuppressed"))
+            {
+                log?.Invoke($"Product SAPI handler {handlerName}: skipped (already guarded).");
+                continue;
+            }
 
             var body = method.Body;
             var instrs = body.Instructions;
@@ -238,6 +251,7 @@ public static class SpeechCompatibilityPatcher
 
             body.OptimizeBranches();
             body.OptimizeMacros();
+            log?.Invoke($"Product SAPI handler {method.DeclaringType?.Name}.{method.Name}: suppressed (early return on IsProductSpeechSuppressed).");
             suppressed++;
         }
 
