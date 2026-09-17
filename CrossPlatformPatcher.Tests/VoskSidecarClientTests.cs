@@ -57,6 +57,19 @@ public sealed class VoskSidecarClientTests
     }
 
     [Fact]
+    public void Loopback_Handler_Bypasses_Proxy()
+    {
+        // Loopback must never touch proxy auto-detect (WPAD): on .NET
+        // Framework that machinery is process-global and initializes
+        // concurrently with the host's own HTTP stack at startup.
+        using var handler = VoskSidecarClient.CreateLoopbackHandler();
+        var http = handler as System.Net.Http.HttpClientHandler;
+        Assert.NotNull(http);
+        Assert.False(http!.UseProxy);
+        Assert.Null(http.Proxy);
+    }
+
+    [Fact]
     public void ExtractField_Parses_Vosk_Shapes()
     {
         Assert.Equal(

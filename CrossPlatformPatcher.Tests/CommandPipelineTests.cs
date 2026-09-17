@@ -532,7 +532,7 @@ public sealed class CommandPipelineTests
     #region Command Dispatch Tests
 
     [Fact]
-    public void DispatchCommandAction_Tries_All_Dispatchers()
+    public void DispatchCommandAction_First_Success_Wins_At_Most_One_Channel_Acts()
     {
         // Arrange
         var helperType = GetRuntimeOpenWakeWordHelperType();
@@ -553,13 +553,17 @@ public sealed class CommandPipelineTests
         // Act
         var dispatchMethod = helperType.GetMethod("DispatchCommandAction",
             BindingFlags.NonPublic | BindingFlags.Static);
-        
+
         var parameters = new object?[] { action, string.Empty };
         var result = (bool)(dispatchMethod!.Invoke(null, parameters) ?? false);
-        
-        // Assert - Should try all dispatchers
+
+        // Assert - first-success-wins: at most one non-skipped segment,
+        // regardless of host (0 on hosts where nothing can act).
         var detail = (string)parameters[1];
         Assert.NotNull(detail);
+        var acted = detail.Split(new[] { "; " }, StringSplitOptions.None)
+            .Count(seg => !seg.Contains("skipped"));
+        Assert.True(acted <= 1, $"Expected at most one acting channel, got {acted}: {detail}");
         _output.WriteLine($"Dispatch detail: {detail}");
     }
 
