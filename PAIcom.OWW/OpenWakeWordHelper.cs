@@ -1283,7 +1283,13 @@ public static class OpenWakeWordHelper
                 }
                 else
                 {
-                var allowSidecar = prewarmMode != "nosidecar";
+                // No sidecar probe during pre-warm on real Windows (v0.1.2):
+                // the probe's first HttpClient use collides with the host's
+                // own network-stack init at startup (3/3 crash bisection),
+                // while native/model warmup is proven safe. Linux keeps the
+                // probe (it warms the server). Wake path unchanged.
+                var realWindows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) && !IsRunningUnderWine();
+                var allowSidecar = prewarmMode != "nosidecar" && !realWindows;
                 var allowNative = prewarmMode != "nonative";
                 if (!allowSidecar || !allowNative)
                     LogEvent($"[vosk-speech] Pre-warm diagnostic mode '{prewarmMode}': sidecar={allowSidecar}, native={allowNative}.");
