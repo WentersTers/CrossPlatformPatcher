@@ -31,6 +31,7 @@
     <Compile Include="..\PAIcom.OWW\VoskSidecarClient.cs" />
     <Compile Include="..\PAIcom.OWW\TripwireCheck.cs" />
     <Compile Include="..\PAIcom.OWW\VoskModelDownloader.cs" />
+    <Compile Include="..\PAIcom.OWW\SapiFallbackRecognizer.cs" />
   </ItemGroup>
 
   <ItemGroup>

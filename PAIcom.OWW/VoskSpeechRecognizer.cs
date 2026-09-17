@@ -450,6 +450,22 @@ public class VoskSpeechRecognizer : IDisposable
 
     private string? GetOrDownloadModel()
     {
+        // Tier 1 (user model): explicit path, configured name, home dir.
+        var userModel = FindUserModel();
+        if (!string.IsNullOrWhiteSpace(userModel))
+            return userModel;
+
+        // Tier 2 (default model): shipped alongside, then first-run fetch.
+        return FindDefaultModel();
+    }
+
+    /// <summary>
+    /// Tier 1: the user's own model. Explicit path wins, then a configured
+    /// model name, then the home models dir (manual placement). Never
+    /// downloads: a user model is either present or it is not.
+    /// </summary>
+    public string? FindUserModel()
+    {
         var explicitPathRaw = Environment.GetEnvironmentVariable("PAICOM_VOSK_MODEL_PATH");
         var explicitPath = NormalizeCandidatePath(explicitPathRaw);
         if (!string.IsNullOrWhiteSpace(explicitPathRaw))
@@ -466,7 +482,7 @@ public class VoskSpeechRecognizer : IDisposable
 
         if (!string.IsNullOrWhiteSpace(explicitPath) && Directory.Exists(explicitPath))
         {
-            var resolvedExplicitPath = FindFirstVoskModelDirectory(explicitPath);
+            var resolvedExplicitPath = VoskModelDownloader.FindModelDirectory(explicitPath);
             if (!string.IsNullOrWhiteSpace(resolvedExplicitPath))
             {
                 LogEvent($"[vosk-speech] Model resolved under PAICOM_VOSK_MODEL_PATH: {resolvedExplicitPath}");
@@ -477,7 +493,7 @@ public class VoskSpeechRecognizer : IDisposable
         var configuredName = Environment.GetEnvironmentVariable("PAICOM_VOSK_MODEL_NAME");
         if (!string.IsNullOrWhiteSpace(configuredName))
         {
-            foreach (var root in GetModelSearchRoots())
+            foreach (var root in GetUserModelRoots())
             {
                 var configuredPath = Path.Combine(root, configuredName);
                 if (Directory.Exists(configuredPath) && LooksLikeVoskModelDirectory(configuredPath))
@@ -488,22 +504,41 @@ public class VoskSpeechRecognizer : IDisposable
             }
         }
 
-        var searchRoots = GetModelSearchRoots();
-        LogEvent($"[vosk-speech] model.search.base_dir={AppDomain.CurrentDomain.BaseDirectory}");
-        LogEvent($"[vosk-speech] model.search.cwd={Directory.GetCurrentDirectory()}");
-        foreach (var root in searchRoots)
+        var homeRoot = VoskModelDownloader.HomeModelsRoot();
+        var homeExists = Directory.Exists(homeRoot);
+        LogEvent($"[vosk-speech] model.search.user-home={homeRoot};exists={homeExists}");
+        if (homeExists)
+        {
+            var homeModel = VoskModelDownloader.FindModelDirectory(homeRoot);
+            if (!string.IsNullOrWhiteSpace(homeModel))
+            {
+                LogEvent($"[vosk-speech] Auto-selected user model: {homeModel}");
+                return homeModel;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Tier 2: the default model. Shipped `models` dirs first, then the
+    /// first-run fetch. Runs only when tier 1 found nothing.
+    /// </summary>
+    public string? FindDefaultModel()
+    {
+        foreach (var root in GetDefaultModelRoots())
         {
             var normalizedRoot = NormalizeCandidatePath(root);
             var exists = !string.IsNullOrWhiteSpace(normalizedRoot) && Directory.Exists(normalizedRoot);
-            LogEvent($"[vosk-speech] model.search.root={normalizedRoot};exists={exists}");
+            LogEvent($"[vosk-speech] model.search.default-root={normalizedRoot};exists={exists}");
 
             if (!exists)
                 continue;
 
-            var resolvedRootModel = FindFirstVoskModelDirectory(normalizedRoot!);
+            var resolvedRootModel = VoskModelDownloader.FindModelDirectory(normalizedRoot!);
             if (!string.IsNullOrWhiteSpace(resolvedRootModel))
             {
-                LogEvent($"[vosk-speech] Auto-selected model: {resolvedRootModel}");
+                LogEvent($"[vosk-speech] Auto-selected default model: {resolvedRootModel}");
                 return resolvedRootModel;
             }
 
@@ -530,33 +565,20 @@ public class VoskSpeechRecognizer : IDisposable
         return null;
     }
 
-    private static string[] GetModelSearchRoots()
+    /// <summary>User-tier roots: explicit path handling lives in
+    /// <see cref="FindUserModel"/>; these cover configured-name lookup.</summary>
+    private static string[] GetUserModelRoots()
     {
-        var homeRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".paicom", "models");
+        return new[] { VoskModelDownloader.HomeModelsRoot() };
+    }
+
+    /// <summary>Default-tier roots: models shipped alongside the app.</summary>
+    private static string[] GetDefaultModelRoots()
+    {
         var baseRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "models");
         var cwdRoot = Path.Combine(Directory.GetCurrentDirectory(), "models");
 
-        return new[] { baseRoot, cwdRoot, homeRoot };
-    }
-
-    private static string? FindFirstVoskModelDirectory(string root)
-    {
-        if (!Directory.Exists(root))
-            return null;
-
-        if (LooksLikeVoskModelDirectory(root))
-            return root;
-
-        var directories = Directory.GetDirectories(root, "*", SearchOption.AllDirectories);
-        Array.Sort(directories, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var directory in directories)
-        {
-            if (LooksLikeVoskModelDirectory(directory))
-                return directory;
-        }
-
-        return null;
+        return new[] { baseRoot, cwdRoot };
     }
 
     private static string? NormalizeCandidatePath(string? path)
