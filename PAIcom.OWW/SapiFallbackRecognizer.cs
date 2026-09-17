@@ -213,6 +213,60 @@ public static class SapiFallbackRecognizer
         }
     }
 
+    /// <summary>
+    /// Unwrap a product speech event payload to its recognition result: a
+    /// <c>SpeechRecognizedEventArgs</c> yields its <c>Result</c> property, a
+    /// <c>RecognitionResult</c> is returned as-is, anything else is null.
+    /// Matched by member shape, never by assembly: the product's
+    /// System.Speech types are read without referencing them.
+    /// </summary>
+    internal static object? UnwrapRecognitionResult(object? eventPayload)
+    {
+        if (eventPayload == null)
+            return null;
+        try
+        {
+            var type = eventPayload.GetType();
+            var typeName = type.FullName ?? string.Empty;
+            if (typeName.EndsWith("SpeechRecognizedEventArgs", StringComparison.Ordinal))
+            {
+                var resultProp = type.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance);
+                return resultProp?.GetValue(eventPayload);
+            }
+            if (typeName.EndsWith("RecognitionResult", StringComparison.Ordinal))
+                return eventPayload;
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Read the SAPI confidence (0..1) off a recognition result. Null when
+    /// absent or unreadable; the caller treats that as untrusted.
+    /// </summary>
+    internal static double? ReadResultConfidence(object? recognitionResult)
+    {
+        if (recognitionResult == null)
+            return null;
+        try
+        {
+            var prop = recognitionResult.GetType().GetProperty("Confidence", BindingFlags.Public | BindingFlags.Instance);
+            var value = prop?.GetValue(recognitionResult);
+            if (value is float f)
+                return f;
+            if (value is double d)
+                return d;
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static void InvokeBestEffort(object? target, Type engineType, string name, object?[]? args, Action<string>? log)
     {
         if (target == null)
