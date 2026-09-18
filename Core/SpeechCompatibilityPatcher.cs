@@ -29,6 +29,13 @@ public static class SpeechCompatibilityPatcher
         var sapiSuppressed = ApplySapiSuppression(module, methods, log);
         log?.Invoke($"Product SAPI suppression applied: {sapiSuppressed}");
 
+        // Trampolines added above are new methods: re-enumerate so the
+        // probe pass below lands on them too (probe-first, gate-second).
+        methods = module.GetTypes()
+            .SelectMany(t => t.Methods)
+            .Where(m => m.HasBody)
+            .ToList();
+
         foreach (var method in methods)
         {
             if (IsCompatHelper(method))
@@ -163,99 +170,249 @@ public static class SpeechCompatibilityPatcher
     }
 
     /// <summary>
-    /// Product SAPI suppression (v0.1.2): the product's own recognition loop
-    /// executes commands in parallel with the OWW bridge on fully-alive
-    /// Windows (observed as 2-3 executions per utterance). For each void
-    /// handler taking a SpeechRecognizedEventArgs, injects an early return
-    /// gated on <c>OpenWakeWordHelper.IsProductSpeechSuppressed()</c> from
-    /// the deployed PAIcom.OWW assembly. Probe logs (inserted later by the
+    /// Suffix for the renamed original behind a suppression trampoline.
+    /// Exposed for tests and for reading patched binaries.
+    /// </summary>
+    public const string TrampolineOrigSuffix = "_oww_orig";
+
+    /// <summary>
+    /// Product SAPI suppression (v0.1.2, trampoline form): the product's own
+    /// recognition loop executes commands in parallel with the OWW bridge on
+    /// fully-alive Windows (observed as 2 executions per utterance). For each
+    /// void handler taking a SpeechRecognizedEventArgs, the original is
+    /// renamed to <c>{name}_oww_orig</c> and a same-name trampoline stands in
+    /// front of it: call <c>OpenWakeWordHelper.IsProductSpeechSuppressed()</c>,
+    /// return early when the bridge owns dispatch, otherwise tail-call the
+    /// original. All <c>ldftn</c>/<c>ldvirtftn</c> delegate creations pointing
+    /// at the original (every <c>+= method</c> subscription site, including
+    /// restart paths) are retargeted to the trampoline, so both invocations
+    /// of a double-subscribed handler are gated.
+    /// The trampoline body is brand-new (no exception handlers by
+    /// construction), so this works on obfuscated handlers whose bodies the
+    /// old prepend-guard had to skip. Probe logs (inserted later by the
     /// normal pass) stay first, so suppressed executions remain observable.
-    /// Only void, handler-free methods are touched: a raw return inside an
-    /// existing try region would be invalid IL, and non-void handlers need a
-    /// value the suppressor cannot invent. Idempotent for re-patching.
-    /// Returns the number of handlers suppressed.
+    /// Only void, non-generic, override-free handlers are touched; direct
+    /// (non-delegate) calls keep reaching the original, which is correct:
+    /// only event-driven invocations are gated. Idempotent for re-patching.
+    /// Every candidate handler gets one disposition line; returns the number
+    /// of trampolines applied.
     /// </summary>
     public static int ApplySapiSuppression(
         ModuleDefMD module, IReadOnlyList<MethodDef> methods, Action<string>? log = null)
     {
-        var suppressed = 0;
-        IMethod? guardMethod = null;
+        return ApplySapiTrampolines(module, methods, ResolveGuardMethod(module), log);
+    }
 
-        IMethod GetGuard()
-        {
-            if (guardMethod != null)
-                return guardMethod;
-            var owwAssemblyRef = module.GetAssemblyRefs()
-                .FirstOrDefault(a => a.Name == "PAIcom.OWW")
-                ?? new AssemblyRefUser("PAIcom.OWW", new Version(1, 0, 0, 0));
-            var helperTypeRef = new TypeRefUser(
-                module,
-                "CrossPlatformPatcher.Core",
-                "OpenWakeWordHelper",
-                owwAssemblyRef);
-            guardMethod = new MemberRefUser(
-                module,
-                "IsProductSpeechSuppressed",
-                MethodSig.CreateStatic(module.CorLibTypes.Boolean),
-                helperTypeRef);
-            return guardMethod;
-        }
-
+    /// <summary>
+    /// Trampoline engine behind <see cref="ApplySapiSuppression"/>, taking an
+    /// explicit guard method so tests can gate on a fixture-local boolean
+    /// instead of the deployed OWW guard (which is unresolvable off-device).
+    /// </summary>
+    public static int ApplySapiTrampolines(
+        ModuleDefMD module, IReadOnlyList<MethodDef> methods, IMethod guard, Action<string>? log = null)
+    {
+        var applied = 0;
         foreach (var method in methods)
         {
-            if (IsCompatHelper(method))
+            if (!IsSuppressionCandidate(method))
                 continue;
-            var hasRecognizedArg = method.Parameters.Any(p =>
-                !p.IsHiddenThisParameter &&
-                string.Equals(p.Type?.FullName,
-                    "System.Speech.Recognition.SpeechRecognizedEventArgs",
-                    StringComparison.Ordinal));
-            if (!hasRecognizedArg)
-                continue;
-            var handlerName = $"{method.DeclaringType?.Name}.{method.Name}";
-            if (!method.HasBody || method.Body.Instructions.Count == 0)
+
+            var owner = method.DeclaringType?.Name ?? "?";
+            var label = $"{owner}.{method.Name}";
+
+            if (CallsMethodNamed(method, guard.Name))
             {
-                log?.Invoke($"Product SAPI handler {handlerName}: skipped (no IL body).");
-                continue;
-            }
-            if (method.Body.ExceptionHandlers.Count > 0)
-            {
-                log?.Invoke($"Product SAPI handler {handlerName}: skipped (exception-handlers={method.Body.ExceptionHandlers.Count}; guard injection needs a handler-free body).");
-                continue;
-            }
-            if (method.MethodSig.RetType.GetElementType() != ElementType.Void)
-            {
-                log?.Invoke($"Product SAPI handler {handlerName}: skipped (non-void).");
-                continue;
-            }
-            if (CallsMethodNamed(method, "IsProductSpeechSuppressed"))
-            {
-                log?.Invoke($"Product SAPI handler {handlerName}: skipped (already guarded).");
+                log?.Invoke($"[sapi-suppress] AlreadyGuarded: {label} (calls {guard.Name}; leaving alone).");
                 continue;
             }
 
-            var body = method.Body;
-            var instrs = body.Instructions;
+            if (method.Name.EndsWith(TrampolineOrigSuffix, StringComparison.Ordinal))
+            {
+                var twin = method.DeclaringType?.Methods.FirstOrDefault(m => m.Name == method.Name.Substring(0, method.Name.Length - TrampolineOrigSuffix.Length));
+                var gated = twin != null && twin.HasBody && CallsMethodNamed(twin, guard.Name);
+                log?.Invoke(gated
+                    ? $"[sapi-suppress] AlreadyTrampolined: {label} (trampoline in place; leaving alone)."
+                    : $"[sapi-suppress] SkippedOrphanOrig: {label} (renamed original without a live trampoline; leaving alone).");
+                continue;
+            }
 
-            // Anchor after any probe preamble already present (re-patch or
-            // foreign instrumentation): skip Ldstr+Call(LogSpeechEvent[*])
-            // pairs so the suppression check never precedes the probes.
-            int idx = 0;
-            while (idx < instrs.Count && IsProbePreambleAt(instrs, idx, out int consumed))
-                idx += consumed;
+            if (method.IsSpecialName || method.Overrides.Count > 0)
+            {
+                log?.Invoke($"[sapi-suppress] SkippedUnsupportedShape: {label} (special-name or override; renaming is unsafe).");
+                continue;
+            }
 
-            var continueTarget = instrs[idx];
-            instrs.Insert(idx, Instruction.Create(OpCodes.Call, GetGuard()));
-            instrs.Insert(idx + 1, Instruction.Create(OpCodes.Brfalse_S, continueTarget));
-            instrs.Insert(idx + 2, Instruction.Create(OpCodes.Ret));
+            var sig = method.MethodSig;
+            if (sig == null || sig.Generic || sig.ExplicitThis)
+            {
+                log?.Invoke($"[sapi-suppress] SkippedUnsupportedShape: {label} (generic or explicit-this signature).");
+                continue;
+            }
 
-            body.OptimizeBranches();
-            body.OptimizeMacros();
-            log?.Invoke($"Product SAPI handler {method.DeclaringType?.Name}.{method.Name}: suppressed (early return on IsProductSpeechSuppressed).");
-            suppressed++;
+            if (sig.RetType.GetElementType() != ElementType.Void)
+            {
+                log?.Invoke($"[sapi-suppress] SkippedNonVoid: {label} (the guard cannot invent a return value).");
+                continue;
+            }
+
+            var trampolineName = method.Name;
+            var origName = UniqueOrigName(method, trampolineName, guard);
+            if (origName == null)
+            {
+                log?.Invoke($"[sapi-suppress] AlreadyTrampolined: {owner}.{trampolineName} (trampoline in place; leaving alone).");
+                continue;
+            }
+
+            var ehCount = method.Body.ExceptionHandlers.Count;
+            method.Name = origName;
+            var trampoline = BuildTrampoline(method, guard, trampolineName);
+            method.DeclaringType!.Methods.Add(trampoline);
+            var retargeted = RetargetDelegateCreations(module, method, trampoline);
+            applied++;
+            log?.Invoke($"[sapi-suppress] AppliedTrampoline: {owner}.{trampolineName} (orig kept with {ehCount} EH; retargeted {retargeted} ldftn).");
         }
 
-        return suppressed;
+        return applied;
+    }
+
+    private static bool IsSuppressionCandidate(MethodDef method)
+    {
+        if (IsCompatHelper(method))
+            return false;
+        if (!method.HasBody || method.Body.Instructions.Count == 0)
+            return false;
+        return method.Parameters.Any(p =>
+            !p.IsHiddenThisParameter &&
+            string.Equals(p.Type?.FullName,
+                "System.Speech.Recognition.SpeechRecognizedEventArgs",
+                StringComparison.Ordinal));
+    }
+
+    private static string? UniqueOrigName(MethodDef method, string trampolineName, IMethod guard)
+    {
+        var declaring = method.DeclaringType;
+        if (declaring == null)
+            return null;
+
+        var candidate = trampolineName + TrampolineOrigSuffix;
+        var n = 2;
+        while (declaring.Methods.Any(m => !ReferenceEquals(m, method) && m.Name == candidate))
+        {
+            var twin = declaring.Methods.FirstOrDefault(m => m.Name == trampolineName);
+            if (twin != null && twin.HasBody && CallsMethodNamed(twin, guard.Name))
+                return null;
+            candidate = $"{trampolineName}{TrampolineOrigSuffix}_{n++}";
+        }
+
+        return candidate;
+    }
+
+    /// <summary>
+    /// Builds the same-name gate in front of an already-renamed original:
+    /// <c>if (!guard()) return; orig(this, args...); return;</c>
+    /// No locals, no exception handlers.
+    /// </summary>
+    public static MethodDef BuildTrampoline(MethodDef orig, IMethod guard, string trampolineName)
+    {
+        var osig = orig.MethodSig ?? throw new InvalidOperationException("Trampoline needs a method signature.");
+        var pars = osig.Params.ToArray();
+        var sig = osig.HasThis
+            ? MethodSig.CreateInstance(osig.RetType, pars)
+            : MethodSig.CreateStatic(osig.RetType, pars);
+
+        var attrs = MethodAttributes.HideBySig | (orig.Attributes & MethodAttributes.MemberAccessMask);
+        if (orig.IsStatic)
+            attrs |= MethodAttributes.Static;
+
+        var trampoline = new MethodDefUser(trampolineName, sig, attrs)
+        {
+            ImplAttributes = MethodImplAttributes.IL | MethodImplAttributes.Managed,
+        };
+
+        var body = new CilBody
+        {
+            InitLocals = false,
+            MaxStack = (ushort)Math.Max(4, orig.Parameters.Count + 1),
+        };
+        trampoline.Body = body;
+
+        var forwards = new List<Instruction>();
+        foreach (var p in orig.Parameters)
+            forwards.Add(Instruction.Create(OpCodes.Ldarg, p));
+        forwards.Add(Instruction.Create(OpCodes.Call, orig));
+        forwards.Add(Instruction.Create(OpCodes.Ret));
+
+        var instrs = body.Instructions;
+        instrs.Add(Instruction.Create(OpCodes.Call, guard));
+        instrs.Add(Instruction.Create(OpCodes.Brfalse_S, forwards[0]));
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+        foreach (var f in forwards)
+            instrs.Add(f);
+
+        body.OptimizeBranches();
+        body.OptimizeMacros();
+        return trampoline;
+    }
+
+    /// <summary>
+    /// Retargets every delegate creation (<c>ldftn</c>/<c>ldvirtftn</c>) that
+    /// resolves to the renamed original onto the trampoline, across the whole
+    /// module. Returns the number of sites retargeted.
+    /// </summary>
+    public static int RetargetDelegateCreations(ModuleDefMD module, MethodDef orig, MethodDef trampoline)
+    {
+        var retargeted = 0;
+        foreach (var type in module.GetTypes())
+        {
+            foreach (var m in type.Methods)
+            {
+                if (!m.HasBody)
+                    continue;
+                foreach (var instr in m.Body.Instructions)
+                {
+                    if (instr.OpCode != OpCodes.Ldftn && instr.OpCode != OpCodes.Ldvirtftn)
+                        continue;
+                    if (instr.Operand is not IMethod target)
+                        continue;
+                    if (ReferenceEquals(target, orig) || ReferenceEquals(SafeResolveMethod(target), orig))
+                    {
+                        instr.Operand = trampoline;
+                        retargeted++;
+                    }
+                }
+            }
+        }
+
+        return retargeted;
+    }
+
+    private static MethodDef? SafeResolveMethod(IMethod method)
+    {
+        try
+        {
+            return method.ResolveMethodDef();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IMethod ResolveGuardMethod(ModuleDefMD module)
+    {
+        var owwAssemblyRef = module.GetAssemblyRefs()
+            .FirstOrDefault(a => a.Name == "PAIcom.OWW")
+            ?? new AssemblyRefUser("PAIcom.OWW", new Version(1, 0, 0, 0));
+        var helperTypeRef = new TypeRefUser(
+            module,
+            "CrossPlatformPatcher.Core",
+            "OpenWakeWordHelper",
+            owwAssemblyRef);
+        return new MemberRefUser(
+            module,
+            "IsProductSpeechSuppressed",
+            MethodSig.CreateStatic(module.CorLibTypes.Boolean),
+            helperTypeRef);
     }
 
     private static bool CallsMethodNamed(MethodDef method, string name)
@@ -266,32 +423,6 @@ public static class SpeechCompatibilityPatcher
                 instr.Operand is IMethod called &&
                 string.Equals(called.Name, name, StringComparison.Ordinal))
                 return true;
-        }
-        return false;
-    }
-
-    private static bool IsProbePreambleAt(
-        IList<Instruction> instrs, int idx, out int consumed)
-    {
-        consumed = 0;
-        if (idx >= instrs.Count || instrs[idx].OpCode != OpCodes.Ldstr)
-            return false;
-        if (idx + 2 < instrs.Count &&
-            instrs[idx + 1].OpCode == OpCodes.Ldarg &&
-            instrs[idx + 2].OpCode == OpCodes.Call &&
-            instrs[idx + 2].Operand is IMethod detail &&
-            string.Equals(detail.Name, "LogSpeechEventDetail", StringComparison.Ordinal))
-        {
-            consumed = 3;
-            return true;
-        }
-        if (idx + 1 < instrs.Count &&
-            instrs[idx + 1].OpCode == OpCodes.Call &&
-            instrs[idx + 1].Operand is IMethod simple &&
-            string.Equals(simple.Name, "LogSpeechEvent", StringComparison.Ordinal))
-        {
-            consumed = 2;
-            return true;
         }
         return false;
     }

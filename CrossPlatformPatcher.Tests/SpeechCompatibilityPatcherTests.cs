@@ -467,12 +467,14 @@ public sealed class SpeechCompatibilityPatcherTests
         // Act
         SpeechCompatibilityPatcher.Patch(module, logAction);
 
-        // Assert
+        // Assert: suppression aggregate + one per-handler disposition line
+        // (AppliedTrampoline) + wrappers + probes (orig AND trampoline both
+        // carry the SAPI arg, so both are probed) + emulate hardening.
         Assert.Equal(5, logMessages.Count);
         Assert.Contains(logMessages, m => m.Contains("Product SAPI suppression applied") && m.Contains("1"));
-        Assert.Contains(logMessages, m => m.Contains("OnSpeechRecognized") && m.Contains("suppressed"));
+        Assert.Contains(logMessages, m => m.Contains("AppliedTrampoline") && m.Contains("OnSpeechRecognized"));
         Assert.Contains(logMessages, m => m.Contains("System.Speech safety wrappers applied") && m.Contains("1"));
-        Assert.Contains(logMessages, m => m.Contains("System.Speech event probes applied") && m.Contains("1"));
+        Assert.Contains(logMessages, m => m.Contains("System.Speech event probes applied") && m.Contains("2"));
         Assert.Contains(logMessages, m => m.Contains("System.Speech emulate hardening applied") && m.Contains("0"));
     }
 
@@ -759,21 +761,34 @@ public sealed class SpeechCompatibilityPatcherTests
         // Should not wrap (no System.Speech references in body)
         Assert.Equal(0, patchCount);
 
-        var method = module.Types
+        // The EH-bodied handler is renamed behind a trampoline; the
+        // trampoline keeps the original name and carries the probe first.
+        var trampoline = module.Types
             .FirstOrDefault(t => t.Name == "FixtureExceptionBoundaries")?
             .Methods.FirstOrDefault(m => m.Name == "OnSpeechRecognized");
 
-        Assert.NotNull(method);
-        Assert.True(method!.HasBody);
+        Assert.NotNull(trampoline);
+        Assert.True(trampoline!.HasBody);
 
         // Should have event probe at the beginning
-        Assert.Equal(OpCodes.Ldstr, method.Body.Instructions[0].OpCode);
-        Assert.Equal(OpCodes.Call, method.Body.Instructions[1].OpCode);
+        Assert.Equal(OpCodes.Ldstr, trampoline.Body.Instructions[0].OpCode);
+        Assert.Equal(OpCodes.Call, trampoline.Body.Instructions[1].OpCode);
+
+        // The trampoline itself has no exception handlers; the original
+        // behind the suffix keeps its handler and boundaries intact.
+        Assert.Empty(trampoline.Body.ExceptionHandlers);
+
+        var orig = module.Types
+            .FirstOrDefault(t => t.Name == "FixtureExceptionBoundaries")?
+            .Methods.FirstOrDefault(m => m.Name == "OnSpeechRecognized" + SpeechCompatibilityPatcher.TrampolineOrigSuffix);
+
+        Assert.NotNull(orig);
+        Assert.True(orig!.HasBody);
 
         // Exception handler should still be valid
-        Assert.Single(method.Body.ExceptionHandlers);
+        Assert.Single(orig.Body.ExceptionHandlers);
 
-        var eh = method.Body.ExceptionHandlers[0];
+        var eh = orig.Body.ExceptionHandlers[0];
         Assert.NotNull(eh.TryStart);
         Assert.NotNull(eh.HandlerStart);
         Assert.NotNull(eh.TryEnd);
