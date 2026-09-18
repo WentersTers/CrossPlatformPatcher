@@ -22,6 +22,19 @@ public static class SpeechCompatibilityPatcher
             .Where(m => m.HasBody)
             .ToList();
 
+        // Raw-vendor pre-flight (the (f)-family gate): a ConfuserEx input
+        // carries unmaterialized resource blobs that wine-mono cannot grovel,
+        // so patching it for a Wine target produces a binary that dies in the
+        // form ctor with MissingManifestResourceException. Warn loudly, never
+        // refuse: Windows boots the raw vendor exe natively, so stage-4-only
+        // input stays valid there.
+        if (LooksLikeRawVendorBuild(module))
+        {
+            log?.Invoke("[WARN] Input looks like a raw vendor (ConfuserEx) build: unmaterialized resource blob present. " +
+                "Wine targets need the de4dot/antidebug/resource-materialize chain first; patching raw input for Wine " +
+                "reproduces the (f)-family startup death. Windows-native runs are unaffected.");
+        }
+
         // Product SAPI suppression first: SpeechRecognized handlers stand
         // down when the OWW bridge owns dispatch. Runs before probes so the
         // probe logs stay first in the method body, and before the safety
@@ -273,6 +286,59 @@ public static class SpeechCompatibilityPatcher
         }
 
         return applied;
+    }
+
+    /// <summary>
+    /// Raw-vendor pre-flight: true when the module still carries ConfuserEx
+    /// packaging — unmaterialized manifest resource blobs (names starting
+    /// with a backslash/comma, e.g. <c>\,hYNM…​.resources</c>) or surviving
+    /// Confuser-named types/attributes. Such input dies under wine-mono with
+    /// the (f)-family MissingManifestResourceException; it needs the
+    /// de4dot/antidebug/resource-materialize chain first. Takes the base
+    /// <see cref="ModuleDef"/> so tests can build synthetic modules.
+    /// Never throws.
+    /// </summary>
+    public static bool LooksLikeRawVendorBuild(ModuleDef module)
+    {
+        try
+        {
+            foreach (var r in module.Resources)
+            {
+                var name = r.Name ?? string.Empty;
+                if (name.StartsWith("\\", StringComparison.Ordinal) ||
+                    name.StartsWith(",", StringComparison.Ordinal))
+                    return true;
+            }
+
+            foreach (var t in module.GetTypes())
+            {
+                if ((t.FullName ?? string.Empty).IndexOf("Confuser", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            foreach (var ca in module.CustomAttributes)
+            {
+                var typeName = ca.AttributeType?.FullName ?? string.Empty;
+                if (typeName.IndexOf("Confuser", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            var asmAttrs = module.Assembly?.CustomAttributes;
+            if (asmAttrs != null)
+            {
+                foreach (var ca in asmAttrs)
+                {
+                    var typeName = ca.AttributeType?.FullName ?? string.Empty;
+                    if (typeName.IndexOf("Confuser", StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
     }
 
     private static bool IsSuppressionCandidate(MethodDef method)
