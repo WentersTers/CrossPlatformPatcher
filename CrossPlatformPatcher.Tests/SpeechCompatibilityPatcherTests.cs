@@ -1126,6 +1126,73 @@ public sealed class SpeechCompatibilityPatcherTests
         Assert.NotEmpty(calls);
     }
 
+    [Fact]
+    public void Raw_Vendor_Blob_Resource_Name_Detected()
+    {
+        // The (f)-family gate: unmaterialized ConfuserEx blobs carry
+        // backslash/comma-prefixed manifest names. A module holding one
+        // must trip the pre-flight.
+        using var temp = new TempDirectory();
+        var source = """
+            public static class FixtureClean
+            {
+                public static void Main() { }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-raw-vendor-blob", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        Assert.False(SpeechCompatibilityPatcher.LooksLikeRawVendorBuild(module));
+
+        module.Resources.Add(new dnlib.DotNet.EmbeddedResource("\\,Fake.resources", new byte[] { 1, 2, 3 }));
+        Assert.True(SpeechCompatibilityPatcher.LooksLikeRawVendorBuild(module));
+    }
+
+    [Fact]
+    public void Confuser_Named_Type_Detected()
+    {
+        using var temp = new TempDirectory();
+        var source = """
+            namespace ConfuserEx
+            {
+                public static class Marker
+                {
+                    public static void Touch() { }
+                }
+            }
+
+            public static class FixtureMarked
+            {
+                public static void Main() { }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-raw-vendor-type", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        Assert.True(SpeechCompatibilityPatcher.LooksLikeRawVendorBuild(module));
+    }
+
+    [Fact]
+    public void Patch_Warns_On_Raw_Vendor_Input()
+    {
+        using var temp = new TempDirectory();
+        var source = """
+            public static class FixtureWarn
+            {
+                public static void Main() { }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-raw-vendor-warn", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+        module.Resources.Add(new dnlib.DotNet.EmbeddedResource("\\,Fake.resources", new byte[] { 1 }));
+
+        var logs = new List<string>();
+        SpeechCompatibilityPatcher.Patch(module, logs.Add);
+
+        Assert.Contains(logs, m => m.Contains("[WARN]") && m.Contains("raw vendor"));
+    }
+
     private static string FindSystemSpeechAssembly()
     {
         const string gacSpeechPath = @"C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Speech\v4.0_4.0.0.0__31bf3856ad364e35\System.Speech.dll";
