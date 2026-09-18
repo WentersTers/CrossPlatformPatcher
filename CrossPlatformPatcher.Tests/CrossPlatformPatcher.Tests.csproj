@@ -35,7 +35,7 @@
     <Compile Include="..\PAIcom.OWW\DispatchDedup.cs" />
     <Compile Include="..\PAIcom.OWW\DispatcherOrdering.cs" />
     <Compile Include="..\PAIcom.OWW\SapiSuppression.cs" />
-    <Compile Include="..\PAIcom.OWW\ProductSpeechDeferral.cs" />
+    <Compile Include="..\PAIcom.OWW\ProductSapiObserver.cs" />
     <Compile Include="..\PAIcom.OWW\AnimationBoxSelection.cs" />
   </ItemGroup>
 
