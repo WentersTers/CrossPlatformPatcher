@@ -110,6 +110,19 @@ public sealed class VoskModelDownloaderTests
     }
 
     [Fact]
+    public void ShouldAttemptFetch_Requires_Settle_And_Once_Ever()
+    {
+        var settle = VoskModelDownloader.FetchSettleSeconds;
+        Assert.True(settle > 0);
+
+        Assert.False(VoskModelDownloader.ShouldAttemptFetch(alreadyAttempted: true, startupAgeSeconds: settle * 10));
+        Assert.False(VoskModelDownloader.ShouldAttemptFetch(alreadyAttempted: false, startupAgeSeconds: 0));
+        Assert.False(VoskModelDownloader.ShouldAttemptFetch(alreadyAttempted: false, startupAgeSeconds: settle - 1));
+        Assert.True(VoskModelDownloader.ShouldAttemptFetch(alreadyAttempted: false, startupAgeSeconds: settle));
+        Assert.True(VoskModelDownloader.ShouldAttemptFetch(alreadyAttempted: false, startupAgeSeconds: settle + 3600));
+    }
+
+    [Fact]
     public void Staged_X86_Natives_Are_I386_And_X64_Are_Amd64()
     {
         var dir = FindNativeLibrariesDir();

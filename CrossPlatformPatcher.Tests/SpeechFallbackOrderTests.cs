@@ -78,6 +78,40 @@ public sealed class SpeechFallbackOrderTests
     }
 
     [Fact]
+    public void FindDefaultModel_Never_Fetches_Patch_Time_Code()
+    {
+        // The patch-time twin (Core) mirrors the injected tier order minus
+        // the first-run fetch: even with a download URL configured, a miss
+        // must return null WITHOUT touching the network (no "downloading"
+        // line). The injected twin (PAIcom.OWW) carries the same tiers plus
+        // a phase-gated fetch (allowFetch=false on pre-warm/wake threads,
+        // settled background worker only); its gate is pinned by the
+        // ShouldAttemptFetch matrix plus the live "fetch skipped" log line.
+        var priorPath = Environment.GetEnvironmentVariable(ModelPathVar);
+        var priorName = Environment.GetEnvironmentVariable(ModelNameVar);
+        var priorUrl = Environment.GetEnvironmentVariable(VoskModelDownloader.UrlOverrideVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(ModelPathVar, null);
+            Environment.SetEnvironmentVariable(ModelNameVar, null);
+            Environment.SetEnvironmentVariable(
+                VoskModelDownloader.UrlOverrideVariable, "http://127.0.0.1:9/no-model.zip");
+
+            var logs = new List<string>();
+            var result = new VoskSpeechRecognizer(logs.Add).FindDefaultModel();
+            Assert.Null(result);
+            Assert.DoesNotContain(logs, m => m.Contains("downloading"));
+            Assert.DoesNotContain(logs, m => m.Contains("fetch"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ModelPathVar, priorPath);
+            Environment.SetEnvironmentVariable(ModelNameVar, priorName);
+            Environment.SetEnvironmentVariable(VoskModelDownloader.UrlOverrideVariable, priorUrl);
+        }
+    }
+
+    [Fact]
     public void Sapi_TryRecognize_Returns_Null_Without_Speech_Stack()
     {
         // This host has no working System.Speech: the fallback must report

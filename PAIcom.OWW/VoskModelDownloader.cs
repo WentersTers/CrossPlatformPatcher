@@ -20,6 +20,35 @@ public static class VoskModelDownloader
     public const string UrlOverrideVariable = "PAICOM_VOSK_MODEL_URL";
 
     /// <summary>
+    /// Startup settle before any model fetch may run (seconds since OWW
+    /// load). First-use <c>HttpClient</c> during the host's own network-stack
+    /// init poisons the process-global state (the boot-crash class: a later
+    /// phone-home dies with an SSL/TLS failure it did not cause). The fetch
+    /// therefore waits until the host stack is long settled; SAPI covers
+    /// every wake until then. Pure decision in
+    /// <see cref="ShouldAttemptFetch"/>.
+    /// </summary>
+    public const long FetchSettleSeconds = 120;
+
+    /// <summary>
+    /// Pure fetch gate: attempt only once ever, and only once the startup
+    /// has settled. Never throws.
+    /// </summary>
+    public static bool ShouldAttemptFetch(bool alreadyAttempted, long startupAgeSeconds)
+    {
+        try
+        {
+            if (alreadyAttempted)
+                return false;
+            return startupAgeSeconds >= FetchSettleSeconds;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Resolve the download URL, or null when acquisition is disabled
     /// (<c>PAICOM_VOSK_MODEL_URL</c> set-but-empty) or misconfigured.
     /// </summary>
