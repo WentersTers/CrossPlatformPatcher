@@ -34,8 +34,12 @@ public class VoskSpeechRecognizer : IDisposable
     /// Returns true if successful, false if Vosk unavailable or model not found.
     /// The diagnostic flags exist for boot-crash bisection (pre-warm modes):
     /// wakes always call with both allowed.
+    /// allowFetch gates the first-run model download: pre-warm and wake
+    /// threads never fetch (startup network hygiene + no hot-thread stalls);
+    /// only the settled background worker fetches. Defaults true so direct
+    /// API use and tests keep the old behavior.
     /// </summary>
-    public bool Initialize(bool allowSidecar = true, bool allowNative = true)
+    public bool Initialize(bool allowSidecar = true, bool allowNative = true, bool allowFetch = true)
     {
         var initStopwatch = Stopwatch.StartNew();
         var initStatus = "failed";
@@ -110,7 +114,7 @@ public class VoskSpeechRecognizer : IDisposable
             }
 
             // Load or download model
-            var modelPath = GetOrDownloadModel();
+            var modelPath = GetOrDownloadModel(allowFetch);
             if (string.IsNullOrEmpty(modelPath) || !Directory.Exists(modelPath))
             {
                 initStatus = "failed:model_missing";
@@ -466,7 +470,7 @@ public class VoskSpeechRecognizer : IDisposable
         return null;
     }
 
-    private string? GetOrDownloadModel()
+    private string? GetOrDownloadModel(bool allowFetch = true)
     {
         // Tier 1 (user model): explicit path, configured name, home dir.
         var userModel = FindUserModel();
@@ -474,7 +478,7 @@ public class VoskSpeechRecognizer : IDisposable
             return userModel;
 
         // Tier 2 (default model): shipped alongside, then first-run fetch.
-        return FindDefaultModel();
+        return FindDefaultModel(allowFetch);
     }
 
     /// <summary>
@@ -540,9 +544,13 @@ public class VoskSpeechRecognizer : IDisposable
 
     /// <summary>
     /// Tier 2: the default model. Shipped `models` dirs first, then the
-    /// first-run fetch. Runs only when tier 1 found nothing.
+    /// first-run fetch. Runs only when tier 1 found nothing. The fetch is
+    /// phase-gated: callers on hot paths (pre-warm, wake threads) pass
+    /// allowFetch=false so no network touch happens before the startup
+    /// settles (boot-crash class) and no wake thread stalls on a download;
+    /// only the settled background worker fetches.
     /// </summary>
-    public string? FindDefaultModel()
+    public string? FindDefaultModel(bool allowFetch = true)
     {
         foreach (var root in GetDefaultModelRoots())
         {
@@ -564,6 +572,12 @@ public class VoskSpeechRecognizer : IDisposable
         }
 
         LogEvent("[vosk-speech] No usable model found in search roots; trying first-run fetch.");
+
+        if (!allowFetch)
+        {
+            LogEvent("[vosk-speech] Model fetch skipped (not allowed in this phase: startup network hygiene, no hot-thread stalls); SAPI covers until the settled background fetch.");
+            return null;
+        }
 
         var fetchUrl = VoskModelDownloader.ResolveDownloadUrl();
         if (fetchUrl == null)

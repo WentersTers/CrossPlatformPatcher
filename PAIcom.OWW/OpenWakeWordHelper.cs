@@ -55,6 +55,7 @@ public static class OpenWakeWordHelper
     private static long _lastSapiProofUtcTicks;
     private static string? _lastProductSapiText;
     private static long _lastProductSapiTicks;
+    private static int _modelFetchAttempted;
     private static WeakReference<object>? _scriptPictureBox;
     private static long _wakeSequenceCounter;
     private static long _activeWakeSequenceId;
@@ -1295,12 +1296,13 @@ public static class OpenWakeWordHelper
                 var allowNative = prewarmMode != "nonative";
                 if (!allowSidecar || !allowNative)
                     LogEvent($"[vosk-speech] Pre-warm diagnostic mode '{prewarmMode}': sidecar={allowSidecar}, native={allowNative}.");
+                LogEvent("[vosk-speech] Pre-warm never fetches (startup network hygiene: first-use HttpClient at startup poisons the host TLS stack); a missing model waits for the settled background fetch, SAPI covers wakes until then.");
                 System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
                 {
                     try
                     {
                         LogEvent("[vosk-speech] Pre-warming Vosk recognizer at startup...");
-                        if (EnsureVoskInitialized(0, allowSidecar, allowNative))
+                        if (EnsureVoskInitialized(0, allowSidecar, allowNative, allowFetch: false))
                         {
                             LogEvent("[vosk-speech] Pre-warm complete: Vosk ready before first wake.");
                             LogMemoryFootprint("post-prewarm");
@@ -1953,7 +1955,7 @@ public static class OpenWakeWordHelper
     /// failed attempt is not retried (the fallback chain owns recovery).
     /// Returns true when a usable recognizer exists afterwards.
     /// </summary>
-    private static bool EnsureVoskInitialized(long wakeIdForLog, bool allowSidecar = true, bool allowNative = true)
+    private static bool EnsureVoskInitialized(long wakeIdForLog, bool allowSidecar = true, bool allowNative = true, bool allowFetch = true)
     {
         lock (_voskInitLock)
         {
@@ -1967,7 +1969,7 @@ public static class OpenWakeWordHelper
             try
             {
                 _voskRecognizer = new VoskSpeechRecognizer(LogEvent);
-                if (!_voskRecognizer.Initialize(allowSidecar, allowNative))
+                if (!_voskRecognizer.Initialize(allowSidecar, allowNative, allowFetch))
                 {
                     LogTimingMarker("vosk_init_end", wakeIdForLog, "status=failed");
                     LogEvent("Vosk initialization failed; speech recognition unavailable");
@@ -2019,12 +2021,16 @@ public static class OpenWakeWordHelper
 
         // Initialize Vosk if not already attempted (usually pre-warmed at
         // startup; a first wake racing pre-warm waits on the once-lock).
-        EnsureVoskInitialized(wakeId);
+        // Wakes never fetch: a 40MB download must not stall the wake thread
+        // (and must not touch the network before the startup settles); the
+        // settled background worker below owns fetching.
+        EnsureVoskInitialized(wakeId, allowFetch: false);
 
         if (_voskRecognizer == null)
         {
             LogTimingMarker("vosk_unavailable", wakeId);
             LogEvent("Vosk recognizer not available; trying Windows speech fallback...");
+            MaybeFetchModelBackground();
             TryRunSapiFallback(wakeId);
             return;
         }
@@ -2132,6 +2138,67 @@ public static class OpenWakeWordHelper
         }
         catch
         {
+        }
+    }
+
+    /// <summary>
+    /// Settled background model fetch (v0.1.2): the only production path
+    /// that may download. Runs once ever, on a worker, only after the
+    /// startup settles — so the missing-model path stays network-clean
+    /// during the host's network-stack init (boot-crash class) and no wake
+    /// thread ever stalls on it. SAPI covers every wake until a fetch
+    /// succeeds (which resets the init gate for the next wake). Never throws.
+    /// </summary>
+    internal static void MaybeFetchModelBackground()
+    {
+        try
+        {
+            var attempted = System.Threading.Volatile.Read(ref _modelFetchAttempted) == 1;
+            var ageSeconds = StartupAgeSeconds();
+            if (!VoskModelDownloader.ShouldAttemptFetch(attempted, ageSeconds))
+            {
+                if (!attempted)
+                    LogEvent($"[vosk-speech] Model fetch deferred (startup age {ageSeconds}s < settle {VoskModelDownloader.FetchSettleSeconds}s); SAPI covers this wake.");
+                return;
+            }
+            if (System.Threading.Interlocked.CompareExchange(ref _modelFetchAttempted, 1, 0) != 0)
+                return;
+            LogEvent("[vosk-speech] Background model fetch starting (startup settled)...");
+            System.Threading.ThreadPool.UnsafeQueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var path = new VoskSpeechRecognizer(LogEvent).FindDefaultModel();
+                    if (!string.IsNullOrWhiteSpace(path))
+                    {
+                        ResetVoskInitAttempted();
+                        LogEvent($"[vosk-speech] Background fetch produced a model at {path}; next wake initializes Vosk.");
+                    }
+                    else
+                    {
+                        LogEvent("[vosk-speech] Background fetch did not produce a model; SAPI remains the path.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogEvent($"[vosk-speech] Background fetch failed (non-fatal): {ex.GetType().Name}");
+                }
+            }, null);
+        }
+        catch
+        {
+        }
+    }
+
+    private static long StartupAgeSeconds()
+    {
+        try
+        {
+            return (long)TimingStopwatch.Elapsed.TotalSeconds;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
