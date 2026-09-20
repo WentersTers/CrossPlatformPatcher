@@ -48,6 +48,37 @@ public sealed class LauncherGeneratorTests
     }
 
     [Fact]
+    public void Generates_RunBat_With_Model_Flatten_Blocks_For_Both_Roots()
+    {
+        // Arrange
+        using var temp = new TempDirectory();
+        var outputDir = temp.Path;
+
+        // Act
+        LauncherGenerator.WriteAll(outputDir, "PAIcom.exe", MigrationMode.Stable, "AMD64", false);
+
+        // Assert
+        var batContent = File.ReadAllText(Path.Combine(outputDir, "run.bat"), System.Text.Encoding.ASCII);
+
+        // PAIcom-side flatten: invoked before Vosk path assignment...
+        Assert.Contains("call :FlattenModelSubdir", batContent, StringComparison.Ordinal);
+        // ...and defined as a robocopy-/MOVE-based subroutine that leaves no subfolder.
+        Assert.Contains(":FlattenModelSubdir", batContent, StringComparison.Ordinal);
+        Assert.Contains("robocopy \"%%~D\" \"%MODELS_DIR%\" /MOVE /E", batContent, StringComparison.Ordinal);
+
+        // User-home flatten: same treatment for %USERPROFILE%\.paicom\models.
+        Assert.Contains("HOME_MODELS_DIR=%USERPROFILE%\\.paicom\\models", batContent, StringComparison.Ordinal);
+        Assert.Contains("call :FlattenHomeModels", batContent, StringComparison.Ordinal);
+        Assert.Contains(":FlattenHomeModels", batContent, StringComparison.Ordinal);
+        Assert.Contains("robocopy \"%%~D\" \"%HOME_MODELS_DIR%\" /MOVE /E", batContent, StringComparison.Ordinal);
+
+        // Guards: only move when a subdirectory model exists and the root is not already flat.
+        Assert.Contains("if exist \"%%~D\\am\\\"", batContent, StringComparison.Ordinal);
+        Assert.Contains("if not exist \"%MODELS_DIR%\\am\\\"", batContent, StringComparison.Ordinal);
+        Assert.Contains("if not exist \"%HOME_MODELS_DIR%\\am\\\"", batContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Preserves_MacOS_Shell_Launcher_File()
     {
         // Arrange

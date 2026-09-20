@@ -504,7 +504,7 @@ public class VoskSpeechRecognizer : IDisposable
 
         if (!string.IsNullOrWhiteSpace(explicitPath) && Directory.Exists(explicitPath))
         {
-            var resolvedExplicitPath = VoskModelDownloader.FindModelDirectory(explicitPath);
+            var resolvedExplicitPath = ResolveFlattenedModel(explicitPath);
             if (!string.IsNullOrWhiteSpace(resolvedExplicitPath))
             {
                 LogEvent($"[vosk-speech] Model resolved under PAICOM_VOSK_MODEL_PATH: {resolvedExplicitPath}");
@@ -531,7 +531,7 @@ public class VoskSpeechRecognizer : IDisposable
         LogEvent($"[vosk-speech] model.search.user-home={homeRoot};exists={homeExists}");
         if (homeExists)
         {
-            var homeModel = VoskModelDownloader.FindModelDirectory(homeRoot);
+            var homeModel = ResolveFlattenedModel(homeRoot);
             if (!string.IsNullOrWhiteSpace(homeModel))
             {
                 LogEvent($"[vosk-speech] Auto-selected user model: {homeModel}");
@@ -540,6 +540,20 @@ public class VoskSpeechRecognizer : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolve a model under <paramref name="root"/> and flatten it into the
+    /// root when it was found in a subdirectory (see
+    /// <see cref="VoskModelDownloader.EnsureFlatModelDirectory"/>), so the
+    /// recognizer always loads from a flat model directory.
+    /// </summary>
+    private string? ResolveFlattenedModel(string root)
+    {
+        var resolved = VoskModelDownloader.FindModelDirectory(root);
+        if (string.IsNullOrWhiteSpace(resolved))
+            return null;
+        return VoskModelDownloader.EnsureFlatModelDirectory(root, resolved, LogEvent);
     }
 
     /// <summary>
@@ -561,7 +575,7 @@ public class VoskSpeechRecognizer : IDisposable
             if (!exists)
                 continue;
 
-            var resolvedRootModel = VoskModelDownloader.FindModelDirectory(normalizedRoot!);
+            var resolvedRootModel = ResolveFlattenedModel(normalizedRoot!);
             if (!string.IsNullOrWhiteSpace(resolvedRootModel))
             {
                 LogEvent($"[vosk-speech] Auto-selected default model: {resolvedRootModel}");

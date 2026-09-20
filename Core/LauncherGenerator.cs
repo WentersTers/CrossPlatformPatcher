@@ -1115,7 +1115,18 @@ public static class LauncherGenerator
                      "if not defined PAICOM_MIGRATION_MODE set PAICOM_MIGRATION_MODE=full\r\n" +
                      "set \"MODELS_DIR=%~dp0models\"\r\n" +
                      "if exist \"%MODELS_DIR%\\\" (\r\n" +
+                     "  REM Flatten: a model in a subdirectory (am/conf/graph one level down)\r\n" +
+                     "  REM is MOVED flat into models\\ BEFORE startup so no subfolder remains\r\n" +
+                     "  REM when PAIcom launches (subfolder-at-start blocks startup with a\r\n" +
+                     "  REM .NET phone-home dialog). Uses robocopy /MOVE.\r\n" +
+                     "  call :FlattenModelSubdir\r\n" +
                      "  if not defined PAICOM_VOSK_MODEL_PATH set \"PAICOM_VOSK_MODEL_PATH=%MODELS_DIR%\"\r\n" +
+                     ")\r\n" +
+                     "set \"HOME_MODELS_DIR=%USERPROFILE%\\.paicom\\models\"\r\n" +
+                     "if exist \"%HOME_MODELS_DIR%\\\" (\r\n" +
+                     "  REM Same flatten for the user-home Vosk location: a subdirectory\r\n" +
+                     "  REM model here triggers the same startup block.\r\n" +
+                     "  call :FlattenHomeModels\r\n" +
                      ")\r\n" +
                      "if /I \"%PAICOM_FILE_COMMAND_INPUT%\"==\"true\" (\r\n" +
                      "  if not defined PAICOM_FILE_COMMAND_INPUT_PATH set \"PAICOM_FILE_COMMAND_INPUT_PATH=%~dp0input-command.txt\"\r\n" +
@@ -1138,7 +1149,33 @@ public static class LauncherGenerator
                      "  set \"ARGS=%*\"\r\n" +
                      ")\r\n" +
                      "\r\n" +
-                     "start \"\" \"%~dp0" + exe + "\" %ARGS%\r\n";
+                     "start \"\" \"%~dp0" + exe + "\" %ARGS%\r\n" +
+                     "exit /b 0\r\n" +
+                     "\r\n" +
+                     ":FlattenModelSubdir\r\n" +
+                     "REM Move a subdirectory model (single level with am/conf/graph) flat into\r\n" +
+                     "REM MODELS_DIR. No-op when the root is already a flat model or when no\r\n" +
+                     "REM subdirectory model exists. Uses robocopy /MOVE so the subfolder is gone.\r\n" +
+                     "for /D %%D in (\"%MODELS_DIR%\\*\") do (\r\n" +
+                     "  if exist \"%%~D\\am\\\" if exist \"%%~D\\conf\\\" if exist \"%%~D\\graph\\\" (\r\n" +
+                     "    if not exist \"%MODELS_DIR%\\am\\\" (\r\n" +
+                     "      robocopy \"%%~D\" \"%MODELS_DIR%\" /MOVE /E >nul\r\n" +
+                     "    )\r\n" +
+                     "  )\r\n" +
+                     ")\r\n" +
+                     "exit /b 0\r\n" +
+                     "\r\n" +
+                     ":FlattenHomeModels\r\n" +
+                     "REM Same as :FlattenModelSubdir but for the user-home models root\r\n" +
+                     "REM (%USERPROFILE%\\.paicom\\models).\r\n" +
+                     "for /D %%D in (\"%HOME_MODELS_DIR%\\*\") do (\r\n" +
+                     "  if exist \"%%~D\\am\\\" if exist \"%%~D\\conf\\\" if exist \"%%~D\\graph\\\" (\r\n" +
+                     "    if not exist \"%HOME_MODELS_DIR%\\am\\\" (\r\n" +
+                     "      robocopy \"%%~D\" \"%HOME_MODELS_DIR%\" /MOVE /E >nul\r\n" +
+                     "    )\r\n" +
+                     "  )\r\n" +
+                     ")\r\n" +
+                     "exit /b 0\r\n";
         File.WriteAllText(path, content, System.Text.Encoding.ASCII);
         Console.WriteLine($"  [launcher] run.bat written.");
     }

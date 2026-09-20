@@ -20,6 +20,13 @@ public static class VoskModelDownloader
     public const string UrlOverrideVariable = "PAICOM_VOSK_MODEL_URL";
 
     /// <summary>
+    /// Opt-out for flatten-on-resolve: when set to <c>1</c>/<c>true</c>, a model
+    /// found in a subdirectory is used in place (legacy behavior) instead of
+    /// being materialized flat into the searched root.
+    /// </summary>
+    public const string FlattenOptOutVariable = "PAICOM_VOSK_NO_FLATTEN";
+
+    /// <summary>
     /// Startup settle before any model fetch may run (seconds since OWW
     /// load). First-use <c>HttpClient</c> during the host's own network-stack
     /// init poisons the process-global state (the boot-crash class: a later
@@ -228,5 +235,107 @@ public static class VoskModelDownloader
                 return directory;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Flatten-on-resolve: when the resolved model lives in a subdirectory of
+    /// the searched <paramref name="root"/>, copy its tree up into
+    /// <paramref name="root"/> so the model runs flat from the root itself,
+    /// and return <paramref name="root"/>. Copy (never move): the user's
+    /// original subdirectory stays intact. Already-flat roots are returned
+    /// untouched (no-op). Never throws: every failure (opt-out, read-only
+    /// root, copy error, post-copy validation) falls back to the in-place
+    /// <paramref name="resolvedModel"/> path, i.e. never worse than before.
+    /// </summary>
+    public static string EnsureFlatModelDirectory(string root, string resolvedModel, Action<string>? log)
+    {
+        void Log(string message)
+        {
+            try { log?.Invoke(message); } catch { }
+        }
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(resolvedModel))
+                return resolvedModel;
+            string fullRoot;
+            string fullResolved;
+            try
+            {
+                fullRoot = Path.GetFullPath(root);
+                fullResolved = Path.GetFullPath(resolvedModel);
+            }
+            catch
+            {
+                return resolvedModel;
+            }
+            if (string.Equals(fullRoot, fullResolved, StringComparison.OrdinalIgnoreCase))
+                return resolvedModel;
+            if (!fullResolved.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                Log($"[vosk-speech] model flatten: resolved path is outside the search root; using in place: {resolvedModel}");
+                return resolvedModel;
+            }
+            if (LooksLikeModelDirectory(fullRoot))
+                return fullRoot;
+            if (IsFlattenOptedOut())
+            {
+                Log("[vosk-speech] model flatten: skipped by PAICOM_VOSK_NO_FLATTEN; using in place: " + resolvedModel);
+                return resolvedModel;
+            }
+            if (!LooksLikeModelDirectory(fullResolved))
+                return resolvedModel;
+
+            Log($"[vosk-speech] model flatten: materializing '{fullResolved}' flat into '{fullRoot}' ...");
+            var bytesCopied = CopyDirectoryTree(fullResolved, fullRoot);
+            if (!LooksLikeModelDirectory(fullRoot))
+            {
+                Log("[vosk-speech] model flatten: root still not a valid model after copy; using in place: " + resolvedModel);
+                return resolvedModel;
+            }
+            Log($"[vosk-speech] model flatten: ready at {fullRoot} ({bytesCopied} bytes materialized; originals kept in place).");
+            return fullRoot;
+        }
+        catch (Exception ex)
+        {
+            try { log?.Invoke($"[vosk-speech] model flatten failed ({ex.GetType().Name}); using in place: {resolvedModel}"); } catch { }
+            return resolvedModel;
+        }
+    }
+
+    internal static bool IsFlattenOptedOut()
+    {
+        try
+        {
+            var raw = Environment.GetEnvironmentVariable(FlattenOptOutVariable);
+            return string.Equals(raw?.Trim(), "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(raw?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static long CopyDirectoryTree(string sourceDir, string destDir)
+    {
+        long bytesCopied = 0;
+        Directory.CreateDirectory(destDir);
+        // netstandard2.0 has no Path.GetRelativePath: derive it manually.
+        var fullSource = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var fullFile = Path.GetFullPath(file);
+            var relative = fullFile.StartsWith(fullSource + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                ? fullFile.Substring(fullSource.Length + 1)
+                : Path.GetFileName(fullFile);
+            var dest = Path.Combine(destDir, relative);
+            var parent = Path.GetDirectoryName(dest);
+            if (!string.IsNullOrEmpty(parent))
+                Directory.CreateDirectory(parent);
+            File.Copy(file, dest, overwrite: true);
+            try { bytesCopied += new FileInfo(dest).Length; } catch { }
+        }
+        return bytesCopied;
     }
 }

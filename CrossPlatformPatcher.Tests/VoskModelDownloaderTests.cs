@@ -122,6 +122,113 @@ public sealed class VoskModelDownloaderTests
         Assert.True(VoskModelDownloader.ShouldAttemptFetch(alreadyAttempted: false, startupAgeSeconds: settle + 3600));
     }
 
+    private static void MakeFakeModel(string dir)
+    {
+        Directory.CreateDirectory(Path.Combine(dir, "am"));
+        Directory.CreateDirectory(Path.Combine(dir, "conf"));
+        Directory.CreateDirectory(Path.Combine(dir, "graph"));
+        File.WriteAllText(Path.Combine(dir, "am", "final.mdl"), "mdl");
+        File.WriteAllText(Path.Combine(dir, "conf", "model.conf"), "conf");
+        File.WriteAllText(Path.Combine(dir, "graph", "HCLG.fst"), "fst");
+    }
+
+    private static bool LooksFlat(string root)
+    {
+        return Directory.Exists(Path.Combine(root, "am")) &&
+               Directory.Exists(Path.Combine(root, "conf")) &&
+               Directory.Exists(Path.Combine(root, "graph"));
+    }
+
+    [Fact]
+    public void EnsureFlatModel_Subdirectory_Materializes_Flat_Into_Root()
+    {
+        using var temp = new TempDirectory();
+        var root = Path.Combine(temp.Path, "models");
+        var sub = Path.Combine(root, "Subdirectory");
+        MakeFakeModel(sub);
+        var log = new List<string>();
+
+        var result = VoskModelDownloader.EnsureFlatModelDirectory(root, sub, m => log.Add(m));
+
+        Assert.Equal(Path.GetFullPath(root), Path.GetFullPath(result));
+        Assert.True(LooksFlat(root));
+        Assert.True(File.Exists(Path.Combine(root, "am", "final.mdl")));
+        // Originals stay intact (copy, never move).
+        Assert.True(File.Exists(Path.Combine(sub, "am", "final.mdl")));
+        Assert.Contains(log, m => m.Contains("model flatten: ready at"));
+    }
+
+    [Fact]
+    public void EnsureFlatModel_AlreadyFlat_Is_NoOp()
+    {
+        using var temp = new TempDirectory();
+        var root = Path.Combine(temp.Path, "models");
+        MakeFakeModel(root);
+        var log = new List<string>();
+
+        var result = VoskModelDownloader.EnsureFlatModelDirectory(root, root, m => log.Add(m));
+
+        Assert.Equal(Path.GetFullPath(root), Path.GetFullPath(result));
+        Assert.DoesNotContain(log, m => m.Contains("model flatten: ready at"));
+    }
+
+    [Fact]
+    public void EnsureFlatModel_OptOut_Uses_In_Place()
+    {
+        var prior = Environment.GetEnvironmentVariable(VoskModelDownloader.FlattenOptOutVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(VoskModelDownloader.FlattenOptOutVariable, "1");
+            using var temp = new TempDirectory();
+            var root = Path.Combine(temp.Path, "models");
+            var sub = Path.Combine(root, "Subdirectory");
+            MakeFakeModel(sub);
+            var log = new List<string>();
+
+            var result = VoskModelDownloader.EnsureFlatModelDirectory(root, sub, m => log.Add(m));
+
+            Assert.Equal(Path.GetFullPath(sub), Path.GetFullPath(result));
+            Assert.False(LooksFlat(root));
+            Assert.Contains(log, m => m.Contains("PAICOM_VOSK_NO_FLATTEN"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(VoskModelDownloader.FlattenOptOutVariable, prior);
+        }
+    }
+
+    [Fact]
+    public void EnsureFlatModel_OutsideRoot_Uses_In_Place()
+    {
+        using var temp = new TempDirectory();
+        var root = Path.Combine(temp.Path, "models");
+        Directory.CreateDirectory(root);
+        var elsewhere = Path.Combine(temp.Path, "other");
+        MakeFakeModel(elsewhere);
+        var log = new List<string>();
+
+        var result = VoskModelDownloader.EnsureFlatModelDirectory(root, elsewhere, m => log.Add(m));
+
+        Assert.Equal(Path.GetFullPath(elsewhere), Path.GetFullPath(result));
+        Assert.False(LooksFlat(root));
+    }
+
+    [Fact]
+    public void EnsureFlatModel_Nested_DoubleDir_Flattens_To_Root()
+    {
+        using var temp = new TempDirectory();
+        var root = Path.Combine(temp.Path, "models");
+        var inner = Path.Combine(root, "outer", "inner");
+        MakeFakeModel(inner);
+        var log = new List<string>();
+
+        var result = VoskModelDownloader.EnsureFlatModelDirectory(root, inner, m => log.Add(m));
+
+        Assert.Equal(Path.GetFullPath(root), Path.GetFullPath(result));
+        Assert.True(LooksFlat(root));
+        Assert.True(File.Exists(Path.Combine(root, "graph", "HCLG.fst")));
+    }
+
     [Fact]
     public void Staged_X86_Natives_Are_I386_And_X64_Are_Amd64()
     {
