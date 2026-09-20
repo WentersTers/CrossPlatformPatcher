@@ -1,4 +1,4 @@
-# Release pipeline: Windows .exe first (v0.1.1 content, fully measured).
+# Release pipeline: Windows .exe first (v0.1.2 content, fully measured).
 #
 # Gates, in order (fail-fast; every gate echoes PASS/FAIL):
 #   1. dotnet build (Release) must be error-free.
@@ -31,8 +31,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$Version = "0.1.1"
-$ReleaseDir = Join-Path $RepoRoot "release\v0.1.1"
+$Version = "0.1.2"
+$ReleaseDir = Join-Path $RepoRoot "release\v0.1.2"
 
 function Gate($name, [scriptblock]$body) {
     Write-Host ""
@@ -161,20 +161,20 @@ Gate "artifact audit: product-marker byte scan" {
 Gate "stage release dir + SHA-256" {
     if (Test-Path $ReleaseDir) { Remove-Item $ReleaseDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
-    $staged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-win-x64.exe"
+    $staged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.2-win-x64.exe"
     Copy-Item (Join-Path $PubA "CrossPlatformPatcher.exe") $staged
     $sha = (Get-FileHash $staged -Algorithm SHA256).Hash
-    "$sha  CrossPlatformPatcher-0.1.1-win-x64.exe" | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    "$sha  CrossPlatformPatcher-0.1.2-win-x64.exe" | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
     Write-Host "staged: $staged"
     Write-Host "sha256: $sha"
     if ($AppImagePath -ne "" -and (Test-Path $AppImagePath)) {
         # Linux artifact, built + determinism-proven by
         # scripts/release/build-appimage.sh (reproducible squashfs:
         # fixed SOURCE_DATE_EPOCH, -all-root, pinned runtime).
-        $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-x86_64.AppImage"
+        $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.2-x86_64.AppImage"
         Copy-Item $AppImagePath $aiStaged
         $aiSha = (Get-FileHash $aiStaged -Algorithm SHA256).Hash
-        "$aiSha  CrossPlatformPatcher-0.1.1-x86_64.AppImage" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+        "$aiSha  CrossPlatformPatcher-0.1.2-x86_64.AppImage" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
         Write-Host "staged AppImage: $aiStaged"
         Write-Host "sha256: $aiSha"
     } elseif ($AppImagePath -ne "") {
@@ -184,7 +184,7 @@ Gate "stage release dir + SHA-256" {
 
 Gate "third-party notices + VB-CABLE" {
     $notices = @(
-        "THIRD-PARTY NOTICES -- PAIcom voice release v0.1.1",
+        "THIRD-PARTY NOTICES -- PAIcom voice release v0.1.2",
         "",
         "VB-CABLE (VB-Audio Virtual Cable driver, Pack45):",
         "  Origin: https://vb-cable.com / https://vb-audio.com/Cable",
@@ -264,11 +264,20 @@ $KnownItems = @(
        Status = "Known, queued behind the network work." },
     @{ Title = "Menu buttons that do nothing";
        Symptom = "Some game buttons in the menu do not launch anything when clicked.";
-       Status = "Expected in this version; game wiring is planned work, not a broken install." }
+       Status = "Expected in this version; game wiring is planned work, not a broken install." },
+    @{ Title = "Startup error pop-up when the voice model sits in a subfolder";
+       Symptom = "If the voice model files are inside a subfolder of the models folder, the game could show a .NET error box about a secure channel and then miss its start button.";
+       Status = "Mitigated in this version: the launcher moves a subdirectory model flat before startup automatically, and the recognizer does the same when it resolves one (set PAICOM_VOSK_NO_FLATTEN=1 to keep the old behavior). If the box still appears, check your connection and start again." },
+    @{ Title = "False wake-ups on echo or background sound";
+       Symptom = "The assistant may occasionally wake on an echo, music, or similar-sounding background noise.";
+       Status = "Known; a debounce fix is queued for the next revision." },
+    @{ Title = "Small model mangling unusual words";
+       Symptom = "The small offline model can mangle rare words or names; recognition still routes safely rather than running the wrong command.";
+       Status = "Known model limitation, not blocking; a larger-model option is future work." }
 )
 
 Gate "release notes Known Issues from structured data" {
-    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.2.md"
     $notes = [System.IO.File]::ReadAllText($notesPath, [System.Text.Encoding]::UTF8)
     if ($notes.Length -gt 0 -and $notes[0] -eq [char]0xFEFF) { $notes = $notes.Substring(1) }
     $lines = @()
@@ -284,7 +293,7 @@ Gate "release notes Known Issues from structured data" {
 
 function Write-VerifyBlock {
     $sumsPath = Join-Path $ReleaseDir "SHA256SUMS.txt"
-    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.2.md"
     $entries = Get-SumsEntries $sumsPath
     $hasAppImage = @($entries | Where-Object { $_.File -like "*.AppImage" }).Count -gt 0
     $hasBundle = @($entries | Where-Object { $_.File -like "*.zip" }).Count -gt 0
@@ -320,7 +329,7 @@ function Write-VerifyBlock {
         $lines += "Linux (no driver needed). One download per system, nothing fetched twice."
     }
     if (-not $hasAppImage) {
-        $lines += "v0.1.1 publishes Windows-first; the sha256sum line also verifies"
+        $lines += "v0.1.2 publishes Windows-first; the sha256sum line also verifies"
         $lines += "the Windows exe before copying it over. The Linux .AppImage arrives"
         $lines += "with its own hash in its own release entry."
     }
@@ -339,21 +348,21 @@ Gate "release notes Verify from SHA256SUMS (never by hand)" {
 Gate "platform zips, deterministic, proven twice (one download per system)" {
     # The release is TWO downloads, each carrying exactly what its platform
     # needs and nothing it doesn't:
-    #   PAIcom-Voice-v0.1.1-win-x64.zip       : exe + Pack45 + notices + notes
-    #   PAIcom-Voice-v0.1.1-linux-x86_64.zip  : AppImage + notices + notes (no cable)
+    #   PAIcom-Voice-v0.1.2-win-x64.zip       : exe + Pack45 + notices + notes
+    #   PAIcom-Voice-v0.1.2-linux-x86_64.zip  : AppImage + notices + notes (no cable)
     # Zip members get fixed timestamps/sort order (bundle-zip.py), so the
     # zips are reproducible too. Each zip is built twice and compared; any
     # drift fails the release instead of shipping an unreproducible hash.
     # Driver setup still runs separately after extract on Windows
     # (elevation + reboot are unavoidable), but nothing is fetched twice.
-    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.1.md"
+    $notesPath = Join-Path $RepoRoot "docs\release-notes-v0.1.2.md"
     $epoch = "1757980800"
     $zipScript = Join-Path $PSScriptRoot "bundle-zip.py"
-    $winZip = Join-Path $ReleaseDir "PAIcom-Voice-v0.1.1-win-x64.zip"
-    $linZip = Join-Path $ReleaseDir "PAIcom-Voice-v0.1.1-linux-x86_64.zip"
+    $winZip = Join-Path $ReleaseDir "PAIcom-Voice-v0.1.2-win-x64.zip"
+    $linZip = Join-Path $ReleaseDir "PAIcom-Voice-v0.1.2-linux-x86_64.zip"
     $noticesPath = Join-Path $ReleaseDir "THIRD-PARTY-NOTICES.txt"
-    $exeStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-win-x64.exe"
-    $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.1-x86_64.AppImage"
+    $exeStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.2-win-x64.exe"
+    $aiStaged = Join-Path $ReleaseDir "CrossPlatformPatcher-0.1.2-x86_64.AppImage"
     $vbStaged = Join-Path $ReleaseDir "VBCABLE_Driver_Pack45.zip"
     foreach ($need in @($exeStaged, $aiStaged, $vbStaged, $noticesPath, $notesPath)) {
         if (-not (Test-Path $need)) { Fail ("bundle member missing: " + $need) }
@@ -379,8 +388,8 @@ Gate "platform zips, deterministic, proven twice (one download per system)" {
     if ($linA -ne $linB) { Fail "linux bundle not reproducible" }
     Copy-Item (Join-Path $tmp "win-A.zip") $winZip
     Copy-Item (Join-Path $tmp "lin-A.zip") $linZip
-    "$winA  PAIcom-Voice-v0.1.1-win-x64.zip" | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
-    "$linA  PAIcom-Voice-v0.1.1-linux-x86_64.zip" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    "$winA  PAIcom-Voice-v0.1.2-win-x64.zip" | Set-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
+    "$linA  PAIcom-Voice-v0.1.2-linux-x86_64.zip" | Add-Content (Join-Path $ReleaseDir "SHA256SUMS.txt")
     Write-Host "win zip  : $winZip ($winA)"
     Write-Host "linux zip : $linZip ($linA)"
 }
