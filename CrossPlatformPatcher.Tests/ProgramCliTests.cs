@@ -182,7 +182,7 @@ public sealed class ProgramCliTests
     }
 
     [Fact]
-    public void Invalid_Migration_Mode_Falls_Back_To_Stable()
+    public void Invalid_Migration_Mode_Falls_Back_To_Full()
     {
         using var temp = new TempDirectory();
         var input = BuildPatchableFixture(temp.Path);
@@ -191,8 +191,8 @@ public sealed class ProgramCliTests
         var result = ProgramInvoker.Invoke([input, "--migration-mode", "invalid", "--out", output, "--dry-run"]);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("[WARN] Invalid migration mode: invalid. Using stable mode.", result.StdErr);
-        Assert.Contains("Migration Mode   : stable", result.StdOut);
+        Assert.Contains("[WARN] Invalid migration mode: invalid. Using full mode.", result.StdErr);
+        Assert.Contains("Migration Mode   : full", result.StdOut);
     }
 
     [Fact]
