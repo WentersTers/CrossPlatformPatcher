@@ -24,7 +24,7 @@ public sealed class CliOptions
     /// <summary>True when <c>--prepare-onnx-natives</c> appeared as a later flag.</summary>
     public bool PrepareOnnxNatives { get; init; }
 
-    public MigrationMode MigrationMode { get; init; } = MigrationMode.Stable;
+    public MigrationMode MigrationMode { get; init; } = MigrationMode.Full;
     public OpenWakeWordSettings OwwSettings { get; init; } = OpenWakeWordSettings.CreateDefault();
 
     /// <summary>Non-fatal parser warnings, printed by the entry point.</summary>
@@ -61,7 +61,7 @@ public sealed class CliOptions
         var verbose = false;
         var analyze = false;
         var prepareOnnx = false;
-        var migrationMode = MigrationMode.Stable;
+        var migrationMode = MigrationMode.Full;
 
         var owwBuilder = OpenWakeWordSettings.CreateBuilder();
 
@@ -84,8 +84,8 @@ public sealed class CliOptions
                     else
                     {
                         var invalid = i < args.Length ? args[i] : "<missing>";
-                        warnings.Add($"[WARN] Invalid migration mode: {invalid}. Using stable mode.");
-                        migrationMode = MigrationMode.Stable;
+                        warnings.Add($"[WARN] Invalid migration mode: {invalid}. Using full mode.");
+                        migrationMode = MigrationMode.Full;
                     }
                     break;
 

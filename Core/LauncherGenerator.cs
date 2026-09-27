@@ -182,6 +182,37 @@ public static class LauncherGenerator
                 return 0
             }
 
+            # Copy a nested Vosk model up into its models root so am/ and graph/
+            # sit directly in the root. The download can unpack the archive into
+            # a subdirectory named after itself, leaving the real model two or
+            # more levels down, which Vosk does not follow. The redundant nested
+            # copy is then removed: a subfolder left at startup blocks PAIcom
+            # with a .NET phone-home dialog, same as run.bat's robocopy /MOVE.
+            # No-op when the root is already flat.
+            flatten_vosk_model() {
+                root="$1"
+                [ -d "$root/am" ] && return 0
+
+                model_am="$(find "$root" -maxdepth 4 -type d -name am 2>/dev/null | head -1)"
+                [ -z "$model_am" ] && return 1
+                model_dir="${model_am%/am}"
+
+                cp -a "$model_dir"/. "$root"/ 2>/dev/null || return 1
+                [ -d "$root/am" ] || return 1
+
+                rm -rf "$model_dir" 2>/dev/null || true
+                # rmdir only removes empty directories, so this prunes the
+                # now-empty wrapper dirs the archive left behind without any
+                # risk of deleting a sibling model.
+                parent="${model_dir%/*}"
+                while [ "$parent" != "$root" ] && [ -n "$parent" ] && [ "$parent" != "/" ]; do
+                    rmdir "$parent" 2>/dev/null || break
+                    parent="${parent%/*}"
+                done
+                log "Flattened nested Vosk model from $model_dir"
+                return 0
+            }
+
             launch_runtime_capture() {
                 runtime_name="$1"
                 shift
@@ -217,11 +248,21 @@ public static class LauncherGenerator
 
                 export PAICOM_MIGRATION_MODE="$migration_mode"
 
-                # Auto-detect Vosk models directory and set model path
+                # Auto-detect Vosk models directory and set model path.
+                # A model unpacked into its own subdirectory must be flat in
+                # models/ before PAIcom launches, or Vosk resolves no model and
+                # speech recognition silently stays off. Mirrors
+                # :FlattenModelSubdir in run.bat; walks to any depth because the
+                # archive can nest the model under its own name twice.
                 MODELS_DIR="$SCRIPT_DIR/models"
                 if [ -d "$MODELS_DIR" ]; then
+                    flatten_vosk_model "$MODELS_DIR"
                     export PAICOM_VOSK_MODEL_PATH="$MODELS_DIR"
                     log "Vosk model path set: $PAICOM_VOSK_MODEL_PATH"
+                fi
+                HOME_MODELS_DIR="$HOME/.paicom/models"
+                if [ -d "$HOME_MODELS_DIR" ]; then
+                    flatten_vosk_model "$HOME_MODELS_DIR"
                 fi
 
                 # Vosk sidecar (loopback speech recognition for 32-bit
@@ -1153,28 +1194,36 @@ public static class LauncherGenerator
                      "exit /b 0\r\n" +
                      "\r\n" +
                      ":FlattenModelSubdir\r\n" +
-                     "REM Move a subdirectory model (single level with am/conf/graph) flat into\r\n" +
-                     "REM MODELS_DIR. No-op when the root is already a flat model or when no\r\n" +
-                     "REM subdirectory model exists. Uses robocopy /MOVE so the subfolder is gone.\r\n" +
-                     "for /D %%D in (\"%MODELS_DIR%\\*\") do (\r\n" +
-                     "  if exist \"%%~D\\am\\\" if exist \"%%~D\\conf\\\" if exist \"%%~D\\graph\\\" (\r\n" +
-                     "    if not exist \"%MODELS_DIR%\\am\\\" (\r\n" +
+                     "REM Move a nested Vosk model flat into MODELS_DIR so am/ and graph/\r\n" +
+                     "REM sit directly in the root. The download can unpack the archive into\r\n" +
+                     "REM a subdirectory named after itself, leaving the model two or more\r\n" +
+                     "REM levels down, so pass repeatedly until the root is flat. No-op when\r\n" +
+                     "REM the root is already a flat model. Uses robocopy /MOVE so the\r\n" +
+                     "REM subfolder is gone before PAIcom starts.\r\n" +
+                     "for /L %%P in (1,1,4) do (\r\n" +
+                     "  if exist \"%MODELS_DIR%\\am\\\" goto :FlattenModelDone\r\n" +
+                     "  for /D %%D in (\"%MODELS_DIR%\\*\") do (\r\n" +
+                     "    if exist \"%%~D\\am\\\" if exist \"%%~D\\conf\\\" if exist \"%%~D\\graph\\\" (\r\n" +
                      "      robocopy \"%%~D\" \"%MODELS_DIR%\" /MOVE /E >nul\r\n" +
                      "    )\r\n" +
                      "  )\r\n" +
                      ")\r\n" +
+                     ":FlattenModelDone\r\n" +
                      "exit /b 0\r\n" +
                      "\r\n" +
                      ":FlattenHomeModels\r\n" +
                      "REM Same as :FlattenModelSubdir but for the user-home models root\r\n" +
-                     "REM (%USERPROFILE%\\.paicom\\models).\r\n" +
-                     "for /D %%D in (\"%HOME_MODELS_DIR%\\*\") do (\r\n" +
-                     "  if exist \"%%~D\\am\\\" if exist \"%%~D\\conf\\\" if exist \"%%~D\\graph\\\" (\r\n" +
-                     "    if not exist \"%HOME_MODELS_DIR%\\am\\\" (\r\n" +
+                     "REM (%USERPROFILE%\\.paicom\\models). Same repeated-pass loop so a\r\n" +
+                     "REM doubly-nested model is flattened there too.\r\n" +
+                     "for /L %%P in (1,1,4) do (\r\n" +
+                     "  if exist \"%HOME_MODELS_DIR%\\am\\\" goto :FlattenHomeDone\r\n" +
+                     "  for /D %%D in (\"%HOME_MODELS_DIR%\\*\") do (\r\n" +
+                     "    if exist \"%%~D\\am\\\" if exist \"%%~D\\conf\\\" if exist \"%%~D\\graph\\\" (\r\n" +
                      "      robocopy \"%%~D\" \"%HOME_MODELS_DIR%\" /MOVE /E >nul\r\n" +
                      "    )\r\n" +
                      "  )\r\n" +
                      ")\r\n" +
+                     ":FlattenHomeDone\r\n" +
                      "exit /b 0\r\n";
         File.WriteAllText(path, content, System.Text.Encoding.ASCII);
         Console.WriteLine($"  [launcher] run.bat written.");
