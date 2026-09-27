@@ -72,10 +72,12 @@ public sealed class LauncherGeneratorTests
         Assert.Contains(":FlattenHomeModels", batContent, StringComparison.Ordinal);
         Assert.Contains("robocopy \"%%~D\" \"%HOME_MODELS_DIR%\" /MOVE /E", batContent, StringComparison.Ordinal);
 
-        // Guards: only move when a subdirectory model exists and the root is not already flat.
+        // Guards: only move when a subdirectory model exists, and repeat until
+        // the root is flat so a model nested under its own name twice is handled.
         Assert.Contains("if exist \"%%~D\\am\\\"", batContent, StringComparison.Ordinal);
-        Assert.Contains("if not exist \"%MODELS_DIR%\\am\\\"", batContent, StringComparison.Ordinal);
-        Assert.Contains("if not exist \"%HOME_MODELS_DIR%\\am\\\"", batContent, StringComparison.Ordinal);
+        Assert.Contains("if exist \"%MODELS_DIR%\\am\\\" goto :FlattenModelDone", batContent, StringComparison.Ordinal);
+        Assert.Contains("if exist \"%HOME_MODELS_DIR%\\am\\\" goto :FlattenHomeDone", batContent, StringComparison.Ordinal);
+        Assert.Contains("for /L %%P in (1,1,4)", batContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -240,6 +242,33 @@ public sealed class LauncherGeneratorTests
         var unmig = File.ReadAllText(Path.Combine(temp2.Path, "run.sh"));
         Assert.Contains("BAKED_EXE_CORFLAGS=\"0x00020003\"", unmig, StringComparison.Ordinal);
         Assert.Contains("BAKED_EXE_32BIT=\"1\"", unmig, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Generates_RunSh_With_Model_Flatten_For_Both_Roots()
+    {
+        // run.bat has flattened the model root for a while; run.sh only pointed
+        // PAICOM_VOSK_MODEL_PATH at models/, so a model the download unpacked
+        // into a subdirectory left Vosk with no model and speech silently off.
+        using var temp = new TempDirectory();
+        LauncherGenerator.WriteAll(temp.Path, "PAIcom.exe", MigrationMode.Full, "x86", false);
+
+        var sh = File.ReadAllText(Path.Combine(temp.Path, "run.sh"));
+
+        // Defined, and used for both the game folder and the user-home root.
+        Assert.Contains("flatten_vosk_model() {", sh, StringComparison.Ordinal);
+        Assert.Contains("flatten_vosk_model \"$MODELS_DIR\"", sh, StringComparison.Ordinal);
+        Assert.Contains("HOME_MODELS_DIR=\"$HOME/.paicom/models\"", sh, StringComparison.Ordinal);
+        Assert.Contains("flatten_vosk_model \"$HOME_MODELS_DIR\"", sh, StringComparison.Ordinal);
+
+        // No-op when already flat; walks to any depth when it is not.
+        Assert.Contains("[ -d \"$root/am\" ] && return 0", sh, StringComparison.Ordinal);
+        Assert.Contains("find \"$root\" -maxdepth 4 -type d -name am", sh, StringComparison.Ordinal);
+
+        // The redundant nested copy goes, because a subfolder left at startup
+        // blocks PAIcom with a .NET phone-home dialog (same as run.bat /MOVE).
+        Assert.Contains("rm -rf \"$model_dir\"", sh, StringComparison.Ordinal);
+        Assert.Contains("rmdir \"$parent\"", sh, StringComparison.Ordinal);
     }
 
     [Fact]

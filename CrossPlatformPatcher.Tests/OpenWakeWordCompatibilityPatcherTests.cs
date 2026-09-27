@@ -596,7 +596,7 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
         Action<string> logAction = msg => logMessages.Add(msg);
 
         // Act
-        OpenWakeWordCompatibilityPatcher.Patch(module, logAction);
+        OpenWakeWordCompatibilityPatcher.Patch(module, logAction, minimumExpectedInjectionPoints: 0);
 
         // Assert
         Assert.Equal(3, logMessages.Count);
@@ -604,6 +604,37 @@ public sealed class OpenWakeWordCompatibilityPatcherTests
         Assert.Contains(logMessages, m => m.Contains("OnAudioData1"));
         Assert.Contains(logMessages, m => m.Contains("OnAudioData2"));
         Assert.Contains(logMessages, m => m.Contains("Audio event injection points: 2"));
+    }
+
+    [Fact]
+    public void Warns_When_Injection_Points_Fall_Below_Expected_Floor()
+    {
+        // Guards the silent-failure mode where a collapsed host-OS-dependent match
+        // leaves the wake-word layer unwired while the patch still reports success.
+        using var temp = new TempDirectory();
+        var source = """
+            using System;
+
+            public static class FixtureBelowFloor
+            {
+                public static void OnAudioData1(byte[] audioData)
+                {
+                    Console.WriteLine("Processing audio 1");
+                }
+            }
+            """;
+
+        var assemblyPath = FixtureAssemblyBuilder.Build(source, "fixture-below-floor", temp.Path);
+        var module = ModuleDefMD.Load(assemblyPath);
+
+        var logMessages = new List<string>();
+        Action<string> logAction = msg => logMessages.Add(msg);
+
+        OpenWakeWordCompatibilityPatcher.Patch(module, logAction, minimumExpectedInjectionPoints: 10);
+
+        Assert.Contains(logMessages, m => m.Contains("Audio event injection points: 1"));
+        Assert.Contains(logMessages, m => m.Contains("[WARN]"));
+        Assert.Contains(logMessages, m => m.Contains("Treat this patch as failed"));
     }
 
     [Fact]

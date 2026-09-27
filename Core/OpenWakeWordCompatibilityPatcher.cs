@@ -16,6 +16,22 @@ public static class OpenWakeWordCompatibilityPatcher
 {
     private const string HelperTypeName = "CrossPlatformPatcherOWW";
 
+    // Classified structurally below, but that needs ResolveTypeDef() to load the
+    // declaring assembly from the host OS. System.Speech / System.Windows.Forms do
+    // not exist in the .NET Linux shared framework, so on Linux the structural
+    // probe returns null and the audio hooks silently vanish. Matched by name first
+    // so the result is identical on every host.
+    private static readonly string[] KnownAudioCarrierTypeNames =
+    {
+        "System.Media.SoundPlayer",
+        "System.Speech.Recognition.Grammar",
+        "System.Speech.Recognition.RecognizedPhrase",
+        "NAudio.Wave.WaveStream",
+        "NAudio.Wave.WaveFileReader",
+        "NAudio.Wave.WaveInEvent",
+        "NAudio.Wave.WaveOutEvent",
+    };
+
     private sealed record HelperMembers(
         TypeDef HelperType,
         FieldDef InitializedField,
@@ -33,7 +49,8 @@ public static class OpenWakeWordCompatibilityPatcher
         ModuleDefMD module,
         Action<string>? log = null,
         OpenWakeWordSettings? settings = null,
-        long ticksPerMillisecond = 10000L)
+        long ticksPerMillisecond = 10000L,
+        int minimumExpectedInjectionPoints = 10)
     {
         // Fallback preserves legacy behaviour when no settings are injected: the
         // hard-coded 3000 ms lock duration. OpenWakeWordSettings carries LockDurationMs
@@ -68,6 +85,11 @@ public static class OpenWakeWordCompatibilityPatcher
         }
 
         log?.Invoke($"[oww] Audio event injection points: {patched}");
+        if (patched < minimumExpectedInjectionPoints)
+            log?.Invoke($"[WARN] Only {patched} OpenWakeWord audio injection point(s) found " +
+                        $"(expected at least {minimumExpectedInjectionPoints}). Wake-word audio is " +
+                        "probably NOT wired up and the voice layer will not respond. " +
+                        "Treat this patch as failed.");
         return patched;
     }
 
@@ -228,6 +250,9 @@ public static class OpenWakeWordCompatibilityPatcher
     {
         if (typeSig == null)
             return false;
+
+        if (KnownAudioCarrierTypeNames.Contains(typeSig.FullName ?? string.Empty, StringComparer.Ordinal))
+            return true;
 
         var typeRef = typeSig.ToTypeDefOrRef();
         var typeDef = typeRef?.ResolveTypeDef();
