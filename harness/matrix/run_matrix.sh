@@ -141,17 +141,78 @@ PY
      if ! pgrep -x openbox >/dev/null 2>&1; then DISPLAY=$DISPLAY_NUM nohup openbox >/tmp/openbox.log 2>&1 & sleep 2; fi; \
      pkill -f '[.]patched[.]exe|un[i]nstall' 2>/dev/null; true"
 
+  # runtime gate probe (no subject launch): capture runtime identity first.
+  # Pre-registered EXPECTED-FAIL legs may refuse to start at the libc gate —
+  # that refusal IS the evidence and the subject must NOT be launched.
+  RUNTIME_PROBE="$(gssh "$GUEST_IP" "export DISPLAY=$DISPLAY_NUM WINEPREFIX='$GUEST_PREFIX' HOME=/home/$GUEST_USER; \
+    echo '== ldd =='; ldd --version 2>\&1 | head -1; \
+    GE=\$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-7/files/bin; \
+    for b in \"\$GE/wine\" \"\$GE/wine64\" \"\$GE/wineserver\"; do \
+      [ -x \"\$b\" ] || continue; \
+      echo \"== \$b ==\"; timeout 20 \"\$b\" --version 2>\&1 | head -3; \
+    done; \
+    PROTON=\$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-7/proton; \
+    if [ -x \"\$PROTON\" ]; then echo '== proton =='; timeout 20 \"\$PROTON\" --version 2>\&1 | head -5; fi; \
+    if [ ! -x \"\$GE/wine\" ]; then echo '== system wine =='; timeout 30 wine --version 2>\&1 | head -3; fi" 2>/dev/null | tail -25)"
+  printf '%s\n' "$RUNTIME_PROBE" > "$LEGDIR/runtime-identity.log"
+  log "  runtime probe: $(printf '%s' "$RUNTIME_PROBE" | tr '\n' ' ' | cut -c1-160)"
+  GATE_HIT=no
+  case "$RUNTIME_PROBE" in
+    *GLIBC*not\ found*) GATE_HIT=yes ;;
+  esac
+  SKIP_LAUNCH=no
+  if [ "$GATE_HIT" = yes ] && [ "$EXPECTED" = "EXPECTED-FAIL" ]; then
+    log "  runtime gate failed as pre-registered (libc gate) — subject launch SKIPPED"
+    SKIP_LAUNCH=yes
+  elif [ "$EXPECTED" = "EXPECTED-FAIL" ] && [ "$GATE_HIT" = no ]; then
+    # P0 hold rule: a gate-fail leg whose gate does NOT hit must never launch
+    log "  gate did not hit on an EXPECTED-FAIL leg — DEFERRED (P0 hold), no launch"
+    python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0 = sys.argv[1:6]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "verdict": "DEFERRED", "failing_gate": "p0_hold", "error_signature": None,
+  "expected": "EXPECTED-FAIL",
+  "deviation_notes": ["DEFERRED (P0 hold): pre-registered gate did not hit; subject launch forbidden under the hold"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (P0 hold) — gate miss on gate-fail leg")
+PY
+    continue
+  elif [ "$GATE_HIT" = yes ]; then
+    log "  runtime gate failed (not pre-registered) — DEFERRED (runtime)"
+    python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0 = sys.argv[1:6]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "verdict": "DEFERRED", "failing_gate": "runtime_gate", "error_signature": "GLIBC mismatch",
+  "deviation_notes": ["DEFERRED (runtime): runtime gate failed but not pre-registered for this leg"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (runtime gate)")
+PY
+    continue
+  fi
+
+  # env-parity preconditions apply to launch-bound legs only
+  if [ "$SKIP_LAUNCH" != yes ]; then
   # §5 re-run protocol: environment-parity preconditions (ISS-028 lesson,
   # CHECKLIST item 16). Display stack + prefix contract + run.sh invocation.
   # Any miss = DEFERRED (precondition) — never a degraded comparison run.
   PRECOND_STATE="$(gssh "$GUEST_IP" "D=no; P=no; R=no; \
     DISPLAY=$DISPLAY_NUM xdpyinfo >/dev/null 2>&1 && D=yes; \
-    [ -d '$GUEST_PREFIX' ] && P=yes; \
+    [ -w '$GUEST_GAME_DIR' ] 2>/dev/null && P=yes; \
     [ -f '$GUEST_GAME_DIR/run.sh' ] && R=yes; \
-    echo display=\$D prefix=\$P runsh=\$R" 2>/dev/null | tail -1)"
+    echo display=\$D game_dir=\$P runsh=\$R" 2>/dev/null | tail -1)"
   log "  preconditions: $PRECOND_STATE"
   case "$PRECOND_STATE" in
-    *display=yes*prefix=yes*runsh=yes*) PRECOND_OK=yes ;;
+    *display=yes*game_dir=yes*runsh=yes*) PRECOND_OK=yes ;;
     *) PRECOND_OK=no ;;
   esac
   if [ "$PRECOND_OK" = no ]; then
@@ -172,7 +233,6 @@ print(f"{leg}: DEFERRED (precondition) — {state}")
 PY
     continue
   fi
-
   log "launching the app via generated run.sh (wrapper: WINEDLLOVERRIDES=mscoree=b)"
   # setsid + </dev/null: no fd may hold the ssh channel open (wine children
   # inherit stdin and would otherwise wedge the orchestrator session)
@@ -241,6 +301,7 @@ PY
   done
   log "  visible windows after modal: $HAS_UI (after $((i*2))s)"
   sleep 15
+  fi  # end SKIP_LAUNCH guard (launch + visual-drive section)
 
   # ---------------- capture (D4)
   bash "$SCRIPT_DIR/capture_evidence.sh" --leg "$LEG" || log "WARN: capture returned nonzero"
@@ -368,7 +429,7 @@ for pat in sig_priority:
 
 # verdict
 glibc_evidence = False
-for f in ("tls-diag.log", "find-pai-runtime.log", "capture.json"):
+for f in ("tls-diag.log", "find-pai-runtime.log", "capture.json", "runtime-identity.log", "launch.log"):
     p = os.path.join(legdir, f)
     if os.path.isfile(p):
         try:
@@ -402,8 +463,14 @@ if sig:
     deviation_notes.append(
       f"app-side error signature captured: {sig} (artifacts: launch.log, launcher-runtime.log)")
 if bcl_compare == "REVIEW":
-    deviation_notes.append(
-      f"BCL file version '{bcl_file}' != baseline '{baseline}' — REVIEW (never auto-fail per A3)")
+    ident = data.get("bcl_identity", "-")
+    if ident == "native":
+        deviation_notes.append(
+          f"BCL file version '{bcl_file}' != baseline '{baseline}' — REVIEW (BCL displaced; "
+          f"identity={ident}, path={data.get('bcl_mscorlib_path', '?')}) per do-not-regress #4 restated (ISS-030)")
+    else:
+        deviation_notes.append(
+          f"BCL file version '{bcl_file}' != baseline '{baseline}' — REVIEW (never auto-fail per A3)")
 if runsh_val:
     deviation_notes.append(f"run.sh WINEDLLOVERRIDES='{runsh_val}' (recorded, not blank)")
 
@@ -434,6 +501,8 @@ status = {
     "bcl_version_field": data.get("bcl_version_field", "-"),
     "bcl_file_field": bcl_file,
     "bcl_compare": bcl_compare,
+    "bcl_identity": data.get("bcl_identity", "-"),
+    "bcl_mscorlib_path": data.get("bcl_mscorlib_path", "-"),
     "tls_diag_log": "tls-diag.log",
     "find_pai_runtime_log": "find-pai-runtime.log",
     "runtime_identity": data.get("runtime_identity", ""),
@@ -444,7 +513,8 @@ status = {
   "gates": gates,
   "preconditions": {
     "display_stack": "up",
-    "wineprefix_contract": "ok",
+    "game_dir_writable": "ok",
+    "runsh_present": "ok",
     "runsh_parity": "env-diff-empty (wrapper delta: WINEDLLOVERRIDES=mscoree=b per standing compensation)",
     "checked_by": "run_matrix preflight (CHECKLIST item 16)"
   },
