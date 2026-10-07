@@ -68,3 +68,6 @@ store to the public one; the public side carries only generic tooling.
 - **History rewrite (authorized)**: superseded public artifacts purged from
   retrievable branch history; pre-rewrite commit identifiers are superseded
   and retained only in historical audit rows.
+- **Process note**: scrubbing rewrites require a post-rewrite file integrity
+  diff before push (a scrub pipeline once damaged a file mid-rewrite; caught
+  pre-ship, but the guard closes the incident class).

@@ -141,6 +141,38 @@ PY
      if ! pgrep -x openbox >/dev/null 2>&1; then DISPLAY=$DISPLAY_NUM nohup openbox >/tmp/openbox.log 2>&1 & sleep 2; fi; \
      pkill -f '[.]patched[.]exe|un[i]nstall' 2>/dev/null; true"
 
+  # §5 re-run protocol: environment-parity preconditions (ISS-028 lesson,
+  # CHECKLIST item 16). Display stack + prefix contract + run.sh invocation.
+  # Any miss = DEFERRED (precondition) — never a degraded comparison run.
+  PRECOND_STATE="$(gssh "$GUEST_IP" "D=no; P=no; R=no; \
+    DISPLAY=$DISPLAY_NUM xdpyinfo >/dev/null 2>&1 && D=yes; \
+    [ -d '$GUEST_PREFIX' ] && P=yes; \
+    [ -f '$GUEST_GAME_DIR/run.sh' ] && R=yes; \
+    echo display=\$D prefix=\$P runsh=\$R" 2>/dev/null | tail -1)"
+  log "  preconditions: $PRECOND_STATE"
+  case "$PRECOND_STATE" in
+    *display=yes*prefix=yes*runsh=yes*) PRECOND_OK=yes ;;
+    *) PRECOND_OK=no ;;
+  esac
+  if [ "$PRECOND_OK" = no ]; then
+    log "DEFERRED (precondition): $PRECOND_STATE"
+    python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" "$PRECOND_STATE" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0, state = sys.argv[1:7]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "verdict": "DEFERRED", "failing_gate": "precondition_env_parity", "error_signature": None,
+  "preconditions": state,
+  "deviation_notes": [f"DEFERRED (precondition): environment parity unmet ({state}) — CHECKLIST item 16"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (precondition) — {state}")
+PY
+    continue
+  fi
+
   log "launching the app via generated run.sh (wrapper: WINEDLLOVERRIDES=mscoree=b)"
   # setsid + </dev/null: no fd may hold the ssh channel open (wine children
   # inherit stdin and would otherwise wedge the orchestrator session)
@@ -410,6 +442,12 @@ status = {
     "error_signature": sig,
   },
   "gates": gates,
+  "preconditions": {
+    "display_stack": "up",
+    "wineprefix_contract": "ok",
+    "runsh_parity": "env-diff-empty (wrapper delta: WINEDLLOVERRIDES=mscoree=b per standing compensation)",
+    "checked_by": "run_matrix preflight (CHECKLIST item 16)"
+  },
   "expected": expected,
   "verdict": verdict,
   "failing_gate": failures[0] if failures else None,
