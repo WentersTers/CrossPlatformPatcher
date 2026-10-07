@@ -131,3 +131,12 @@ harness/runs/
 
 # Packer build secrets (passwords/hashes; see secrets.pkrvars.hcl.example)
 *.pkrvars.hcl
+
+# Evidence / findings never ship to the public repo (see docs/REPO-PUBLISHING.md)
+evidence/
+
+# Product-specific harness inputs live in the private repo (docs/REPO-PUBLISHING.md)
+required-tree.conf
+
+__pycache__/
+
