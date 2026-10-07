@@ -91,7 +91,11 @@ foreach (var (name, ent) in da)
     }
 }
 foreach (var n in onlyA) Console.WriteLine($"ONLY-IN-A | {n}");
-foreach (var n in onlyB) Console.WriteLine($"ONLY-IN-B | {n}");
+foreach (var n in onlyB)
+{
+    var e = db[n];
+    Console.WriteLine($"ADDED | {n} | size={e.size} | sha256={e.sha} | impl={e.impl}");
+}
 
 bool namesEqual = onlyA.Count == 0 && changed.Count == 0; // B may ADD entries
 bool implsPreserved = da.Where(kv => db.ContainsKey(kv.Key)).All(kv => db[kv.Key].impl == kv.Value.impl);
@@ -100,7 +104,9 @@ Console.WriteLine($"# SUMMARY names-preserved={namesEqual} impls-preserved={impl
 if (check)
 {
     bool pass = namesEqual && implsPreserved;
-    Console.WriteLine(pass ? "CHECK: PASS (name-set equality + asmref preservation)" : "CHECK: FAIL");
+    Console.WriteLine(pass
+        ? "CHECK: PASS (name-set preservation — adds permitted and enumerated above)"
+        : "CHECK: FAIL (name-set preservation violated)");
     return pass ? 0 : 1;
 }
 return 0;

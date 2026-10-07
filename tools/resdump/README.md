@@ -17,7 +17,7 @@ and the Implementation target (`embedded`, `file:…`, `asmref:…`).
 
 | # | Test | How |
 |---|---|---|
-| 1 | **Manifest resource name-set equality** pre/post | `--check`: every input name present in output with byte-identical codepoints; additions allowed, removals/renames/impl-changes fail |
+| 1 | **Name-set preservation (adds permitted and enumerated)** pre/post | `--check`: every input name present in output with byte-identical codepoints; additions allowed but each `ADDED` entry is listed and must be accounted for in the run's provenance note; removals/renames/impl-changes fail |
 | 2 | **Linked-resource target preservation** (companion materializable) | `--check`: `impl` of every preserved name is unchanged (`asmref:`/`file:` targets survive) |
 | 3 | **End-to-end smoke** (subject constructs + renders) | not this tool — run the matrix leg; the visual gate requires the rendered subject with a nonzero frame diff |
 
