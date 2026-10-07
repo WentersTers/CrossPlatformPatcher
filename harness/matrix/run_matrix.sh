@@ -145,15 +145,18 @@ PY
   # Pre-registered EXPECTED-FAIL legs may refuse to start at the libc gate —
   # that refusal IS the evidence and the subject must NOT be launched.
   RUNTIME_PROBE="$(gssh "$GUEST_IP" "export DISPLAY=$DISPLAY_NUM WINEPREFIX='$GUEST_PREFIX' HOME=/home/$GUEST_USER; \
-    echo '== ldd =='; ldd --version 2>\&1 | head -1; \
-    GE=\$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-7/files/bin; \
-    for b in \"\$GE/wine\" \"\$GE/wine64\" \"\$GE/wineserver\"; do \
-      [ -x \"\$b\" ] || continue; \
-      echo \"== \$b ==\"; timeout 20 \"\$b\" --version 2>\&1 | head -3; \
-    done; \
-    PROTON=\$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-7/proton; \
-    if [ -x \"\$PROTON\" ]; then echo '== proton =='; timeout 20 \"\$PROTON\" --version 2>\&1 | head -5; fi; \
-    if [ ! -x \"\$GE/wine\" ]; then echo '== system wine =='; timeout 30 wine --version 2>\&1 | head -3; fi" 2>/dev/null | tail -25)"
+    echo '== ldd =='; ldd --version 2>&1 | head -1; \
+    GE_DIR=\$(ls -d \$HOME/.steam/steam/compatibilitytools.d/GE-Proton*/ 2>/dev/null | head -1); \
+    if [ -n \"\$GE_DIR\" ]; then \
+      echo \"== GE dir: \$GE_DIR ==\"; \
+      for b in \"\$GE_DIR/files/bin/wine\" \"\$GE_DIR/files/bin/wine64\" \"\$GE_DIR/files/bin/wineserver\"; do \
+        [ -x \"\$b\" ] || continue; \
+        echo \"== \$b ==\"; timeout 20 \"\$b\" --version 2>&1 | head -3; \
+      done; \
+      if [ -x \"\$GE_DIR/proton\" ]; then echo '== proton =='; timeout 20 \"\$GE_DIR/proton\" --version 2>&1 | head -5; fi; \
+    else \
+      echo '== system wine =='; timeout 30 wine --version 2>&1 | head -3; \
+    fi" 2>/dev/null | tail -25)"
   printf '%s\n' "$RUNTIME_PROBE" > "$LEGDIR/runtime-identity.log"
   log "  runtime probe: $(printf '%s' "$RUNTIME_PROBE" | tr '\n' ' ' | cut -c1-160)"
   GATE_HIT=no
