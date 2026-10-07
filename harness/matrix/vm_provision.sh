@@ -308,8 +308,23 @@ case "$RUNTIME_ID" in
     note_pkg "wine-mono-$MONO_MSI_VERSION" "guest-wget-dl.winehq.org"
     log "   wine-mono MSI: $MONO_MSI_NAME assert=$MONO_MSI_ASSERT"
     ;;
-  ge-proton11-7|proton-steam|winetricks-dotnet48|flatpak-wine)
-    log "-- runtime '$RUNTIME_ID' provisioning is Phase 1/2 scope (stub recorded)"
+  ge-proton11-7|proton-steam)
+    log "-- runtime: GE-Proton (standalone compat tools, $RUNTIME_ID)"
+    GE_VER="${GE_VER:-GE-Proton11-7}"
+    if gssh "$GUEST_IP" "ls -d \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/ >/dev/null 2>&1" 2>/dev/null; then
+      log "   $GE_VER already extracted — skipping download"
+    else
+      gssh "$GUEST_IP" "mkdir -p \$HOME/.steam/steam/compatibilitytools.d /tmp/ge && cd /tmp/ge && \
+        wget -q -O ge.tar.gz 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$GE_VER/$GE_VER-x86_64.tar.gz' && \
+        tar -xzf ge.tar.gz -C \$HOME/.steam/steam/compatibilitytools.d/ && echo extracted" \
+        || die "GE-Proton download/extract failed"
+    fi
+    # do-not-regress #3: companion-mono accounting — record the bundled mono,
+    # never install anything over it (dir name carries the arch suffix)
+    GE_MONO="$(gssh "$GUEST_IP" "ls \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/files/share/wine/mono/ 2>/dev/null | tr '\n' ' '")"
+    note_pkg "$GE_VER" "guest-wget-github-releases"
+    WINE_VERSION="$GE_VER (standalone; internal mono accounted: ${GE_MONO:-none})"
+    log "   $GE_VER installed; internal mono recorded, NOT installed over"
     ;;
   *)
     die "unknown runtime_id $RUNTIME_ID"
@@ -370,16 +385,26 @@ tar -C "$APP_BUNDLE" -czf - . | gssh "$GUEST_IP" "tar -C '$GUEST_GAME_DIR' -xzf 
 gssh "$GUEST_IP" "chmod +x '$GUEST_GAME_DIR/run.sh'; ls -la '$GUEST_GAME_DIR' | head -20"
 
 # ---------------------------------------------------------------- guest prefix + mono
-log "-- creating project-local prefix and installing wine-mono into it"
-gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64; \
-  wineboot -u >/dev/null 2>&1; wineserver -w" || die "prefix init failed"
-if [ -n "$GUEST_MSI_PATH" ] && [ "$MONO_MSI_ASSERT" = "PASS" ]; then
-  gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX'; \
-    wine msiexec /i '$GUEST_MSI_PATH' /qn >/tmp/mono-install.log 2>&1; \
-    wineserver -w; tail -5 /tmp/mono-install.log" || die "wine-mono msiexec failed"
-  log "   wine-mono installed into $GUEST_PREFIX"
-fi
-gssh "$GUEST_IP" "find '$GUEST_PREFIX' -iname 'mscorlib.dll' 2>/dev/null | head -5"
+case "$RUNTIME_ID" in
+  ge-proton11-7|proton-steam|flatpak-wine)
+    # do-not-regress #3: the runtime's companion mono is authoritative — never
+    # install a second mono over it; the runtime creates its own prefix at
+    # first use. Gate-fail legs never reach a prefix at all.
+    log "-- prefix: runtime-managed (companion mono = runtime's own; do-not-regress #3)"
+    ;;
+  *)
+    log "-- creating project-local prefix and installing wine-mono into it"
+    gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64; \
+      wineboot -u >/dev/null 2>&1; wineserver -w" || die "prefix init failed"
+    if [ -n "$GUEST_MSI_PATH" ] && [ "$MONO_MSI_ASSERT" = "PASS" ]; then
+      gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX'; \
+        wine msiexec /i '$GUEST_MSI_PATH' /qn >/tmp/mono-install.log 2>&1; \
+        wineserver -w; tail -5 /tmp/mono-install.log" || die "wine-mono msiexec failed"
+      log "   wine-mono installed into $GUEST_PREFIX"
+    fi
+    gssh "$GUEST_IP" "find '$GUEST_PREFIX' -iname 'mscorlib.dll' 2>/dev/null | head -5"
+    ;;
+esac
 
 # ---------------------------------------------------------------- snapshot
 log "-- snapshot $SNAP"
