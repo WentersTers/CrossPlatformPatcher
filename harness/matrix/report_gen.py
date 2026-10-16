@@ -79,12 +79,19 @@ def sha256_of(path):
         return "-"
 
 
+def run_id_of(status, leg):
+    ts = (status.get("timestamps") or {})
+    return f"{leg}@{ts.get('leg_start', '?')}..{ts.get('leg_end', '?')}"
+
+
 def main():
+    import datetime
     ap = argparse.ArgumentParser()
     default_root = os.path.join(os.path.expanduser("~"), "rev013", "evidence", "ISS-017")
     ap.add_argument("--evidence-root", default=os.environ.get("EVIDENCE_ROOT", default_root))
     ap.add_argument("--legs-conf", default=None)
     args = ap.parse_args()
+    generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
     root = args.evidence_root
     conf_path = args.legs_conf or os.path.join(
@@ -139,9 +146,15 @@ def main():
             if os.path.isfile(p) and f"{legdir}/{name}" not in " ".join(bundle_index):
                 bundle_index.append(f"{p}  {sha256_of(p)}")
 
-        # per-leg verdict line (§7 column format)
+        # per-leg verdict line (§7 column format) with evidence-freshness
+        # binding (REV-027): run_id + status timestamps must match status.json;
+        # a mismatch voids the REPORT LAYER ONLY (run stands on status/logs/frames).
+        run_id = run_id_of(status, leg)
+        ts = status.get("timestamps") or {}
         line = (f"{leg} | {rows[-1]['os']} | {rows[-1]['runtime']} | {visual} | {bcl} | "
-                f"{fp} | {verdict} | {notes}")
+                f"{fp} | {verdict} | {notes} | run_id={run_id} "
+                f"leg_start={ts.get('leg_start', '?')} leg_end={ts.get('leg_end', '?')} "
+                f"report_generated={generated_at}")
         with open(os.path.join(report_dir, f"{leg}-verdict.txt"), "w", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -151,6 +164,10 @@ def main():
 
     rows.sort(key=sort_key)
     lines = ["# ISS-017 / REV-013 matrix report", "",
+             f"Report generated: {generated_at} (evidence-freshness: per-leg run_id "
+             "in verdict lines must match status.json timestamps; mismatch -> report "
+             "layer VOID, run stands on status.json/logs/frames per REV-027).",
+             "",
              f"Baseline BCL: `{BASELINE_BCL}` (wine-mono mscorlib FileVersion). "
              "BCL mismatch is REVIEW, never auto-fail.", ""]
     lines.append("| Leg ID | OS | Runtime | Visual evidence | BCL line vs baseline | "

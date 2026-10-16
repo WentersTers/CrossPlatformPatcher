@@ -78,8 +78,27 @@ leg_ip() { cat "$(leg_ip_file "$1")" 2>/dev/null; }
 
 discover_ip() { # discover_ip <domain>  -> guest IPv4 on the default NAT net
   local dom="$1" ip i
-  for i in $(seq 1 60); do
+  for i in $(seq 1 20); do
     ip="$(sudo virsh domifaddr "$dom" 2>/dev/null | awk '/ipv4/{print $NF}' | cut -d/ -f1 | head -1)"
+    if [ -n "$ip" ]; then echo "$ip"; return 0; fi
+    sleep 5
+  done
+  # fallback: QGA guest-network-get-interfaces. domifaddr reporting can go
+  # blind after snapshot-revert (empty table, no leases) while the guest
+  # stack itself is healthy and QGA-responsive — that blindness voided one
+  # control attempt (REV-027), so the fallback is load-bearing, not cosmetic.
+  log "domifaddr blind for $dom — falling back to QGA network interfaces" >&2
+  for i in $(seq 1 12); do
+    ip="$(sudo virsh qemu-agent-command "$dom" '{"execute":"guest-network-get-interfaces"}' --timeout 10 2>/dev/null \
+      | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)["return"]
+    ips = [a["ip-address"] for i in d if i.get("name") != "lo"
+           for a in i.get("ip-addresses", [])
+           if a.get("ip-address-type") == "ipv4" and not a["ip-address"].startswith("169.254.")]
+    print(ips[0] if ips else "")
+except Exception:
+    print("")' 2>/dev/null)"
     if [ -n "$ip" ]; then echo "$ip"; return 0; fi
     sleep 5
   done

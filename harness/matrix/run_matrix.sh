@@ -2,12 +2,17 @@
 # ---------------------------------------------------------------------------
 # D3 — run_matrix.sh : leg orchestrator (ISS-017 / REV-013).
 #
-#   bash run_matrix.sh --legs L01 [--phase 0] [--no-teardown]
+#   bash run_matrix.sh --legs L01 [--phase 0] [--no-teardown] [--control unpatched]
 #
 # Per leg: resource gate -> snapshot revert -> runtime activate -> run.sh
 # (generates/uses project-local .wine-prefix) -> launch the app under the
 # harness wrapper (WINEDLLOVERRIDES=mscoree=b per Q1 ruling) -> capture_evidence
 # -> teardown -> evidence/ISS-017/leg-XX/status.json.
+#
+# --control unpatched: decisive differential (REV-027 §4). Identical tree,
+# prefix, runtime — but launches the UNPATCHED binary (uninstall.exe) directly
+# instead of run.sh/patched exe. Verdict is CONTROL (not adjudicated); frames
+# answer button + pet-animation ground truth via Operator sign-off.
 #
 # Nothing is ever labeled PASS from terminal output alone: the verdict is
 # evaluated from written artifacts (capture.json + files on disk).
@@ -16,15 +21,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-LEGS_ARG=""; PHASE=""; NO_TEARDOWN=0
+LEGS_ARG=""; PHASE=""; NO_TEARDOWN=0; CONTROL_MODE=""; MATRIX_LOCALE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --legs) LEGS_ARG="$2"; shift 2 ;;
     --phase) PHASE="$2"; shift 2 ;;
     --no-teardown) NO_TEARDOWN=1; shift ;;
+    --control) CONTROL_MODE="$2"; shift 2 ;;
+    --locale) MATRIX_LOCALE="$2"; shift 2 ;;
+    --hda) HDA_MODE=1; shift ;;
     *) die "unknown arg: $1" ;;
   esac
 done
+export MATRIX_LOCALE
+HDA_MODE="${HDA_MODE:-0}"
+export HDA_MODE
+[ "$HDA_MODE" = 1 ] && log "AUDIO PROBE: HDA device will be defined pre-revert (ISS-033, REV-031)"
+[ -n "$MATRIX_LOCALE" ] && log "LOCALE SWEEP: $MATRIX_LOCALE (Phase A, REV-030 — prediction: Start appears)"
+if [ -n "$CONTROL_MODE" ] && [ "$CONTROL_MODE" != "unpatched" ]; then
+  die "--control only supports 'unpatched' (got: $CONTROL_MODE)"
+fi
+export CONTROL_MODE
+[ -n "$CONTROL_MODE" ] && log "CONTROL RUN: $CONTROL_MODE (verdict will be CONTROL, not adjudicated)"
 
 # default: Phase 0 smoke set (L01 only) — mandate §6
 [ -n "$LEGS_ARG" ] || [ -n "$PHASE" ] || PHASE="0"
@@ -114,6 +132,44 @@ PY
   # memory-snapshot restore skews the guest clock — resync so evidence
   # timestamps are honest
   gssh "$GUEST_IP" "sudo date -u -s '$(date -u +%FT%TZ)' >/dev/null 2>&1; true" 2>/dev/null || true
+
+  # ISS-033 audio probe: live-attach HDA post-boot (pre-revert define is
+  # wiped by snapshot-revert, which restores domain config — proven in-campaign).
+  # Guest-side verification is load-bearing: no card visible = DEFERRED, never
+  # a fake probe. --live without --config: definition untouched, nothing persists.
+  if [ "$HDA_MODE" = 1 ]; then
+    if bash "$SCRIPT_DIR/audio_hda.sh" live "$DOM" 2>&1 | tee -a "$LEGDIR/audio-attach.log" 2>/dev/null; then
+      sleep 5  # PCI hotplug settle for snd-hda-intel
+      GUEST_AUDIO="$(gssh "$GUEST_IP" "cat /proc/asound/cards 2>/dev/null || echo NO-ASOUND" 2>/dev/null | tail -5)"
+      echo "$GUEST_AUDIO" | tee -a "$LEGDIR/audio-attach.log" >/dev/null 2>&1 || true
+      log "  guest audio: $(printf '%s' "$GUEST_AUDIO" | tr '\n' ' ' | cut -c1-120)"
+      case "$GUEST_AUDIO" in
+        *NO-ASOUND*|*"no soundcards"*) GUEST_AUDIO_OK=no ;;
+        *) GUEST_AUDIO_OK=yes ;;
+      esac
+    else
+      GUEST_AUDIO_OK=no
+      log "  live attach failed (see audio-attach.log)"
+    fi
+    if [ "${GUEST_AUDIO_OK:-no}" != yes ]; then
+      log "DEFERRED (audio-attach): guest shows no audio card — probe would be fake"
+      python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0 = sys.argv[1:6]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "verdict": "DEFERRED", "failing_gate": "audio_attach", "error_signature": None,
+  "deviation_notes": ["DEFERRED (audio-attach): HDA live-attach unverified in guest (see audio-attach.log) — ISS-033 probe not executed, no fake result recorded"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (audio-attach)")
+PY
+      continue
+    fi
+    log "  guest audio card CONFIRMED — ISS-033 probe is real"
+  fi
 
   # RULE 1 (restricted operating rules): refuse to launch against a partial tree —
   # incomplete content produces misleading startup crashes, not verdicts.
@@ -208,14 +264,24 @@ PY
   # §5 re-run protocol: environment-parity preconditions (ISS-028 lesson,
   # CHECKLIST item 16). Display stack + prefix contract + run.sh invocation.
   # Any miss = DEFERRED (precondition) — never a degraded comparison run.
+  # Control mode: subject is the unpatched binary itself — require
+  # uninstall.exe present instead of run.sh.
+  if [ "$CONTROL_MODE" = "unpatched" ]; then
+  PRECOND_STATE="$(gssh "$GUEST_IP" "D=no; P=no; R=no; \
+    DISPLAY=$DISPLAY_NUM xdpyinfo >/dev/null 2>&1 && D=yes; \
+    [ -w '$GUEST_GAME_DIR' ] 2>/dev/null && P=yes; \
+    [ -f '$GUEST_GAME_DIR/uninstall.exe' ] && R=yes; \
+    echo display=\$D game_dir=\$P unpatched_exe=\$R" 2>/dev/null | tail -1)"
+  else
   PRECOND_STATE="$(gssh "$GUEST_IP" "D=no; P=no; R=no; \
     DISPLAY=$DISPLAY_NUM xdpyinfo >/dev/null 2>&1 && D=yes; \
     [ -w '$GUEST_GAME_DIR' ] 2>/dev/null && P=yes; \
     [ -f '$GUEST_GAME_DIR/run.sh' ] && R=yes; \
     echo display=\$D game_dir=\$P runsh=\$R" 2>/dev/null | tail -1)"
+  fi
   log "  preconditions: $PRECOND_STATE"
   case "$PRECOND_STATE" in
-    *display=yes*game_dir=yes*runsh=yes*) PRECOND_OK=yes ;;
+    *display=yes*game_dir=yes*runsh=yes*|*display=yes*game_dir=yes*unpatched_exe=yes*) PRECOND_OK=yes ;;
     *) PRECOND_OK=no ;;
   esac
   if [ "$PRECOND_OK" = no ]; then
@@ -236,13 +302,102 @@ print(f"{leg}: DEFERRED (precondition) — {state}")
 PY
     continue
   fi
-  log "launching the app via generated run.sh (wrapper: WINEDLLOVERRIDES=mscoree=b)"
+  # Phase A locale sweep (REV-030): force en-US environment before launch.
+  # Per-leg (post-revert) so the golden snapshot stays pristine. Ensure the
+  # system locale exists (generate if missing), set Wine user-locale registry
+  # (International: en-US), export LANG/LC_ALL on the launch line. Any miss
+  # that cannot be remediated = DEFERRED(locale) — never a degraded sweep.
+  LOCALE_ENV=""
+  if [ -n "$MATRIX_LOCALE" ]; then
+    LOCALE_ENV="LANG=$MATRIX_LOCALE LC_ALL=$MATRIX_LOCALE"
+    log "  locale sweep: ensuring $MATRIX_LOCALE in guest + Wine International registry"
+    gssh "$GUEST_IP" "locale -a 2>/dev/null | grep -qi '${MATRIX_LOCALE%%.*}' \
+      || sudo -n locale-gen '$MATRIX_LOCALE' 2>&1 | tail -2; \
+      sudo -n update-locale LANG='$MATRIX_LOCALE' 2>&1 | tail -1; true; \
+      locale -a 2>/dev/null | grep -i '${MATRIX_LOCALE%%.*}' | head -3" > "$LEGDIR/locale-sweep.log" 2>&1 || true
+    LOCALE_HIT="$(grep -ci "${MATRIX_LOCALE%%.*}" "$LEGDIR/locale-sweep.log" 2>/dev/null || echo 0)"
+    if [ "${LOCALE_HIT:-0}" -lt 1 ]; then
+      log "DEFERRED (locale): $MATRIX_LOCALE not available in guest and generation failed — see locale-sweep.log"
+      python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0 = sys.argv[1:6]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "verdict": "DEFERRED", "failing_gate": "locale_sweep", "error_signature": None,
+  "deviation_notes": ["DEFERRED (locale): requested locale unavailable in guest; generation failed (see locale-sweep.log)"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (locale)")
+PY
+      continue
+    fi
+    gssh "$GUEST_IP" "export DISPLAY=$DISPLAY_NUM WINEPREFIX='$GUEST_PREFIX' HOME=/home/$GUEST_USER; \
+      wine reg add 'HKCU\Control Panel\International' /v Locale /t REG_SZ /d 00000409 /f 2>&1 | tail -1; \
+      wine reg add 'HKCU\Control Panel\International' /v sLanguage /t REG_SZ /d ENU /f 2>&1 | tail -1; \
+      wine reg add 'HKCU\Control Panel\International' /v sCountry /t REG_SZ /d 'United States' /f 2>&1 | tail -1; \
+      wine reg query 'HKCU\Control Panel\International' 2>&1 | grep -i 'locale\|slanguage\|scountry' | head -5" >> "$LEGDIR/locale-sweep.log" 2>&1 || true
+    log "  locale sweep ready: $LOCALE_ENV (see locale-sweep.log)"
+  fi
+
+  if [ "$CONTROL_MODE" = "unpatched" ]; then
+    # Load-bearing control precondition: the binary MUST be the pristine
+    # original. Expected hash arrives via env (never hardcoded — the binary
+    # is private program inventory). Mismatch = DEFERRED, never a run.
+    if [ -z "${CONTROL_PRISTINE_SHA:-}" ]; then
+      log "DEFERRED (control-staging): CONTROL_PRISTINE_SHA not set — refusing control run"
+      python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0 = sys.argv[1:6]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "run_mode": "control-unpatched",
+  "verdict": "DEFERRED", "failing_gate": "control_staging", "error_signature": None,
+  "deviation_notes": ["DEFERRED (control-staging): CONTROL_PRISTINE_SHA unset — pristine identity unverifiable"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (control-staging) — no pristine hash")
+PY
+      continue
+    fi
+    GUEST_EXE_SHA="$(gssh "$GUEST_IP" "sha256sum '$GUEST_GAME_DIR/uninstall.exe' 2>/dev/null | awk '{print \$1}'" 2>/dev/null | tail -1 | tr -dc '0-9a-f')"
+    log "  control pristine check: guest=$GUEST_EXE_SHA expected=$CONTROL_PRISTINE_SHA"
+    if [ "$GUEST_EXE_SHA" != "$CONTROL_PRISTINE_SHA" ]; then
+      log "DEFERRED (control-staging): guest uninstall.exe is NOT the pristine original"
+      python3 - "$LEG" "$LEGDIR" "$OS_PRETTY" "$RUNTIME_DESC" "$LEG_START" "$GUEST_EXE_SHA" <<'PY'
+import json, sys, datetime
+leg, legdir, os_pretty, rt, t0, got = sys.argv[1:7]
+now = datetime.datetime.utcnow().isoformat() + "Z"
+json.dump({
+  "schema": "rev013-status-v1",
+  "leg": leg, "os_guest": os_pretty, "runtime": rt,
+  "run_mode": "control-unpatched",
+  "verdict": "DEFERRED", "failing_gate": "control_staging", "error_signature": None,
+  "deviation_notes": [f"DEFERRED (control-staging): guest uninstall.exe sha256={got} != pristine — control would be invalid"],
+  "timestamps": {"leg_start": t0, "leg_end": now},
+}, open(f"{legdir}/status.json", "w"), indent=2)
+print(f"{leg}: DEFERRED (control-staging) — guest exe not pristine")
+PY
+      continue
+    fi
+    log "  control pristine identity CONFIRMED (sha256 match)"
+    log "CONTROL launch: unpatched uninstall.exe directly (wrapper: WINEDLLOVERRIDES=mscoree=b $LOCALE_ENV)"
+    gssh "$GUEST_IP" "cd '$GUEST_GAME_DIR' && \
+       (setsid nohup env WINEDLLOVERRIDES=mscoree=b $LOCALE_ENV DISPLAY=$DISPLAY_NUM HOME=/home/$GUEST_USER WINEPREFIX='$GUEST_PREFIX' \
+         wine uninstall.exe > '$GUEST_GAME_DIR/launch.log' 2>&1 < /dev/null &) ; \
+       echo launched-control" || log "WARN: control launch ssh returned nonzero"
+  else
+  log "launching the app via generated run.sh (wrapper: WINEDLLOVERRIDES=mscoree=b $LOCALE_ENV)"
   # setsid + </dev/null: no fd may hold the ssh channel open (wine children
   # inherit stdin and would otherwise wedge the orchestrator session)
   gssh "$GUEST_IP" "cd '$GUEST_GAME_DIR' && \
-     (setsid nohup env WINEDLLOVERRIDES=mscoree=b DISPLAY=$DISPLAY_NUM HOME=/home/$GUEST_USER \
+     (setsid nohup env WINEDLLOVERRIDES=mscoree=b $LOCALE_ENV DISPLAY=$DISPLAY_NUM HOME=/home/$GUEST_USER \
        bash run.sh > '$GUEST_GAME_DIR/launch.log' 2>&1 < /dev/null &) ; \
      echo launched" || log "WARN: launch ssh returned nonzero"
+  fi
 
   # wait for the app process (window/session evidence comes from capture tier)
   # [P]/[i]/[.] bracket patterns never self-match the remote shell cmdline
@@ -441,8 +596,13 @@ for f in ("tls-diag.log", "find-pai-runtime.log", "capture.json", "runtime-ident
         except Exception:
             pass
 
+import os as _os
+control_mode = _os.environ.get("CONTROL_MODE", "")
 verdict = "FAIL"
-if expected == "PASS":
+if control_mode == "unpatched":
+    verdict = "CONTROL"   # decisive differential: gates recorded for
+    expected = "CONTROL"  # comparability, never adjudicated PASS/FAIL
+elif expected == "PASS":
     if not failures and bcl_compare == "MATCH":
         verdict = "PASS"
     elif not failures and bcl_compare == "REVIEW":
@@ -462,6 +622,22 @@ elif expected == "NO-OP":
 deviation_notes = [
   "shipped run.sh sets no WINEDLLOVERRIDES; harness compensates. Product gap tracked as ISS-DRAFT-01."
 ]
+locale_sweep = _os.environ.get("MATRIX_LOCALE", "")
+if control_mode == "unpatched":
+    deviation_notes.append(
+      "CONTROL run (unpatched uninstall.exe, identical tree/prefix/runtime): "
+      "frames answer Start-button + pet-animation ground truth via Operator sign-off")
+if locale_sweep:
+    deviation_notes.append(
+      f"LOCALE SWEEP Phase A (REV-030): launch forced to {locale_sweep} "
+      f"(system locale ensured + Wine International en-US + LANG/LC_ALL); "
+      f"prediction: Start appears (see locale-sweep.log)")
+hda_probe = _os.environ.get("HDA_MODE", "0") == "1"
+if hda_probe:
+    deviation_notes.append(
+      "RIG DELTA ISS-033 audio probe (REV-031): Intel HDA sound device present "
+      "in domain DEFINITION only (disk/snapshots untouched); tests whether Start "
+      "gates on capture-device presence despite mic-free Text Mode promise")
 if sig:
     deviation_notes.append(
       f"app-side error signature captured: {sig} (artifacts: launch.log, launcher-runtime.log)")
@@ -485,6 +661,7 @@ status = {
   "leg": leg,
   "os_guest": os_pretty,
   "runtime": rt_desc,
+  "run_mode": ("control-unpatched" if control_mode == "unpatched" else "matrix"),
   "patcher_git_sha": prov_n.get("git_sha", "(unknown)"),
   "patcher_build_ts": prov_n.get("build_ts", "(unknown)"),
   "git_dirty": bool(prov_n.get("git_dirty", True)),
@@ -539,5 +716,9 @@ print(f"{leg}: verdict={verdict} failing_gate={status['failing_gate']} bcl={bcl_
 PY
 done
 
+# D5 rollup is part of the leg pipeline (REV-027 evidence-freshness):
+# status.json -> report_gen.py atomically per run so report/ can never go stale.
+if ! python3 "$SCRIPT_DIR/report_gen.py" 2>&1 | tail -5; then
+  log "WARN: report_gen.py returned nonzero (status.json remains authoritative)"
+fi
 log "== D3 done (started $RUN_STARTED) =="
-log "next: python3 $SCRIPT_DIR/report_gen.py  (D5 rollup)"

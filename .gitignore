@@ -140,3 +140,23 @@ required-tree.conf
 
 __pycache__/
 
+# Coder-side store - never published (REPO-PUBLISHING rules 5 and 8)
+AGENTS.md
+docs/coder/
+scripts/tracker_data.py
+scripts/tracker-workbook.xlsx
+scripts/xlsx.py
+
+# Product-adjacent material untracked from the public repo (moved to the private store)
+PAIcom Test Folder/
+goldens/
+test-scripts/
+dumper/
+FormAnalyzer/
+TestVosk/
+ProductPort/
+.tmp-deps/
+harness/matrix/petwalk.sh
+harness/matrix/setup-walk.sh
+harness/matrix/audio_hda.sh
+

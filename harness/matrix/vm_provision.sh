@@ -17,12 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-LEG=""; FORCE=0; SKIP_APP=0
+LEG=""; FORCE=0; SKIP_APP=0; CHAIN_EXE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --leg) LEG="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --skip-app) SKIP_APP=1; shift ;;
+    --chain-exe) CHAIN_EXE="$2"; shift 2 ;;
     --backend) log "backend=libvirt only on this rig (no VBoxManage); VirtualBox fallback refused"; shift 2 ;;
     *) die "unknown arg: $1" ;;
   esac
@@ -52,6 +53,8 @@ base_image_url() {
     arch-latest) echo "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2" ;;
     fedora-41)   echo "" ;;  # resolved via directory listing below
     fedora-42)   echo "" ;;
+    fedora-43)   echo "" ;;
+    fedora-44)   echo "" ;;
     *) echo "" ;;
   esac
 }
@@ -64,7 +67,7 @@ if [ ! -f "$BASE_PATH" ]; then
   URL="$(base_image_url "$OS_ID")"
   if [ -z "$URL" ]; then
     case "$OS_ID" in
-      fedora-41|fedora-42)
+      fedora-41|fedora-42|fedora-43|fedora-44)
         REL="${OS_ID#fedora-}"
         URL="$(curl -fsSL "https://download.fedoraproject.org/pub/fedora/linux/releases/$REL/Cloud/x86_64/images/" \
               | grep -oE 'Fedora-Cloud-Base-Generic[^"]*\.qcow2' | head -1)"
@@ -241,6 +244,23 @@ wait_ssh "$GUEST_IP" 300 || {
 }
 gssh "$GUEST_IP" 'cloud-init status --wait >/dev/null 2>&1; cloud-init status | head -1' || true
 
+# Some cloud images ignore the shared cloud-init package list, so the display
+# and capture stack must be installed explicitly (per-distro names).
+case "$OS_ID" in
+  arch-latest)
+    log "-- arch display/capture stack via pacman"
+    gssh "$GUEST_IP" "sudo pacman -Sy --noconfirm xorg-server-xvfb xorg-xdpyinfo xdotool openbox scrot imagemagick ttf-dejavu cabextract" \
+      || die "arch display stack install failed"
+    note_pkg "arch-display-stack" "ssh-pacman"
+    ;;
+  fedora-41|fedora-42|fedora-43|fedora-44)
+    log "-- fedora display/capture stack via dnf"
+    gssh "$GUEST_IP" "sudo dnf install -y xorg-x11-server-Xvfb xdpyinfo xwininfo xprop xdotool openbox scrot ImageMagick dejavu-sans-fonts" \
+      || die "fedora display stack install failed"
+    note_pkg "fedora-display-stack" "ssh-dnf"
+    ;;
+esac
+
 # ---------------------------------------------------------------- runtime layer
 WINE_VERSION="(not installed)"
 MONO_MSI_NAME="(none)"
@@ -276,27 +296,36 @@ install_wine() {
       gssh "$GUEST_IP" "sudo pacman -Sy --noconfirm wine wine-mono" \
         && note_pkg "wine" "ssh-pacman" || return 1
       ;;
-    fedora-41|fedora-42)
-      local rel="${OS_ID#fedora-}"
-      gssh "$GUEST_IP" "sudo dnf install -y 'dnf-command(config-manager)' && \
-        sudo dnf config-manager --add-repo https://dl.winehq.org/wine-builds/fedora/$rel/winehq-$rel.repo && \
-        sudo dnf install -y winehq-staging" \
-        && note_pkg "wine" "ssh-dnf-winehq" || return 1
+    fedora-41|fedora-42|fedora-43|fedora-44)
+      # Distro wine per the leg spec (WineHQ dropped the EOL Fedora repo
+      # files; Fedora ships wine + wine-mono itself).
+      gssh "$GUEST_IP" "sudo dnf install -y wine wine-mono" \
+        && note_pkg "wine" "ssh-dnf-distro" || return 1
       ;;
     *) log "no wine install recipe for $OS_ID"; return 1 ;;
   esac
 }
 
 case "$RUNTIME_ID" in
-  wine11-mono|wine-distro-mono|wine-latest-mono)
+  wine11-mono|wine-distro-mono|wine-latest-mono|winetricks-dotnet48)
     log "-- runtime: wine + wine-mono ($RUNTIME_ID)"
     install_wine || die "wine install failed"
     WINE_VERSION="$(gssh "$GUEST_IP" 'wine --version 2>/dev/null' | tail -1)"
     log "   wine version: $WINE_VERSION"
+    if [ "$RUNTIME_ID" = "winetricks-dotnet48" ]; then
+      # Expected NO-OP on Wine 11 (do-not-regress #5): attempt, tolerate any
+      # outcome, record it. Never fatal.
+      log "-- winetricks dotnet48 attempt (NO-OP expected)"
+      gssh "$GUEST_IP" "sudo apt-get install -y -qq winetricks >/dev/null 2>&1; \
+        (winetricks -q dotnet48 >/tmp/dotnet48.log 2>&1 && echo DOTNET48-OK || echo DOTNET48-NOOP); \
+        tail -3 /tmp/dotnet48.log 2>/dev/null" || true
+      note_pkg "winetricks-dotnet48-attempt" "expected-noop"
+    fi
 
     MONO_MSI_NAME="wine-mono-${MONO_MSI_VERSION}-x86.msi"
     GUEST_MSI_PATH="/tmp/$MONO_MSI_NAME"
-    gssh "$GUEST_IP" "wget -qO '$GUEST_MSI_PATH' 'https://dl.winehq.org/wine/wine-mono/${MONO_MSI_VERSION}/$MONO_MSI_NAME'" \
+    gssh "$GUEST_IP" "(wget -qO '$GUEST_MSI_PATH' 'https://dl.winehq.org/wine/wine-mono/${MONO_MSI_VERSION}/$MONO_MSI_NAME' || \
+      curl -fSL -o '$GUEST_MSI_PATH' 'https://dl.winehq.org/wine/wine-mono/${MONO_MSI_VERSION}/$MONO_MSI_NAME')" \
       || die "wine-mono download failed"
     # ---- do-not-regress #2: x86.msi exactly, never a _64 variant
     case "$MONO_MSI_NAME" in
@@ -311,14 +340,31 @@ case "$RUNTIME_ID" in
   ge-proton11-7|proton-steam)
     log "-- runtime: GE-Proton (standalone compat tools, $RUNTIME_ID)"
     GE_VER="${GE_VER:-GE-Proton11-7}"
-    if gssh "$GUEST_IP" "ls -d \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/ >/dev/null 2>&1" 2>/dev/null; then
-      log "   $GE_VER already extracted — skipping download"
+    # GE-Proton 11 ships a wow64 loader (files/bin/wine is 64-bit; there is no
+    # top-level wine64). Completeness = the x86_64-unix runtime dir present.
+    if gssh "$GUEST_IP" "ls \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/files/lib/wine/x86_64-unix >/dev/null 2>&1" 2>/dev/null; then
+      log "   $GE_VER already extracted (x86_64 runtime present) — skipping download"
     else
-      gssh "$GUEST_IP" "mkdir -p \$HOME/.steam/steam/compatibilitytools.d /tmp/ge && cd /tmp/ge && \
+      # A stale partial extraction (dir present, runtime incomplete) must not
+      # satisfy the cache check: purge first, then download + extract whole.
+      gssh "$GUEST_IP" "rm -rf \$HOME/.steam/steam/compatibilitytools.d/$GE_VER* && mkdir -p \$HOME/.steam/steam/compatibilitytools.d /tmp/ge && cd /tmp/ge && \
         wget -q -O ge.tar.gz 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$GE_VER/$GE_VER-x86_64.tar.gz' && \
         tar -xzf ge.tar.gz -C \$HOME/.steam/steam/compatibilitytools.d/ && echo extracted" \
         || die "GE-Proton download/extract failed"
+      gssh "$GUEST_IP" "ls \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/files/lib/wine/x86_64-unix >/dev/null 2>&1" 2>/dev/null \
+        || die "GE-Proton extracted but the x86_64 runtime is still missing"
     fi
+    # GE's wow64 loader needs the host 32-bit dynamic loader even for 64-bit
+    # prefixes (/lib/ld-linux.so.2 missing = instant exit 1). Wine also needs
+    # the host FreeType library to rasterize any text — without it, dialogs
+    # never lay out (320x1 slivers) and the UI stays invisible. One-time
+    # installs per guest; harmless when already present.
+    gssh "$GUEST_IP" "ldconfig -p 2>/dev/null | grep -q 'ld-linux.so.2' || (sudo dpkg --add-architecture i386 && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libc6:i386)" \
+      || die "i386 libc install failed"
+    note_pkg "libc6-i386" "ssh-apt-i386 (GE wow64 loader)"
+    gssh "$GUEST_IP" "ldconfig -p 2>/dev/null | grep -q 'libfreetype.so' || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libfreetype6" \
+      || die "freetype install failed"
+    note_pkg "libfreetype6" "ssh-apt (GE text rendering)"
     # do-not-regress #3: companion-mono accounting — record the bundled mono,
     # never install anything over it (dir name carries the arch suffix)
     GE_MONO="$(gssh "$GUEST_IP" "ls \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/files/share/wine/mono/ 2>/dev/null | tr '\n' ' '")"
@@ -374,6 +420,18 @@ PY
   log "   bundle ready: $PATCH_TARGET.patched.exe sha256=$BUNDLE_SHA"
   log "   run.sh target: $(grep -m1 'EXE=' "$APP_BUNDLE/run.sh")"
   log "   run.sh WINEDLLOVERRIDES lines: $(grep -c 'WINEDLLOVERRIDES' "$APP_BUNDLE/run.sh" || true)"
+  CHAIN_NOTE="direct-patch"
+  if [ -n "$CHAIN_EXE" ]; then
+    # publish step: swap the chain output (strip->patch->nop->materialize)
+    # into the bundle slot; the tripwire baseline re-arms on first run
+    [ -f "$CHAIN_EXE" ] || die "chain exe missing: $CHAIN_EXE"
+    cp -f "$CHAIN_EXE" "$APP_BUNDLE/$PATCH_TARGET.patched.exe"
+    rm -f "$APP_BUNDLE"/*.tripwire-baseline 2>/dev/null || true
+    BUNDLE_SHA="$(sha256_of "$APP_BUNDLE/$PATCH_TARGET.patched.exe")"
+    CHAIN_NOTE="chain(strip>patch>nop>materialize) sha=$BUNDLE_SHA"
+    log "   chain bundle: swapped chain output in; bundle sha=$BUNDLE_SHA"
+    log "   tripwire baseline removed (re-arms on first run per launcher contract)"
+  fi
 else
   log "-- skipping app build (--skip-app); using existing $APP_BUNDLE"
 fi
@@ -391,6 +449,22 @@ case "$RUNTIME_ID" in
     # install a second mono over it; the runtime creates its own prefix at
     # first use. Gate-fail legs never reach a prefix at all.
     log "-- prefix: runtime-managed (companion mono = runtime's own; do-not-regress #3)"
+    case "$RUNTIME_ID" in
+      ge-proton11-7|proton-steam)
+        # Pre-warm: create the project-local prefix under the GE runtime NOW
+        # so legs spend their window on the app instead of first-boot setup.
+        log "-- pre-warming GE prefix at $GUEST_PREFIX"
+        gssh "$GUEST_IP" "GE_BIN=\$(ls -d \$HOME/.steam/steam/compatibilitytools.d/GE-Proton*/files/bin/wine 2>/dev/null | head -1); \
+          [ -x \"\$GE_BIN\" ] || exit 1; \
+          export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64; \
+          \"\$GE_BIN\" wineboot -u >/tmp/ge-prefix.log 2>&1; \
+          \"\$(dirname \"\$GE_BIN\")/wineserver\" -w >/dev/null 2>&1; \
+          tail -3 /tmp/ge-prefix.log" || die "GE prefix pre-warm failed"
+        gssh "$GUEST_IP" "grep -qi '#arch=win64' '$GUEST_PREFIX/system.reg' 2>/dev/null" \
+          || die "GE prefix is not win64 after pre-warm"
+        log "   GE prefix ready (win64)"
+        ;;
+    esac
     ;;
   *)
     log "-- creating project-local prefix and installing wine-mono into it"
@@ -451,6 +525,7 @@ rec = {
   "mono_msi_filename": "$MONO_MSI_NAME",
   "mono_msi_assert": "$MONO_MSI_ASSERT",
   "bundle_sha256": "$BUNDLE_SHA",
+  "chain": "$CHAIN_NOTE",
   "packages": json.loads('''$PKG_JSON'''),
   "provenance": json.load(open("$MATRIX_ROOT/provenance.json")),
   "provisioned_ts": "$STAMP",

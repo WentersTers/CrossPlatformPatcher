@@ -44,3 +44,8 @@ restricted store (internal — rule 8).
 16. **Environment parity before any comparison claim**: a differential must
     run both sides under identical display/runtime preconditions (ISS-028
     lesson) — record the preconditions in the evidence.
+
+## Process hardening (standing rules)
+
+17. **Post-edit integrity diff before push (all pipelines).** Every scripted rewrite of tracked files - scrubs, generators, tooling - requires a direct-read integrity diff before commit/push.
+18. **Exit loud, never degrade.** The source-guard/refuse-to-run pattern on integrity failure is mandatory for harness tooling; a silent-degradation path in any harness script is a defect in its own right.

@@ -71,3 +71,9 @@ store to the public one; the public side carries only generic tooling.
 - **Process note**: scrubbing rewrites require a post-rewrite file integrity
   diff before push (a scrub pipeline once damaged a file mid-rewrite; caught
   pre-ship, but the guard closes the incident class).
+- **Public-repo audit 2026-10-16**: 47 tracked paths of product-adjacent / dev-probe
+  material were untracked (index-only) and guarded in `.gitignore`; the coder-side store
+  and tracker gained guards. Build-critical items that keep the name "PAIcom" but are
+  patcher inputs (`PAIcom.OWW/`, `models/hey_pie_com.quant.onnx`, `inputs/`) stay public.
+  Push-time checklist: `PUSHING.md`. A history rewrite to un-leak earlier commits is
+  still pending authorization.

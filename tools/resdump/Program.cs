@@ -61,7 +61,17 @@ static List<(string name, string cps, long size, string sha, string impl)> Dump(
 }
 
 bool check = args.Length > 0 && args[0] == "--check";
-var files = args.Where(a => !a.StartsWith("--")).ToArray();
+var files = args.Where(a => !a.StartsWith("--") && !a.EndsWith(".txt")).ToArray();
+string deltaPath = null;
+for (int di = 0; di < args.Length - 1; di++)
+    if (args[di] == "--expect-delta") deltaPath = args[di + 1];
+var expectedDelta = new HashSet<string>();
+if (deltaPath != null && File.Exists(deltaPath))
+    foreach (var ln in File.ReadAllLines(deltaPath))
+    {
+        var t = ln.Trim();
+        if (t.Length > 0 && !t.StartsWith("#")) expectedDelta.Add(t);
+    }
 if (files.Length < 2) { Console.WriteLine("usage: resdump [--check] <fileA> <fileB>"); return 2; }
 
 var A = Dump(files[0]);
@@ -73,8 +83,12 @@ Console.WriteLine($"# B {files[1]} resources={B.Count}");
 foreach (var (name, cps, size, sha, impl) in B.OrderBy(x => x.name))
     Console.WriteLine($"B | {name} | size={size} | sha256={sha} | impl={impl} | cps={cps}");
 
-var da = A.ToDictionary(x => x.name, x => x);
-var db = B.ToDictionary(x => x.name, x => x);
+var da = A.GroupBy(x => x.name).ToDictionary(g => g.Key, g => g.First());
+var db = B.GroupBy(x => x.name).ToDictionary(g => g.Key, g => g.First());
+var dupA = A.GroupBy(x => x.name).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+var dupB = B.GroupBy(x => x.name).Where(g => g.Key != null && g.Count() > 1).Select(g => g.Key).ToList();
+foreach (var d in dupA) Console.WriteLine($"DUPLICATE-IN-A | {d}");
+foreach (var d in dupB) Console.WriteLine($"DUPLICATE-IN-B | {d}");
 var onlyA = da.Keys.Where(k => !db.ContainsKey(k)).OrderBy(k => k).ToList();
 var onlyB = db.Keys.Where(k => !da.ContainsKey(k)).OrderBy(k => k).ToList();
 var changed = new List<string>();
@@ -103,10 +117,10 @@ Console.WriteLine($"# SUMMARY names-preserved={namesEqual} impls-preserved={impl
 
 if (check)
 {
-    bool pass = namesEqual && implsPreserved;
+    bool pass = namesEqual && implsPreserved && dupA.Count == 0 && dupB.Count == 0;
     Console.WriteLine(pass
         ? "CHECK: PASS (name-set preservation — adds permitted and enumerated above)"
-        : "CHECK: FAIL (name-set preservation violated)");
+        : $"CHECK: FAIL (duplicatesA={dupA.Count} duplicatesB={dupB.Count})");
     return pass ? 0 : 1;
 }
 return 0;

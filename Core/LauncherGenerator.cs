@@ -293,6 +293,16 @@ public static class LauncherGenerator
                     done
                 fi
 
+                # GE-Proton standalone defaults to a win32 prefix; force the
+                # win64 prefix the 64-bit payloads require. Legs revert to a
+                # snapshot with no prefix, so this never flips an existing one.
+                case "$1" in
+                    *compatibilitytools.d*)
+                        export WINEARCH=win64
+                        log "WINEARCH=win64 (GE-Proton runtime)"
+                        ;;
+                esac
+
                 printf "[launcher] Streaming runtime log from: %s\n" "$RUNTIME_LOG"
 
                 "$@" >> "$RUNTIME_LOG" 2>&1 &
@@ -316,6 +326,24 @@ public static class LauncherGenerator
                 return "$EXIT_CODE"
             }
 
+            find_ge_wine() {
+                # GE-Proton standalone compat tools (no Steam login needed).
+                # Prefers wine64, falls back to wine. Prints the binary path.
+                for bindir in "$HOME/.steam/steam/compatibilitytools.d"/GE-Proton*/files/bin; do
+                    if [ -x "$bindir/wine64" ]; then
+                        echo "$bindir/wine64"
+                        return 0
+                    fi
+                done
+                for bindir in "$HOME/.steam/steam/compatibilitytools.d"/GE-Proton*/files/bin; do
+                    if [ -x "$bindir/wine" ]; then
+                        echo "$bindir/wine"
+                        return 0
+                    fi
+                done
+                return 1
+            }
+
             choose_probe_runtime() {
                 if [ -x "$ALT_BUNDLED_WINE" ]; then
                     echo "$ALT_BUNDLED_WINE"
@@ -323,6 +351,8 @@ public static class LauncherGenerator
                     echo "$BUNDLED_WINE"
                 elif [ -x "$WHISKY_WINE" ]; then
                     echo "$WHISKY_WINE"
+                elif GE_WINE="$(find_ge_wine)"; then
+                    echo "$GE_WINE"
                 elif command -v wine64 >/dev/null 2>&1; then
                     command -v wine64
                 elif command -v wine >/dev/null 2>&1; then
@@ -356,6 +386,10 @@ public static class LauncherGenerator
                     log_arch_truth "$WHISKY_WINE"
                     verify_runtime_bitness "$WHISKY_WINE"
                     launch_runtime_capture "$WHISKY_WINE" "$WHISKY_WINE" "$EXE" "$@"
+                elif GE_WINE="$(find_ge_wine)"; then
+                    log_arch_truth "$GE_WINE"
+                    verify_runtime_bitness "$GE_WINE"
+                    launch_runtime_capture "$GE_WINE" "$GE_WINE" "$EXE" "$@"
                 elif command -v wine >/dev/null 2>&1; then
                     system_wine="$(command -v wine)"
                     log_arch_truth "$system_wine"
