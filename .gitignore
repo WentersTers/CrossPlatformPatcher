@@ -119,3 +119,5 @@ VoskModels/
 logs/
 
 SetupWizardMacApp/.build/
+PAIcom Test Folder/
+dump_analysis*.txt

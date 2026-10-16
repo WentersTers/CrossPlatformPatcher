@@ -20,42 +20,24 @@ The patcher is implemented to run on multiple platforms, but it has currently be
 
 ### Core Workflows
 
-**Windows:**
-```cmd
-dotnet publish CrossPlatformPatcher.csproj -r win-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/win
-```
+For detailed build instructions, see the **[Build System](docs/BUILD_SYSTEM.md)**.
 
-**Linux:**
-```sh
-dotnet publish CrossPlatformPatcher.csproj -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/linux
-```
-
-**macOS (Intel):**
-```sh
-dotnet publish CrossPlatformPatcher.csproj -r osx-x64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/osx-x64
-```
-
-**macOS (Apple Silicon):**
-```sh
-dotnet publish CrossPlatformPatcher.csproj -r osx-arm64 -c Release --self-contained true -p:PublishSingleFile=true -o publish/osx-arm64
-```
-
-Or use the included one-command script:
+To generate release builds for all supported platforms simultaneously, use the included one-command publish scripts:
 
 **Windows:**
 ```cmd
-publish-all.bat
+scripts\publish-all.bat
 ```
 
 **Linux/Mac:**
 ```sh
-sh publish-all.sh
+sh scripts/publish-all.sh
 ```
 
 For an end-to-end build, publish, patch, and launch flow from the repo root on macOS or Linux, use:
 
 ```sh
-./build-patch-and-launch.sh --migration-mode full
+./scripts/build-patch-and-launch.sh --migration-mode full
 ```
 
 The wrapper script supports additional flags:
@@ -69,11 +51,27 @@ The wrapper script supports additional flags:
 If you want to force a specific runtime identifier, pass `--rid`:
 
 ```sh
-./build-patch-and-launch.sh --rid osx-arm64
-./build-patch-and-launch.sh --migration-mode full --no-launch
+./scripts/build-patch-and-launch.sh --rid osx-arm64
+./scripts/build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
-To build the native macOS Setup Wizard app, run:
+### Cross-Platform SetupWizard (Windows, Linux, macOS)
+
+A new .NET 8.0 Avalonia UI based SetupWizard provides the same setup experience across **Windows, Linux, and macOS**. Build with:
+
+```sh
+# Build all platforms at once
+bash scripts/build-setupwizard-all.sh
+
+# Package Linux AppImage (after linux-x64 build)
+bash scripts/package-appimage.sh [path-to-appimagetool]
+```
+
+See [INSTALLER_GUIDE.md § 2](docs/INSTALLER_GUIDE.md#2-cross-platform-setupwizard-net-80-avalonia) for full details.
+
+### macOS Setup Wizard App (Native)
+
+The original native macOS SwiftUI app remains the primary macOS distribution path:
 
 ```sh
 cd SetupWizardMacApp && ./build.sh
@@ -105,17 +103,98 @@ For complete build documentation, see [docs/BUILD_SYSTEM.md](docs/BUILD_SYSTEM.m
 
 The setup script can download/install Homebrew when missing, then install Whisky.
 
+## Plugin Architecture
+
+The patcher uses a **modular, plugin-based core**. Each patch feature is an isolated
+module implementing `IPatchModule`. The engine (`ModuleRegistry`) discovers modules
+by reflection at startup, so **adding a pure-IL feature does not require editing the engine**
+(Open/Closed Principle). Features that need new embedded natives or external assembly
+references still require changes to `AssemblyPatcher`.
+
+### New Module Layout
+
+```
+Core/
+  Modules/                       <-- every feature lives here
+    IPatchModule.cs              <-- module contract (primary extension point; engine still owns OWW orchestration for embedded natives & assembly refs)
+    PatchModuleContext.cs        <-- dependency-injection context (module, log, settings)
+    PatchModuleResult.cs         <-- per-module outcome
+    PatchRunResult.cs            <-- aggregated run outcome
+    ModuleRegistry.cs            <-- discovery + ordering + per-module error isolation
+    ProcessStart/                <-- example feature module
+      ProcessStartModule.cs
+    Speech/
+      SpeechModule.cs
+    OpenWakeWord/
+      OpenWakeWordModule.cs
+  Cli/                           <-- argument parsing extracted from the entry point
+    CliOptions.cs                <-- pure, testable argument parser
+    CliVerb.cs
+    CliHelpText.cs
+inputs/Program.cs                <-- thin verb dispatcher (run flow lives in RunPatch)
+```
+
+> **Note (future work):** `IPatchModule` is the *primary* extension point, but the engine currently
+> retains OWW-specific orchestration for embedded natives and assembly references. Closing this
+> gap, and extracting a dedicated `PatcherRunner` from `RunPatch`, is tracked as future work.
+
+### Adding a Pure-IL Feature (3 steps, zero engine edits)
+
+1. **Create a folder + module class** implementing `IPatchModule`:
+
+   ```csharp
+   namespace CrossPlatformPatcher.Core.Modules.MyFeature;
+
+   public sealed class MyFeatureModule : IPatchModule
+   {
+       public string Name => "MyFeature";
+       public int Order => 40;                      // deterministic execution order
+
+       public PatchModuleResult Apply(PatchModuleContext context)
+       {
+           context.Log($"[{Name}] running.");       // use injected logger, not Console
+           // ... your dnlib logic using context.Module / context.OwwSettings ...
+           return new PatchModuleResult
+           {
+               ModuleName = Name,
+               PatchPointsFound = n,
+               PatchPointsApplied = n,
+           };
+       }
+   }
+   ```
+
+2. **Never catch broadly** — the registry isolates exceptions per module, so a crash
+   in one feature records a failure and the rest keep running.
+
+3. **Optional CLI flags** — add a case in `CliOptions.Parse`; the entry point
+   passes the parsed settings through `PatchModuleContext`.
+
+### Design Principles Applied
+
+| Principle | How it's met |
+|---|---|
+| **Single Responsibility** | Each feature = one module; parsing/help/patching are separate types |
+| **Open/Closed** | Add a pure-IL feature = new file implementing `IPatchModule`; `ModuleRegistry`/`Program` are never edited. New embedded natives / assembly references still need `AssemblyPatcher` edits |
+| **Error isolation** | `ModuleRegistry.RunAll` wraps each module in its own try/catch |
+| **Dependency Injection** | Modules receive `PatchModuleContext` (logger, settings). `OwwSettings`/`MigrationMode` are present for future use, but the lock-duration and Ticks-multiplier in the emitted IL are still hard-coded in `OpenWakeWordCompatibilityPatcher`; `--oww-lock-ms`/`--oww-threshold` currently only affect the runtime `PAIcom.OWW` defaults (wiring through is future work) |
+| **Testability** | `CliOptions.Parse` is pure; `ModuleRegistry` is testable without a real PE |
+
 ## What's Inside
 
 ### Key Components
 
 | File/Folder | Purpose |
 |---|---|
-| `Core/` | Patch injection logic |
-| `Core/ReferenceAssemblyResolver.cs` | Cross-platform .NET FW 4.8 ref resolution |
+| `Core/` | Patch injection logic (engine + modules) |
+| `Core/Modules/` | Plugin modules (see **Plugin Architecture** above) |
+| `Core/Cli/` | Argument parsing and help text |
+| `Core/AssemblyPatcher.cs` | Orchestrates patch application (module run + embedded native / assembly-reference handling) |
 | `Core/VoskResourceEmbedder.cs` | Embeds Vosk libs into the patched exe |
 | `Core/LauncherGenerator.cs` | Creates OS-specific launcher scripts |
-| `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application |
+| `SetupWizardCore/` | Cross-platform .NET shared library (services, models) — own project |
+| `SetupWizardWindows/` | Cross-platform Avalonia UI setup wizard (Windows, Linux, macOS) — own project |
+| `SetupWizardMacApp/` | Native macOS SwiftUI setup wizard application (unchanged) |
 | `Core/SpeechCompatibilityPatcher.cs` | Adds compatibility wrappers/logging for System.Speech paths |
 | `Core/NativeLibraries/` | Vosk native binaries (Win, Linux, macOS) |
 | `Core/ManagedLibraries/` | Vosk & NAudio managed wrappers |
@@ -188,7 +267,7 @@ Three ways to select mode:
 
 2. **Wrapper script:**
    ```bash
-   ./build-patch-and-launch.sh --migration-mode probe
+   ./scripts/build-patch-and-launch.sh --migration-mode probe
    ```
 
 3. **Runtime override (environment variable):**
@@ -343,7 +422,7 @@ Use the checked-in patcher sources to rebuild the project from scratch:
 ```sh
 dotnet build CrossPlatformPatcher.csproj -c Release
 dotnet test CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj -c Release
-./build-patch-and-launch.sh --migration-mode full --no-launch
+./scripts/build-patch-and-launch.sh --migration-mode full --no-launch
 ```
 
 ### Migration Verification Checklist
@@ -524,7 +603,7 @@ CrossPlatformPatcher PAIcom.exe \
 
 ### Runtime Configuration (Environment Variables)
 
-After patching, end users can **override settings at runtime** by setting environment variables. The default settings live in [PAIcom.OWW/OpenWakeWordSettings.cs](PAIcom.OWW/OpenWakeWordSettings.cs) and the CLI surface is in [Program.cs](Program.cs).
+After patching, end users can **override settings at runtime** by setting environment variables. The default settings live in [PAIcom.OWW/OpenWakeWordSettings.cs](PAIcom.OWW/OpenWakeWordSettings.cs) and the CLI surface is in [inputs/Program.cs](inputs/Program.cs).
 
 ```bash
 # Linux/macOS
@@ -544,6 +623,8 @@ set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000
 run.bat
 ```
 
+`run.bat` auto-detects a local `models\` folder for `PAICOM_VOSK_MODEL_PATH`, and when `PAICOM_FILE_COMMAND_INPUT=true` it defaults `PAICOM_FILE_COMMAND_INPUT_PATH` to `input-command.txt` next to the launcher.
+
 **Supported environment variables:**
 - `PAICOM_OWW_THRESHOLD` (float, default 0.7)
 - `PAICOM_OWW_LOCK_MS` (int, default 3000; arm64 profile: 3200)
@@ -556,6 +637,10 @@ run.bat
 - `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.65)
 - `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450; arm64 profile: 350)
 - `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000; arm64 profile: 850)
+- `PAICOM_VOSK_MODEL_PATH` (directory path to a specific extracted Vosk model)
+- `PAICOM_VOSK_MODEL_NAME` (model folder name inside the `models/` search roots)
+- `PAICOM_FILE_COMMAND_INPUT` (`true` to enable file-based command input mode)
+- `PAICOM_FILE_COMMAND_INPUT_PATH` (defaults to `input-command.txt` beside the launcher when file mode is enabled)
 
 ### Embedded Resources
 
@@ -660,7 +745,7 @@ Test voice commands without using your microphone. Write commands to a file and 
 
 ```bash
 # Terminal 1: Launch game with file input enabled
-./build-patch-and-launch.sh --file-command-input
+./scripts/build-patch-and-launch.sh --file-command-input
 
 # Terminal 2 (while game runs): Send commands
 echo "hey paicom open the browser" > PAIcom_Player_Folder/input-command.txt

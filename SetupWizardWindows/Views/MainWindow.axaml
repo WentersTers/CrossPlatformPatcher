@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SetupWizardWindows.ViewModels"
+        xmlns:views="using:SetupWizardWindows.Views"
+        xmlns:converters="using:SetupWizardWindows.Converters"
+        x:Class="SetupWizardWindows.Views.MainWindow"
+        Title="CrossPlatformPatcher SetupWizard"
+        MinWidth="600"
+        MinHeight="500"
+        Width="600"
+        Height="600">
+  <Window.Resources>
+    <converters:ScreenEqualsConverter x:Key="ScreenEqualsConverter" />
+  </Window.Resources>
+
+  <Grid>
+    <!-- Welcome Screen -->
+    <views:WelcomeView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=Welcome}" />
+
+    <!-- Folder Picker Screen -->
+    <views:FolderPickerView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=FolderPicker}" />
+
+    <!-- Model Selection Screen -->
+    <views:ModelSelectionView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=ModelSelection}" />
+
+    <!-- Download Screen -->
+    <views:DownloadPatchView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=Download}" />
+
+    <!-- Dependency Check Screen -->
+    <views:DependencyCheckView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=DependencyCheck}" />
+
+    <!-- .NET Install Screen -->
+    <views:DotNetInstallView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=DotNetInstall}" />
+
+    <!-- Complete Screen -->
+    <views:CompleteView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=Complete}" />
+
+    <!-- Error Screen -->
+    <views:ErrorView IsVisible="{Binding CurrentScreen, Converter={StaticResource ScreenEqualsConverter}, ConverterParameter=Error}" />
+  </Grid>
+</Window>

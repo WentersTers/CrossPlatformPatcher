@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.DependencyCheckView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="*, Auto" Margin="40">
+    <StackPanel VerticalAlignment="Center" Spacing="20">
+      <TextBlock Text="Dependency Check"
+                 FontSize="24"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+      <TextBlock Text="Checking for required dependencies..."
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="400" />
+
+      <StackPanel Spacing="8" Margin="0,10">
+        <Border BorderBrush="{DynamicResource ThemeBorderLowColor}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="10">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="{Binding HasWine, StringFormat='Wine: {0}'}"
+                       VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Log Output Display -->
+      <ScrollViewer MaxHeight="150" Margin="0,5">
+        <ItemsControl ItemsSource="{Binding LogOutput}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}"
+                         FontSize="11"
+                         FontFamily="Consolas"
+                         TextWrapping="Wrap" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </StackPanel>
+
+    <StackPanel Grid.Row="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Spacing="10"
+                Margin="0,10,0,30">
+      <Button Content="Check Dependencies"
+              Command="{Binding CheckDependenciesCommand}"
+              Padding="15,10" />
+      <Button Content="Continue to .NET Install"
+              Command="{Binding GoToDotNetInstallCommand}"
+              Padding="15,10" />
+    </StackPanel>
+  </Grid>
+</UserControl>

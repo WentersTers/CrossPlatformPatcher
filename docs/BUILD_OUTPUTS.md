@@ -414,3 +414,29 @@ rm -rf ~/.wine/
 - [Build System](BUILD_SYSTEM.md) — Build commands and workflows
 - [Installer Guide](INSTALLER_GUIDE.md) — macOS .app code signing and distribution
 - [macOS Setup](SETUP_MAC.md) — User-facing setup guide
+
+## 4. Platform-Specific Build Outputs & Differences
+
+When using the publish-all scripts to generate self-contained binaries, the output format specifically differs by platform by design to support offline deployment and maintain runtime isolation:
+
+### Windows (win-x64)
+- **Executable:** CrossPlatformPatcher-W-x64.exe
+- **Native Libraries:** Bundles onnxruntime.dll alongside the executable.
+- **Notes:** Standard Windows format. The trailing .exe is kept to appease Windows shell execution mechanisms.
+
+### Linux (linux-x64)
+- **Executable:** CrossPlatformPatcher-L-x64 (ELF binary)
+- **Native Libraries:** Bundles libonnxruntime.so.
+- **Notes:** The file lacks an extension by convention. The ELF binary must have execute permissions (+x) applied after transfer.
+
+### macOS Intel (osx-x64)
+- **Executable:** CrossPlatformPatcher-M-x64 (Mach-O binary)
+- **Native Libraries:** Bundles libonnxruntime.dylib.
+- **Notes:** Will run via Rosetta 2 on Apple Silicon but natively on Intel Macs.
+
+### macOS Apple Silicon (osx-arm64)
+- **Executable:** CrossPlatformPatcher-M-Arm (Mach-O ARM64 binary)
+- **Native Libraries:** Bundles libonnxruntime.dylib.
+- **Notes:** Provides native execution speed for Apple Silicon Macs. To avoid confusion, the architecture naming uses -Arm instead of -ARM64 in the file name string for downstream launcher scripts.
+
+*For more details on cross-platform architectural design and decoupling, see [CROSS-PLATFORM-INTEGRATION.md](CROSS-PLATFORM-INTEGRATION.md).*

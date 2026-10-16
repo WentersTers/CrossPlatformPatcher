@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.FolderPickerView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="*, Auto, Auto" Margin="40">
+    <StackPanel VerticalAlignment="Center" Spacing="20">
+      <TextBlock Text="Select PAIcom Folder"
+                 FontSize="24"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+      <TextBlock Text="Please select the folder containing your PAIcom installation.&#x0a;This is typically the directory where PAIcom.exe is located."
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="400" />
+
+      <Border BorderBrush="{DynamicResource ThemeBorderLowColor}"
+              BorderThickness="1"
+              CornerRadius="4"
+              Padding="10"
+              MinHeight="30">
+        <TextBlock Text="{Binding SelectedFolder}"
+                   TextWrapping="Wrap" />
+      </Border>
+      <TextBlock Text="No folder selected"
+                 IsVisible="{Binding SelectedFolder, Converter={x:Null}}"
+                 Foreground="Gray"
+                 HorizontalAlignment="Center" />
+    </StackPanel>
+
+    <Button Grid.Row="1"
+            Content="Browse for PAIcom Folder"
+            Command="{Binding SelectFolderCommand}"
+            HorizontalAlignment="Center"
+            Margin="0,10"
+            Padding="20,10" />
+
+    <StackPanel Grid.Row="2"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Spacing="10"
+                Margin="0,10,0,30">
+      <Button Content="Back"
+              Command="{Binding GoToWelcomeCommand}"
+              Padding="20,10" />
+      <Button Content="Continue"
+              Command="{Binding GoToModelSelectionCommand}"
+              Padding="20,10" />
+    </StackPanel>
+  </Grid>
+</UserControl>

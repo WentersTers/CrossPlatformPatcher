@@ -1,0 +1,55 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SetupWizardWindows.ViewModels"
+             x:Class="SetupWizardWindows.Views.DotNetInstallView">
+  <Design.DataContext>
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <Grid RowDefinitions="Auto, Auto, *, Auto" Margin="40">
+    <StackPanel Spacing="15" Margin="0,20,0,10">
+      <TextBlock Text=".NET Framework Installation"
+                 FontSize="24"
+                 FontWeight="Bold"
+                 TextAlignment="Center" />
+      <TextBlock Text="Installing .NET Framework 4.8 in the Wine prefix. This is required for PAIcom to run correctly."
+                 TextWrapping="Wrap"
+                 TextAlignment="Center"
+                 MaxWidth="400" />
+    </StackPanel>
+
+    <ProgressBar Grid.Row="1"
+                 Value="{Binding Progress}"
+                 Minimum="0"
+                 Maximum="1.0"
+                 Height="20"
+                 Margin="0,10" />
+
+    <ScrollViewer Grid.Row="2" Margin="0,10">
+      <ItemsControl ItemsSource="{Binding LogOutput}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding}"
+                       FontSize="12"
+                       FontFamily="Consolas"
+                       TextWrapping="Wrap"
+                       Margin="0,1" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <StackPanel Grid.Row="3"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                Spacing="10"
+                Margin="0,10,0,30">
+      <Button Content="Install .NET"
+              Command="{Binding InstallDotNetCommand}"
+              Padding="20,10" />
+      <Button Content="Cancel"
+              Command="{Binding CancelCommand}"
+              Padding="20,10" />
+    </StackPanel>
+  </Grid>
+</UserControl>

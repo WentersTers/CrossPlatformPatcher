@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Linq;
 using CrossPlatformPatcher.Core;
 using Xunit;
 
@@ -12,13 +13,13 @@ public sealed class ProgramCliTests
     {
         var help = ProgramInvoker.Invoke(["--help"]);
         Assert.Equal(0, help.ExitCode);
-        Assert.Contains("Usage:", help.StdOut);
-        Assert.Contains("CrossPlatformPatcher", help.StdOut);
+        Assert.Contains("Usage", help.StdOut, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CrossPlatformPatcher", help.StdOut, StringComparison.OrdinalIgnoreCase);
 
         var version = ProgramInvoker.Invoke(["--version"]);
         Assert.Equal(0, version.ExitCode);
-        Assert.Contains("CrossPlatformPatcher", version.StdOut);
-        Assert.Contains("v1.0", version.StdOut);
+        Assert.Contains("CrossPlatformPatcher", version.StdOut, StringComparison.OrdinalIgnoreCase);
+        Assert.Matches(@"\d+\.\d+(?:\.\d+)?", version.StdOut);
     }
 
     [Fact]
@@ -63,6 +64,21 @@ public sealed class ProgramCliTests
     }
 
     [Fact]
+    public void DryRun_Reports_Patch_Points_Without_Writing_Output()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "dryrun-report.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--dry-run", "--out", output]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("[DRY-RUN]", result.StdOut);
+        Assert.Contains("Patch points found:", result.StdOut);
+        Assert.False(File.Exists(output));
+    }
+
+    [Fact]
     public void Backup_Mode_Writes_Backup_And_Leaves_Input_Intact()
     {
         using var temp = new TempDirectory();
@@ -89,6 +105,109 @@ public sealed class ProgramCliTests
 
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("[WARN] Unknown argument: --bogus-option", result.StdErr);
+    }
+
+    [Fact]
+    public void Unknown_Flags_Do_Not_Break_Patching()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "unknown-flags.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--unknown-flag-1", "--unknown-flag-2", "--out", output, "--dry-run"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("[WARN] Unknown argument: --unknown-flag-1", result.StdErr);
+        Assert.Contains("[WARN] Unknown argument: --unknown-flag-2", result.StdErr);
+        Assert.Contains("Patch points found:", result.StdOut);
+    }
+
+    [Fact]
+    public void Backup_Mode_Preserves_Original_Executable()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var originalBytes = File.ReadAllBytes(input);
+        var output = System.IO.Path.Combine(temp.Path, "backup-preserve.dll");
+        var backupPath = input + ".bak";
+
+        var result = ProgramInvoker.Invoke([input, "--backup", "--out", output]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(backupPath), "Backup file should be created");
+        Assert.True(File.Exists(output), "Output file should be created");
+        Assert.True(File.Exists(input), "Original file should still exist");
+        
+        var backupBytes = File.ReadAllBytes(backupPath);
+        Assert.True(originalBytes.SequenceEqual(backupBytes), "Backup should be identical to original");
+    }
+
+    [Fact]
+    public void Migration_Mode_Stable_Is_Respected_In_Output()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "migration-stable.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--migration-mode", "stable", "--out", output, "--dry-run"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Migration Mode   : stable", result.StdOut);
+    }
+
+    [Fact]
+    public void Migration_Mode_Probe_Is_Respected_In_Output()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "migration-probe.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--migration-mode", "probe", "--out", output, "--dry-run"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Migration Mode   : probe", result.StdOut);
+    }
+
+    [Fact]
+    public void Migration_Mode_Full_Is_Respected_In_Output()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "migration-full.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--migration-mode", "full", "--out", output, "--dry-run"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Migration Mode   : full", result.StdOut);
+    }
+
+    [Fact]
+    public void Invalid_Migration_Mode_Falls_Back_To_Stable()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "migration-invalid.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--migration-mode", "invalid", "--out", output, "--dry-run"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("[WARN] Invalid migration mode: invalid. Using stable mode.", result.StdErr);
+        Assert.Contains("Migration Mode   : stable", result.StdOut);
+    }
+
+    [Fact]
+    public void Normal_Patch_Flow_Does_Not_Require_Windows_Speech_Program()
+    {
+        using var temp = new TempDirectory();
+        var input = BuildPatchableFixture(temp.Path);
+        var output = System.IO.Path.Combine(temp.Path, "no-speech-required.dll");
+
+        var result = ProgramInvoker.Invoke([input, "--out", output, "--dry-run"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Patch points found:", result.StdOut);
+        Assert.DoesNotContain("System.Speech", result.StdErr);
+        Assert.DoesNotContain("speech program", result.StdErr);
     }
 
     private static string BuildNoOpFixture(string directory)

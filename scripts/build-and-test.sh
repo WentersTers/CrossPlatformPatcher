@@ -3,9 +3,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_FILE="$SCRIPT_DIR/CrossPlatformPatcher.csproj"
-TEST_PROJECT_FILE="$SCRIPT_DIR/CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_FILE="$REPO_ROOT/CrossPlatformPatcher.csproj"
+TEST_PROJECT_FILE="$REPO_ROOT/CrossPlatformPatcher.Tests/CrossPlatformPatcher.Tests.csproj"
 PARITY_FILTER="FullyQualifiedName~RuntimeHelperParityTests"
+PATCH_WORKFLOW_ARGS=(--migration-mode full --no-launch)
 
 printf '\n==> Runtime helper parity check\n'
 dotnet test "$TEST_PROJECT_FILE" -c Release --filter "$PARITY_FILTER"
@@ -18,8 +20,11 @@ dotnet test "$TEST_PROJECT_FILE" -c Release
 
 if [[ "${RUN_PATCH_WORKFLOW:-0}" == "1" ]]; then
     if [[ -x "$SCRIPT_DIR/build-patch-and-launch.sh" ]]; then
-        printf '\n==> Running patch workflow (--migration-mode full --no-launch)\n'
-        "$SCRIPT_DIR/build-patch-and-launch.sh" --migration-mode full --no-launch
+        printf '\n==> Running patch workflow (%s)\n' "${PATCH_WORKFLOW_ARGS[*]}"
+        "$SCRIPT_DIR/build-patch-and-launch.sh" "${PATCH_WORKFLOW_ARGS[@]}"
+    elif [[ -f "$SCRIPT_DIR/build-patch-and-launch.sh" ]]; then
+        printf '\n==> Running patch workflow via bash (%s)\n' "${PATCH_WORKFLOW_ARGS[*]}"
+        bash "$SCRIPT_DIR/build-patch-and-launch.sh" "${PATCH_WORKFLOW_ARGS[@]}"
     else
         printf '\n[build-and-test] build-patch-and-launch.sh not found; skipping patch workflow.\n'
     fi

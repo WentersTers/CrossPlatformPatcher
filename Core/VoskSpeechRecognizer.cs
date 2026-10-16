@@ -37,13 +37,8 @@ public class VoskSpeechRecognizer : IDisposable
         {
             LogEvent("[vosk-speech] Initializing Vosk speech recognizer...");
 
-            if (!Environment.Is64BitProcess)
-            {
-                LogEvent("[vosk-speech] Vosk disabled: running in 32-bit process; native Vosk initialization is unstable in this mode.");
-                return false;
-            }
-
-            var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "stable";
+            // Default to the Vosk-enabled path unless the launcher explicitly overrides it.
+            var migrationMode = Environment.GetEnvironmentVariable("PAICOM_MIGRATION_MODE") ?? "full";
             var verifiedRuntime = Environment.GetEnvironmentVariable("PAICOM_RUNTIME_VERIFIED_64BIT") ?? "0";
             
             // In Stable mode, keep Vosk disabled for maximum safety
@@ -69,6 +64,8 @@ public class VoskSpeechRecognizer : IDisposable
             {
                 LogEvent("[vosk-speech] Vosk enabled: full 64-bit mode");
             }
+
+            LogEvent("[vosk-speech] backend.selected=vosk+onnx");
 
             // Try to load Vosk.dll from embedded resources
             if (!LoadVoskAssembly())
@@ -162,6 +159,7 @@ public class VoskSpeechRecognizer : IDisposable
                 }
 
                 LogEvent("[vosk-speech] Vosk recognizer initialized successfully");
+                LogEvent("[vosk-speech] backend.active=vosk+onnx");
                 return true;
             }
             catch (Exception ex)
@@ -372,11 +370,28 @@ public class VoskSpeechRecognizer : IDisposable
 
     private string? GetOrDownloadModel()
     {
-        var explicitPath = Environment.GetEnvironmentVariable("PAICOM_VOSK_MODEL_PATH");
+        var explicitPathRaw = Environment.GetEnvironmentVariable("PAICOM_VOSK_MODEL_PATH");
+        var explicitPath = NormalizeCandidatePath(explicitPathRaw);
+        if (!string.IsNullOrWhiteSpace(explicitPathRaw))
+        {
+            LogEvent($"[vosk-speech] PAICOM_VOSK_MODEL_PATH(raw)={explicitPathRaw}");
+            LogEvent($"[vosk-speech] PAICOM_VOSK_MODEL_PATH(norm)={explicitPath}");
+        }
+
         if (!string.IsNullOrWhiteSpace(explicitPath) && Directory.Exists(explicitPath) && LooksLikeVoskModelDirectory(explicitPath))
         {
             LogEvent($"[vosk-speech] Model selected via PAICOM_VOSK_MODEL_PATH: {explicitPath}");
             return explicitPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(explicitPath) && Directory.Exists(explicitPath))
+        {
+            var resolvedExplicitPath = FindFirstVoskModelDirectory(explicitPath);
+            if (!string.IsNullOrWhiteSpace(resolvedExplicitPath))
+            {
+                LogEvent($"[vosk-speech] Model resolved under PAICOM_VOSK_MODEL_PATH: {resolvedExplicitPath}");
+                return resolvedExplicitPath;
+            }
         }
 
         var configuredName = Environment.GetEnvironmentVariable("PAICOM_VOSK_MODEL_NAME");
@@ -393,21 +408,26 @@ public class VoskSpeechRecognizer : IDisposable
             }
         }
 
-        foreach (var root in GetModelSearchRoots())
+        var searchRoots = GetModelSearchRoots();
+        LogEvent($"[vosk-speech] model.search.base_dir={AppDomain.CurrentDomain.BaseDirectory}");
+        LogEvent($"[vosk-speech] model.search.cwd={Directory.GetCurrentDirectory()}");
+        foreach (var root in searchRoots)
         {
-            if (!Directory.Exists(root))
+            var normalizedRoot = NormalizeCandidatePath(root);
+            var exists = !string.IsNullOrWhiteSpace(normalizedRoot) && Directory.Exists(normalizedRoot);
+            LogEvent($"[vosk-speech] model.search.root={normalizedRoot};exists={exists}");
+
+            if (!exists)
                 continue;
 
-            var modelDirs = Directory.GetDirectories(root);
-            Array.Sort(modelDirs, StringComparer.OrdinalIgnoreCase);
-            foreach (var modelDir in modelDirs)
+            var resolvedRootModel = FindFirstVoskModelDirectory(normalizedRoot!);
+            if (!string.IsNullOrWhiteSpace(resolvedRootModel))
             {
-                if (!LooksLikeVoskModelDirectory(modelDir))
-                    continue;
-
-                LogEvent($"[vosk-speech] Auto-selected model: {modelDir}");
-                return modelDir;
+                LogEvent($"[vosk-speech] Auto-selected model: {resolvedRootModel}");
+                return resolvedRootModel;
             }
+
+            LogEvent($"[vosk-speech] model.search.no_match_under={normalizedRoot}");
         }
 
         LogEvent("[vosk-speech] No usable model found.");
@@ -422,6 +442,42 @@ public class VoskSpeechRecognizer : IDisposable
         var cwdRoot = Path.Combine(Directory.GetCurrentDirectory(), "models");
 
         return new[] { baseRoot, cwdRoot, homeRoot };
+    }
+
+    private static string? FindFirstVoskModelDirectory(string root)
+    {
+        if (!Directory.Exists(root))
+            return null;
+
+        if (LooksLikeVoskModelDirectory(root))
+            return root;
+
+        var directories = Directory.GetDirectories(root, "*", SearchOption.AllDirectories);
+        Array.Sort(directories, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var directory in directories)
+        {
+            if (LooksLikeVoskModelDirectory(directory))
+                return directory;
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeCandidatePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        var trimmed = path.Trim().Trim('"');
+        try
+        {
+            return Path.GetFullPath(trimmed);
+        }
+        catch
+        {
+            return trimmed;
+        }
     }
 
     private static bool LooksLikeVoskModelDirectory(string path)
