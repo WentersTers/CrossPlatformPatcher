@@ -83,6 +83,29 @@ public static class PatcherRunner
             return new PatcherRunOutcome(0, null, sha256, 0, 0, warnings, errors, SkippedDueToDryRun: false);
         }
 
+        // ── Version gate (Phase 1 registry) ──────────────────────────────
+        // Nothing is written before this passes: unknown builds and wrong
+        // files are refused with a calm message and an untouched input.
+        var gate = VersionGate.Classify(
+            rawBytes,
+            sha256,
+            allowUnknownForTesting: string.Equals(
+                Environment.GetEnvironmentVariable("PAICOM_PATCHER_ALLOW_UNKNOWN"),
+                "1",
+                StringComparison.Ordinal));
+        if (!gate.CanPatch)
+        {
+            foreach (var line in gate.Message)
+                logger(line);
+            return new PatcherRunOutcome(
+                gate.ExitCode, null, sha256, 0, 0, warnings, errors, SkippedDueToDryRun: false);
+        }
+
+        var versionEntry = gate.Entry!;
+        logger($"Checking version... PAIcom {versionEntry.ShortHash} ({versionEntry.DisplayName}) is supported.");
+        logger($"Strategy: {VersionRegistry.DescribeFeatures(versionEntry.Features)}");
+        logger("");
+
         // ── Optional backup ──────────────────────────────────────────────
         if (options.Backup && !options.DryRun)
         {
@@ -96,7 +119,11 @@ public static class PatcherRunner
         {
             PrintOwwSettings(options.OwwSettings, options.MigrationMode, logger);
 
-            var patcher = new AssemblyPatcher(options.Verbose, options.OwwSettings, options.MigrationMode);
+            var features = options.FeatureOverride ?? versionEntry.Features;
+            if (options.FeatureOverride is not null)
+                logger($"[WARN] Feature override active: {VersionRegistry.DescribeFeatures(features)} (registry says {VersionRegistry.DescribeFeatures(versionEntry.Features)}).");
+
+            var patcher = new AssemblyPatcher(options.Verbose, options.OwwSettings, options.MigrationMode, features, versionEntry.Options);
             var result = patcher.Patch(inputPath, outputPath, options.DryRun);
 
             logger("");
@@ -123,6 +150,62 @@ public static class PatcherRunner
 
             logger("");
             logger($"[OK] Patched assembly written to: {outputPath}");
+
+            // ── Output hash, verification, manifest ────────────────────
+            string outputSha;
+            using (var outputStream = File.OpenRead(outputPath))
+                outputSha = Convert.ToHexString(SHA256.HashData(outputStream)).ToLowerInvariant();
+            logger($"Output SHA-256: {outputSha}");
+
+            var verification = new List<string>();
+            // Verification follows what was actually applied, not what the
+            // registry would have applied, so feature overrides are testable.
+            var verifyEntry = versionEntry with
+            {
+                Features = features,
+                RequiredOutputResources = features.HasFlag(PatchFeatures.MaterializationFix)
+                    ? versionEntry.RequiredOutputResources
+                    : Array.Empty<string>(),
+                ExpectedOutputSha256 = features == versionEntry.Features
+                    ? versionEntry.ExpectedOutputSha256
+                    : null,
+            };
+            try
+            {
+                using var outputModule = dnlib.DotNet.ModuleDefMD.Load(outputPath);
+                var failures = PatchVerifier.Verify(outputModule, verifyEntry, outputSha);
+                if (failures.Count > 0)
+                {
+                    foreach (var failure in failures)
+                        errors.Add($"[VERIFY] {failure}");
+                    logger("");
+                    logger("[ERROR] Output verification failed. The patched file was left in place for inspection.");
+                    return new PatcherRunOutcome(
+                        2, outputPath, sha256, result.PatchPointsFound, result.PatchPointsApplied,
+                        warnings, errors, SkippedDueToDryRun: false);
+                }
+
+                verification.Add("managed output parsed");
+                foreach (var resource in verifyEntry.RequiredOutputResources)
+                    verification.Add($"resource present: {resource}");
+                verification.Add("resource pairing intact");
+            }
+            catch (Exception verifyEx)
+            {
+                errors.Add($"[VERIFY] {verifyEx.GetType().Name}: {verifyEx.Message}");
+                return new PatcherRunOutcome(
+                    2, outputPath, sha256, result.PatchPointsFound, result.PatchPointsApplied,
+                    warnings, errors, SkippedDueToDryRun: false);
+            }
+
+            logger("[OK] Verification passed.");
+            PatchManifestWriter.Write(
+                outputPath,
+                PatchManifestWriter.ForSuccess(sha256, outputSha, verifyEntry, verification),
+                logger);
+            logger($"Patching PAIcom version {versionEntry.ShortHash}... done " +
+                   $"(strategy: {VersionRegistry.DescribeFeatures(features)}, " +
+                   $"patcher {PatcherInfo.Version}).");
 
             // ── Tripwire baseline (non-fatal) ──────────────────────────
             // Hash of the freshly patched bytes; the injected runtime half

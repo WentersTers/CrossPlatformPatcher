@@ -17,4 +17,7 @@ public enum CliVerb
 
     /// <summary>First arg is <c>--test-commands</c> (delegated to TestCommandInjection).</summary>
     TestCommands,
+
+    /// <summary><c>--versions</c>: print the embedded version registry.</summary>
+    ListVersions,
 }

@@ -21,6 +21,10 @@ public sealed class CliOptions
     public bool Verbose { get; init; }
     public bool Analyze { get; init; }
 
+    /// <summary>Diagnostic override of the registry strategy. When set, the
+    /// listed features are applied instead of the entry's strategy.</summary>
+    public PatchFeatures? FeatureOverride { get; init; }
+
     /// <summary>True when <c>--prepare-onnx-natives</c> appeared as a later flag.</summary>
     public bool PrepareOnnxNatives { get; init; }
 
@@ -48,6 +52,9 @@ public sealed class CliOptions
         if (args[0] == "--prepare-onnx-natives")
             return new CliOptions { Verb = CliVerb.PrepareOnnxNatives };
 
+        if (args[0] == "--versions")
+            return new CliOptions { Verb = CliVerb.ListVersions };
+
         if (args.Length >= 2 && args[0] == "--test-commands")
             return new CliOptions { Verb = CliVerb.TestCommands, TestCommandsArgs = args.Skip(1).ToArray() };
 
@@ -61,6 +68,7 @@ public sealed class CliOptions
         var verbose = false;
         var analyze = false;
         var prepareOnnx = false;
+        PatchFeatures? featureOverride = null;
         var migrationMode = MigrationMode.Full;
 
         var owwBuilder = OpenWakeWordSettings.CreateBuilder();
@@ -75,6 +83,16 @@ public sealed class CliOptions
                 case "--verbose": verbose = true; break;
                 case "--analyze": analyze = true; break;
                 case "--prepare-onnx-natives": prepareOnnx = true; break;
+                case "--features":
+                    if (i + 1 < args.Length && TryParseFeatures(args[++i], out var features))
+                    {
+                        featureOverride = features;
+                    }
+                    else
+                    {
+                        warnings.Add("[WARN] Invalid --features value; using the registry strategy.");
+                    }
+                    break;
 
                 case "--migration-mode":
                     if (i + 1 < args.Length && MigrationModeParser.TryParse(args[++i], out var parsedMode))
@@ -149,9 +167,40 @@ public sealed class CliOptions
             Verbose = verbose,
             Analyze = analyze,
             PrepareOnnxNatives = prepareOnnx,
+            FeatureOverride = featureOverride,
             MigrationMode = migrationMode,
             OwwSettings = owwBuilder.Build(),
             Warnings = warnings,
         };
+    }
+
+    /// <summary>Parse a comma-separated strategy list: materialization,
+    /// watchdog, voice, none, full.</summary>
+    public static bool TryParseFeatures(string? value, out PatchFeatures features)
+    {
+        features = PatchFeatures.None;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        var tokens = value.Split(new[] { ',', '+', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var token in tokens)
+        {
+            switch (token.Trim().ToLowerInvariant())
+            {
+                case "none": features = PatchFeatures.None; break;
+                case "full": features = PatchFeatures.Full; break;
+                case "materialization":
+                case "materializationfix": features |= PatchFeatures.MaterializationFix; break;
+                case "watchdog": features |= PatchFeatures.WebClientWatchdog; break;
+                case "voice":
+                case "voiceengine": features |= PatchFeatures.VoiceEngine; break;
+                case "speech":
+                case "speechcompat": features |= PatchFeatures.SpeechCompat; break;
+                case "oww":
+                case "openwakeword": features |= PatchFeatures.OpenWakeWord; break;
+                default: return false;
+            }
+        }
+
+        return true;
     }
 }

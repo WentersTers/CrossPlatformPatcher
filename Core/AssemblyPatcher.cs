@@ -16,12 +16,21 @@ public class AssemblyPatcher
     private readonly bool _verbose;
     private readonly OpenWakeWordSettings _owwSettings;
     private readonly MigrationMode _migrationMode;
+    private readonly PatchFeatures _features;
+    private readonly IReadOnlyDictionary<string, string>? _strategyOptions;
 
-    public AssemblyPatcher(bool verbose = false, OpenWakeWordSettings? owwSettings = null, MigrationMode migrationMode = MigrationMode.Stable)
+    public AssemblyPatcher(
+        bool verbose = false,
+        OpenWakeWordSettings? owwSettings = null,
+        MigrationMode migrationMode = MigrationMode.Stable,
+        PatchFeatures features = PatchFeatures.Full,
+        IReadOnlyDictionary<string, string>? strategyOptions = null)
     {
         _verbose = verbose;
         _owwSettings = owwSettings ?? OpenWakeWordSettings.CreateDefault();
         _migrationMode = migrationMode;
+        _features = features;
+        _strategyOptions = strategyOptions;
     }
 
     /// <summary>Patch the assembly at <paramref name="inputPath"/>.</summary>
@@ -62,16 +71,63 @@ public class AssemblyPatcher
         Log("Embedding Vosk, ONNX, and OpenWakeWord resources …");
         VoskResourceEmbedder.EmbedIntoModule(module, _verbose);
 
+        // ── Materialization resource ADDs (in-place fix, ISS-046) ─────────
+        // Adds the two 7nbx-family entries the probed-name reader and the
+        // metadata type's lookup require (memo-gate fix; see
+        // MaterializationResourceFixer). Scoped to modules carrying the
+        // linked 7nbx entry; idempotent-guarded (refuses on drift).
+        Log("Applying materialization resource fix …");
+        try
+        {
+            int added = _features.HasFlag(PatchFeatures.MaterializationFix)
+                ? MaterializationResourceFixer.EnsureMaterializationResources(module, _verbose)
+                : 0;
+            if (!_features.HasFlag(PatchFeatures.MaterializationFix))
+                Log("Materialization fix: not in this version's strategy - skipped.");
+            else if (added > 0)
+                Log($"Materialization fix: {added} resource(s) added.");
+            else
+                Log("Materialization fix: out of scope (no 7nbx linked entry) — skipped.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            Log($"Materialization fix REFUSED: {ex.Message}");
+            result.Errors.Add(ex.Message);
+        }
+
         // ── Run patch modules ──────────────────────────────────────────────
         // Modules are discovered dynamically, so adding a new feature never
         // requires editing this engine. Failures are isolated per-module.
+        // The version strategy decides whether the voice engine runs.
+        var discoveredModules = ModuleRegistry.Discover();
+        var modulesForStrategy = discoveredModules
+            .Where(m =>
+                (m is not CrossPlatformPatcher.Core.Modules.Speech.SpeechModule ||
+                 _features.HasFlag(PatchFeatures.SpeechCompat)) &&
+                (m is not CrossPlatformPatcher.Core.Modules.OpenWakeWord.OpenWakeWordModule ||
+                 _features.HasFlag(PatchFeatures.OpenWakeWord)))
+            .ToArray();
+        if (!_features.HasFlag(PatchFeatures.SpeechCompat))
+            Log("Speech compatibility: not in this version's strategy - skipped.");
+        if (!_features.HasFlag(PatchFeatures.OpenWakeWord))
+            Log("OpenWakeWord: not in this version's strategy - skipped.");
+
         var moduleRun = ModuleRegistry.RunAll(
+            modulesForStrategy,
             new PatchModuleContext
             {
                 Module = module,
                 Log = Log,
                 OwwSettings = _owwSettings,
                 MigrationMode = _migrationMode,
+                SkipModuleLevelHooks =
+                    (_strategyOptions is not null &&
+                     _strategyOptions.TryGetValue("oww.skipModuleHooks", out var skipHooks) &&
+                     string.Equals(skipHooks, "true", StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(
+                        Environment.GetEnvironmentVariable("PAICOM_OWW_SKIP_MODULE_HOOKS"),
+                        "1",
+                        StringComparison.Ordinal),
             });
 
         result.PatchPointsFound = moduleRun.TotalPatchPointsFound;

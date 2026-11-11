@@ -53,10 +53,23 @@ class Program
         {
             CliVerb.PrepareOnnxNatives => RunPrepareOnnx(),
             CliVerb.TestCommands => RunTestCommands(options),
+            CliVerb.ListVersions => PrintVersions(),
             CliVerb.Help => PrintHelp(),
             CliVerb.Version => PrintVersion(),
             _ => RunPatch(options),
         };
+    }
+
+    private static int PrintVersions()
+    {
+        Console.WriteLine($"Version registry {VersionRegistry.RegistryVersion} (embedded, offline)");
+        Console.WriteLine();
+        Console.WriteLine("Known versions:");
+        Console.WriteLine(VersionRegistry.DescribeAll());
+        Console.WriteLine();
+        Console.WriteLine("Supported versions:");
+        Console.WriteLine(VersionRegistry.DescribeSupported());
+        return 0;
     }
 
     private static int RunPrepareOnnx()

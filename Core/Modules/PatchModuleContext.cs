@@ -23,4 +23,9 @@ public sealed class PatchModuleContext
 
     /// <summary>Injected launcher migration mode.</summary>
     public MigrationMode MigrationMode { get; init; } = MigrationMode.Stable;
+
+    /// <summary>Version-specific strategy option: skip OpenWakeWord hook sites
+    /// that live on module-level helper types (they can run during the module
+    /// constructor, where re-entering runtime init throws).</summary>
+    public bool SkipModuleLevelHooks { get; init; }
 }

@@ -27,7 +27,8 @@ public sealed class OpenWakeWordModule : PatchModuleBase
         var patches = OpenWakeWordCompatibilityPatcher.Patch(
             context.Module!,
             context.Log,
-            context.OwwSettings);
+            context.OwwSettings,
+            skipModuleLevelHooks: context.SkipModuleLevelHooks);
 
         return new PatchModuleResult
         {

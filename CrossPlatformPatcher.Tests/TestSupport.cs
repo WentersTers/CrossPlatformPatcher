@@ -6,6 +6,20 @@ using Xunit;
 
 namespace CrossPlatformPatcher.Tests;
 
+/// <summary>
+/// Test-process environment. The version gate is correct for production but
+/// would refuse the synthetic fixtures the patch tests build; the override is
+/// enabled here only.
+/// </summary>
+internal static class TestEnvironment
+{
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void Initialize()
+    {
+        Environment.SetEnvironmentVariable("PAICOM_PATCHER_ALLOW_UNKNOWN", "1");
+    }
+}
+
 [CollectionDefinition(CollectionName, DisableParallelization = true)]
 public sealed class SequentialTestCollection
 {

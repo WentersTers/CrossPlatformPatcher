@@ -16,6 +16,13 @@ public static class OpenWakeWordCompatibilityPatcher
 {
     private const string HelperTypeName = "CrossPlatformPatcherOWW";
 
+    private static bool IsModuleLevelType(TypeDef? type)
+    {
+        if (type is null) return true;
+        var name = type.FullName;
+        return name == "<Module>" || name.StartsWith("<Module>/", StringComparison.Ordinal);
+    }
+
     // Classified structurally below, but that needs ResolveTypeDef() to load the
     // declaring assembly from the host OS. System.Speech / System.Windows.Forms do
     // not exist in the .NET Linux shared framework, so on Linux the structural
@@ -50,7 +57,8 @@ public static class OpenWakeWordCompatibilityPatcher
         Action<string>? log = null,
         OpenWakeWordSettings? settings = null,
         long ticksPerMillisecond = 10000L,
-        int minimumExpectedInjectionPoints = 10)
+        int minimumExpectedInjectionPoints = 10,
+        bool skipModuleLevelHooks = false)
     {
         // Fallback preserves legacy behaviour when no settings are injected: the
         // hard-coded 3000 ms lock duration. OpenWakeWordSettings carries LockDurationMs
@@ -61,6 +69,14 @@ public static class OpenWakeWordCompatibilityPatcher
         var patched = 0;
         var helper = EnsureHelperMembers(module, lockDurationMs, ticksPerMillisecond);
 
+        // Diagnostic throttle: stop after N hooks to bisect a version-specific
+        // failure without changing the strategy. Unset in normal runs.
+        var hookLimit = int.TryParse(
+            Environment.GetEnvironmentVariable("PAICOM_OWW_HOOK_LIMIT"), out var limitValue)
+            ? Math.Max(0, limitValue)
+            : int.MaxValue;
+        if (hookLimit != int.MaxValue)
+            log?.Invoke($"[oww] Hook limit active: {hookLimit}");
         var methods = module.GetTypes()
             .SelectMany(t => t.Methods)
             .Where(m => m.HasBody)
@@ -68,7 +84,17 @@ public static class OpenWakeWordCompatibilityPatcher
 
         foreach (var method in methods)
         {
+            if (patched >= hookLimit)
+                break;
+
             if (method.DeclaringType == helper.HelperType)
+                continue;
+
+            // Module-level helpers can run during the module constructor. Some
+            // game builds call them there, and hooking them re-enters runtime
+            // initialization (TypeInitializationException). Version strategies
+            // can opt out of these sites.
+            if (skipModuleLevelHooks && IsModuleLevelType(method.DeclaringType))
                 continue;
 
             if (!IsAudioRelatedMethod(method))

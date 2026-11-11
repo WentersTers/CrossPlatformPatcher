@@ -119,6 +119,9 @@
     <Compile Remove=".tmp-deps\**\*.cs" />
     <EmbeddedResource Remove=".tmp-deps\**\*" />
     <None Remove=".tmp-deps\**\*" />
+    <Compile Remove="tools\**\*.cs" />
+    <EmbeddedResource Remove="tools\**\*" />
+    <None Remove="tools\**\*" />
     <Compile Remove="PAIcom.OWW\**\*.cs" />
     <Compile Include="PAIcom.OWW\AudioLockManager.cs" />
     <Compile Include="PAIcom.OWW\OpenWakeWordMicrophoneCapture.cs" />
