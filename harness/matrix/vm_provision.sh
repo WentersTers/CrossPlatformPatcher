@@ -535,8 +535,17 @@ case "$RUNTIME_ID" in
     ;;
   *)
     log "-- creating project-local prefix and installing wine-mono into it"
-    gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64; \
-      wineboot -u >/dev/null 2>&1; wineserver -w" || die "prefix init failed"
+    # The display must be up when the prefix is created, on every runtime, not
+    # just GE: a headless `wineboot -u` bakes screen metrics that collapse the
+    # app's first forms to slivers for the life of the prefix (learned on the
+    # GE path 2026-11-07, reproduced on L01 2026-11-10: the yes wall came up
+    # ~300 px wide and the walk could not reach the menu).
+    gssh "$GUEST_IP" "pgrep -x Xvfb >/dev/null 2>&1 || (nohup Xvfb $DISPLAY_NUM -screen 0 ${SCREEN_W}x${SCREEN_H}x24 -nolisten tcp >/tmp/xvfb-prewarm.log 2>&1 & sleep 4); \
+      pgrep -x openbox >/dev/null 2>&1 || (DISPLAY=$DISPLAY_NUM setsid nohup openbox >/tmp/openbox-prewarm.log 2>&1 < /dev/null & sleep 2); \
+      DISPLAY=$DISPLAY_NUM xdpyinfo >/dev/null 2>&1 || { echo 'pre-warm display not up'; exit 1; }" \
+      || die "prefix pre-warm display failed (display $DISPLAY_NUM)"
+    gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64 DISPLAY=$DISPLAY_NUM; \
+      WINEDLLOVERRIDES='mscoree,mshtml=' wineboot -u >/dev/null 2>&1; wineserver -w" || die "prefix init failed"
     if [ -n "$GUEST_MSI_PATH" ] && [ "$MONO_MSI_ASSERT" = "PASS" ]; then
       gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX'; \
         wine msiexec /i '$GUEST_MSI_PATH' /qn >/tmp/mono-install.log 2>&1; \
