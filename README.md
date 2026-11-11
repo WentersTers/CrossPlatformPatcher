@@ -2,12 +2,65 @@
 
 This is an **isolated, standalone build** of the cross-platform PAIcom patch injector. It contains all features for replacing the Windows-only `System.Speech` speech recognizer with **Vosk** (offline, cross-platform speech-to-text).
 
-The patcher is implemented to run on multiple platforms, but it has currently been fully tested and verified on macOS (Intel & Apple Silicon) only. Linux and Windows support is planned and in progress and will be re-enabled once the macOS workflow is finalized.
+The patcher runs on Windows, Linux and macOS. The patched game is certified on
+the platforms listed under [Certified platforms](#certified-platforms);
+unsupported game builds are refused rather than patched.
 
 > **macOS users:** This tool is distributed without an Apple Developer ID signature.
 > macOS may show a security or "unidentified developer" warning on first run — this is
 > expected. See [macOS: Gatekeeper / "unidentified developer" warning](#macos-gatekeeper--unidentified-developer-warning)
 > in the Troubleshooting section for exact resolution steps.
+
+## Contents
+
+- [Certified platforms](#certified-platforms)
+- [Quick Start](#quick-start)
+- [Core Workflows](#core-workflows)
+- [Use the Patcher](#use-the-patcher)
+- [Voice runtime files](#voice-runtime-files-required-for-microphone-commands)
+- [Version support and refusals](#version-support-and-refusals)
+- [Plugin Architecture](#plugin-architecture)
+- [What's Inside](#whats-inside)
+- [Features](#features)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [OpenWakeWord Integration](#openwakeword-integration-wake-word-detection)
+- [Development Notes](#development-notes)
+- [Differences from Original PAIcomPatcher](#differences-from-original-paicompatcher)
+
+## Certified platforms
+
+The patch is certified end to end on these platforms. **Full** means the whole
+battery ran: menu with Start, Start opens Commands, pet, wake plus command
+dispatch, negatives, and URL handoff. **Menu + pet** means the walk, Start and
+pet were verified but the voice battery was not run there.
+
+| game build | OS | runtime | certification |
+|---|---|---|---|
+| `61942e6c` | Ubuntu 24.04 | Wine 11 | Menu + pet † |
+| `61942e6c` | Ubuntu 24.04 | GE-Proton 11-7 | Full |
+| `61942e6c` | Ubuntu 24.04 | Steam Proton Experimental | Full |
+| `61942e6c` | Fedora 41 | GE-Proton 11-7 | Full |
+| `61942e6c` | Fedora 43 | distro Wine 11.0 | Full |
+| `61942e6c` | Fedora 44 | distro Wine 11.0 | Menu + pet |
+| `61942e6c` | Arch | GE-Proton 11-7 | Full |
+| `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
+
+† Voice engine initializes (markers verified); full voice battery not run on
+this runtime.
+
+- Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
+  supported. `CrossPlatformPatcher --versions` prints the machine-readable
+  list, including the certified OS strings.
+- GE-Proton 11-7 needs glibc **2.38**. Ubuntu 22.04 (2.35) cannot use that
+  runtime — use distro Wine there or a newer distribution. Details in
+  [Troubleshooting](#linux-ge-proton-11-7-needs-glibc-238).
+- Ubuntu 22.04 and Debian 12 have menu-and-pet walk records from the older
+  build-5 campaign (notes under `evidence/REV-045/legacy-petwalk/`). They are
+  not certified for the current build and are not in the table above.
+- SteamOS / Steam Deck is **not certified**; there is no repository evidence.
+  If community reports are mentioned, label them "reported working
+  (community)".
 
 ## Quick Start
 
@@ -85,21 +138,108 @@ For complete build documentation, see [docs/BUILD_SYSTEM.md](docs/BUILD_SYSTEM.m
 
 ### Use the Patcher
 
-1. Get your own copy of `PAIcom.exe` (purchased from Steam)
-2. Run the patcher:
+1. Get your own copy of the game (purchased from Steam). The real game
+   executable is `uninstall.exe`; patch that file.
+2. Run the patcher on the real executable:
    ```
-   CrossPlatformPatcher PAIcom.exe --out PAIcom_patched.exe
+   CrossPlatformPatcher uninstall.exe --out uninstall.exe.patched.exe
    ```
 3. The patcher generates:
-   - `PAIcom_patched.exe` — the patched game
+   - `uninstall.exe.patched.exe` — the patched game
    - `run.sh` / `run.bat` / `launch.command` — OS-specific launchers
-  - `setup-wizard.sh` / `setup.command` — setup entry points
+   - `setup-wizard.sh` / `setup.command` — setup entry points
    - `SETUP_LINUX.md` / `SETUP_MAC.md` — setup instructions
 
-4. To run the patched game:
-   - **Windows:** Double-click `PAIcom_patched.exe` or `run.bat`
-  - **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
-  - **macOS:** Run `sh setup-wizard.sh` once, then `launch.command`
+4. To run the patched game, pick the path that matches your setup: **Steam**, or **non-Steam** with the generated launchers.
+
+#### Steam (recommended for the Steam copy)
+
+Steam builds the Wine prefix, sets the environment and picks the binary, so the whole install is a rename plus one launch option.
+
+1. Patch `uninstall.exe` with the patcher; it writes `uninstall.exe.patched.exe`.
+2. Rename `uninstall.exe.patched.exe` back to `uninstall.exe` and put it in the
+   game folder, replacing the original. This is safe: the patcher keeps the
+   original file intact and only adds its fixes.
+3. Copy the **voice runtime files** (and the `models` folder) from the patcher
+   output into that same game folder — see
+   [Voice runtime files](#voice-runtime-files-required-for-microphone-commands).
+   A clean Steam folder does not carry them, and the exe alone will fail when
+   the audio hook loads.
+4. In Steam, open PAIcom's **Properties**, then **Launch Options**, and set:
+   ```
+   WINEDLLOVERRIDES="mscoree=b" %command%
+   ```
+5. Under **Properties**, then **Compatibility**, force **Proton Experimental**
+   or **Proton 8.x**. Proton 9 has been seen to open this menu with no Start
+   button; if that happens, switch versions.
+
+Then launch PAIcom from Steam as usual. If Steam verifies or updates the game
+files later it may restore the original `uninstall.exe` and remove added files;
+reapply steps 1 to 3 if that happens.
+
+#### Non-Steam (run.sh / Wine)
+
+Use the generated launchers when you are not launching through Steam:
+
+- **Windows:** Run `uninstall.exe.patched.exe` (or `run.bat`)
+- **Linux:** Run `sh setup-wizard.sh` once, then `sh run.sh`
+- **macOS:** Run `sh setup-wizard.sh` once, then `launch.command`
+
+The generated launchers set the OWW environment themselves and pick Wine or
+Mono, so the Steam launch option is not needed on this path.
+
+> **Ignore `[LAUNCH HERE].exe` — it is a decoy that ships with the game itself,
+> not the program.** The real game is `uninstall.exe`; run it (or the patched
+> `uninstall.exe.patched.exe`) with `run.sh` on Linux, directly on Windows, or
+> with `launch.command` on macOS.
+
+### Voice runtime files (required for microphone commands)
+
+Patching rewrites the executable, but the voice pipeline also needs support
+files in the game folder. The patcher output folder contains them; keep them
+together when you copy the patched game, and **do not copy only the exe** into
+a clean install folder.
+
+Required beside the game executable:
+
+- `PAIcom.OWW.dll`
+- `Microsoft.ML.OnnxRuntime.dll` and `onnxruntime.dll`
+- `Vosk.dll` and `libvosk.dll`
+- `NAudio.Core.dll` and `NAudio.WinMM.dll`
+- `System.Buffers.dll`, `System.Memory.dll`, `System.Numerics.Vectors.dll`,
+  `System.Runtime.CompilerServices.Unsafe.dll`
+- `libgcc_s_seh-1.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll`
+
+Also copy the `models` folder (the Vosk English model, about 68 MB) from the
+patcher output. If it is missing, the app tries a first-run download and
+speech dispatch stays empty until that finishes.
+
+Symptoms when files are missing:
+
+- an unhandled dialog "Could not load file or assembly
+  'Microsoft.ML.OnnxRuntime'" over the menu, and no voice — copy the runtime
+  files above;
+- wake detection works but no transcript or command dispatch — the model is
+  missing or still downloading; copy `models` and retry.
+
+Steam note: if Steam verifies or updates the game after deployment, it can
+restore the original `uninstall.exe` and remove added files. Re-copy the
+patched exe, the runtime files and `models` afterwards.
+
+### Version support and refusals
+
+The patcher hashes the game executable before touching it and checks the hash
+against a built-in registry. Supported builds and their certified platforms
+are listed under [Certified platforms](#certified-platforms).
+
+- Unknown builds are refused with a message naming your short hash, and the
+  game files are left untouched, so a game update cannot produce a broken
+  install.
+- Two builds are supported today: `61942e6c` (certified baseline) and
+  `88c9daec` (current Steam build).
+- Run `CrossPlatformPatcher --versions` to print the supported hashes,
+  strategies and certified OS strings.
+- If your build is newer than these, wait for a patcher update.
 
 The setup script can download/install Homebrew when missing, then install Whisky.
 
@@ -222,7 +362,7 @@ All dependencies are **embedded** in the final binary (e.g., `CrossPlatformPatch
 - Falls back to file-based command dispatch if audio unavailable
 
 ### Compatibility Layer (Wine/Mono)
-- Windows users: run `PAIcom_patched.exe` directly
+- Windows users: run `uninstall.exe.patched.exe` directly (never the `[LAUNCH HERE].exe` decoy)
 - Linux/Mac users: Wine redirects Windows API calls; falls back to Mono
 - Generated launchers automatically pick Wine or Mono
 
@@ -261,8 +401,8 @@ Three ways to select mode:
 
 1. **Patch-time CLI:**
    ```bash
-   CrossPlatformPatcher PAIcom.exe --migration-mode probe
-   CrossPlatformPatcher PAIcom.exe --migration-mode full
+   CrossPlatformPatcher uninstall.exe --migration-mode probe
+   CrossPlatformPatcher uninstall.exe --migration-mode full
    ```
 
 2. **Wrapper script:**
@@ -407,7 +547,7 @@ The original `PAIcomPatcher` (in the parent folder) is **Windows-only**:
 
 ## What the Patched Exe Contains
 
-**Important:** The patched `PAIcom.exe` is **100% the user's original file** with:
+**Important:** The patched executable is **100% the user's original file** with:
 - Compatibility IL rewrites (guarding fragile `Process.Start` and `System.Speech` call paths)
 - Diagnostics helper methods added for speech-path logging
 
@@ -480,6 +620,17 @@ To update Vosk or NAudio versions:
 
 The `Core/NativeLibraries/` and `Core/ManagedLibraries/` folders are expected to contain the binaries. 
 The build will skip missing files gracefully, but the patcher will have reduced functionality without them.
+
+### Linux: GE-Proton 11-7 needs glibc 2.38
+
+GE-Proton 11-7 cannot run on distributions with glibc older than 2.38. The
+requirement is in its binaries, not just the launcher: scanning the staged
+runtime shows `wineserver`, `ntdll.so` (both architectures), `winex11.so` and
+`win32u.so` require `GLIBC_2.38` (the `wine` wrapper itself only needs 2.34).
+
+Consequence: Ubuntu 22.04 (glibc 2.35) cannot run the GE-Proton path. Use the
+distribution Wine there instead, or upgrade to Ubuntu 24.04. GE-Proton is
+fine on Ubuntu 24.04 (2.39), Fedora 41+ and Arch rolling.
 
 ## macOS Setup Wizard Application
 
@@ -565,7 +716,7 @@ When patching, use these flags to customize OpenWakeWord settings:
 
 ```bash
 # Patch with custom OWW settings
-CrossPlatformPatcher PAIcom.exe \
+CrossPlatformPatcher uninstall.exe \
   --oww-threshold 0.7 \
   --oww-lock-ms 3000 \
   --oww-audio-chunk-size 1024 \
@@ -634,9 +785,9 @@ run.bat
 - `PAICOM_OWW_AUDIO_SAMPLE_RATE` (int, default 16000)
 - `PAICOM_OWW_VERBOSE_LOG` (bool, default false)
 - `PAICOM_OWW_MIC_BUFFER_MS` (int, default 200; arm64 profile: 160)
-- `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.65)
+- `PAICOM_OWW_FUZZY_MATCH_CONFIDENCE` (float, default 0.85)
 - `PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS` (int, default 450; arm64 profile: 350)
-- `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 1000; arm64 profile: 850)
+- `PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS` (int, default 700; arm64 profile: 650)
 - `PAICOM_VOSK_MODEL_PATH` (directory path to a specific extracted Vosk model)
 - `PAICOM_VOSK_MODEL_NAME` (model folder name inside the `models/` search roots)
 - `PAICOM_FILE_COMMAND_INPUT` (`true` to enable file-based command input mode)

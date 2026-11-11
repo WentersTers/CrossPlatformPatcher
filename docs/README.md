@@ -15,6 +15,7 @@ This folder is the active documentation index for developers and AI agents worki
 - [Build System](BUILD_SYSTEM.md): complete build pipeline (primary macOS workflows; Linux/Windows resupport in progress)
 - [Build Outputs](BUILD_OUTPUTS.md): detailed structure of all build artifacts
 - [Installer Guide](INSTALLER_GUIDE.md): macOS native `.app` code signing and distribution
+- [Version Registry](VERSION_REGISTRY.md): supported PAIcom builds, patch strategies, refusals and manifests
 - [macOS Setup](SETUP_MAC.md): user-facing macOS setup documentation
 
 Use [build-and-test.sh](../scripts/build-and-test.sh) for the standard developer validation workflow.

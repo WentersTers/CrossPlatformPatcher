@@ -18,8 +18,8 @@ PAIcom is a voice-assistant patched into a third-party Windows application. Its 
 | Confidence metadata from Vosk | **Not parsed**: only `"text"` and `"partial"` fields extracted via string search; word-level confidences and alternatives discarded | [`Core/OpenWakeWordHelper.cs:3977-3995`](Core/OpenWakeWordHelper.cs:3977) |
 | Test coverage (STT) | **None**: existing tests cover FuzzyMatcher, command pipeline, OWW, but do not exercise audio-in → text-out at all | [`CrossPlatformPatcher.Tests/FuzzyMatcherTests.cs`](CrossPlatformPatcher.Tests/FuzzyMatcherTests.cs) |
 | Command count | 99 hardcoded + user-defined `custom-commands/commands.txt` | [`docs/COMMAND_CATEGORIES.md:3`](docs/COMMAND_CATEGORIES.md:3) |
-| FuzzyMatcher default threshold | **0.80** (hardcoded in `FindClosestMatch`) | [`Core/FuzzyMatcher.cs:31`](Core/FuzzyMatcher.cs:31) |
-| OpenWakeWordSettings `FuzzyMatchMinConfidence` default | **0.65** (discrepancy: 0.65 vs 0.80) | [`PAIcom.OWW/OpenWakeWordSettings.cs:74`](PAIcom.OWW/OpenWakeWordSettings.cs:74) |
+| FuzzyMatcher default threshold | **0.85** (hardcoded in `FindClosestMatch`) | [`Core/FuzzyMatcher.cs:38`](Core/FuzzyMatcher.cs:38) |
+| OpenWakeWordSettings `FuzzyMatchMinConfidence` default | **0.85** (unified 2026-11-08) | [`PAIcom.OWW/OpenWakeWordSettings.cs:75`](PAIcom.OWW/OpenWakeWordSettings.cs:75) |
 | Grammar-constrained Vosk mode | Attempted via 3-arg constructor `(model, 16000f, grammarTerms)`, falls back to open dictation if constructor unavailable | [`PAIcom.OWW/VoskSpeechRecognizer.cs:568-586`](PAIcom.OWW/VoskSpeechRecognizer.cs:568) |
 | Native Vosk DLL handling | Loaded via reflection from embedded resource `vosk.managed.dll` or filesystem `Vosk.dll` | [`Core/VoskSpeechRecognizer.cs:252-288`](Core/VoskSpeechRecognizer.cs:252) |
 
@@ -32,12 +32,17 @@ PAIcom is a voice-assistant patched into a third-party Windows application. Its 
 - **Difficulty**: **M** — requires refactoring `ProcessSpeechRecognitionLocked()` to call `AcceptWaveform()` per chunk.
 - **Recommendation**: Stream each audio chunk into Vosk's `AcceptWaveform()` as it arrives, enabling partial-result display and lower end-of-utterance latency.
 
-### WP-2: Confidence threshold discrepancy (0.65 vs 0.80)
-- **Description**: [`PAIcom.OWW/OpenWakeWordSettings.cs:74`](PAIcom.OWW/OpenWakeWordSettings.cs:74) sets `FuzzyMatchMinConfidence = 0.65f`, but [`Core/FuzzyMatcher.cs:31`](Core/FuzzyMatcher.cs:31) hardcodes `minConfidence = 0.80f` as the default parameter. If the pipeline passes the settings value (0.65) to FuzzyMatcher, false positives increase; if it uses 0.80, valid commands may be rejected.
-- **Source**: [`PAIcom.OWW/OpenWakeWordSettings.cs:74`](PAIcom.OWW/OpenWakeWordSettings.cs:74) vs [`Core/FuzzyMatcher.cs:31`](Core/FuzzyMatcher.cs:31)
-- **Expected accuracy impact**: ±5–10% depending on which value actually propagates; currently unclear which wins.
-- **Difficulty**: **S** — single constant change.
-- **Recommendation**: Unify to 0.80, tune via A/B on the regression corpus.
+### WP-2: Confidence threshold discrepancy (0.65 vs 0.80) — RESOLVED (2026-11-08)
+- **Resolution**: all surfaces now use a single value, **0.85**: the
+  `OpenWakeWordSettings` default, both `FuzzyMatcher` copies
+  (`Core/` and `PAIcom.OWW/`), the generated `run.sh` / `run.bat` pins and
+  the docs. 0.65 was never a designed mode, only a stale default; 0.85 is
+  the value verified on the command corpus (58/58 correct, 0 wrong).
+- **Description (as found)**: `PAIcom.OWW/OpenWakeWordSettings.cs` set
+  `FuzzyMatchMinConfidence = 0.65f`, while `Core/FuzzyMatcher.cs` defaulted
+  to 0.80 and `PAIcom.OWW/FuzzyMatcher.cs` to 0.80, so the effective value
+  depended on which layer supplied it.
+- **Recommendation (as found)**: unify to 0.80, tune via A/B on the regression corpus.
 
 ### WP-3: No word-level confidence parsing from Vosk JSON
 - **Description**: Vosk returns a JSON result like `{"text": "open the browser", "result": [{"word": "open", "conf": 0.98}, ...]}`. The code only extracts `"text"` via string search; word-level confidences, alternatives list, and per-word timestamps are discarded. This hides low-confidence words.

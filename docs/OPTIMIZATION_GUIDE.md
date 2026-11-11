@@ -26,9 +26,9 @@ User Speaks → NAudio Mic Capture → OpenWakeWord Detection → Vosk STT → F
 | Audio Chunk Size | 1024 samples (~64ms @ 16kHz) | Balanced latency/CPU |
 | Thread Scale | 1.0 | Single inference thread |
 | Mic Buffer | 200ms | Moderate latency |
-| Fuzzy Confidence | 0.65 | Low threshold for command matching |
+| Fuzzy Confidence | 0.85 | Tuned on the command corpus (58/58 correct) |
 | Post-Wake Grace | 450ms | Grace period before silence detection |
-| Speech Silence Cutoff | 1000ms | 1s silence stops recognition |
+| Speech Silence Cutoff | 700ms | Longest command pause is 600ms; 700 is the safe floor at 200ms chunks |
 
 ---
 

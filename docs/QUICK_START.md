@@ -1,8 +1,18 @@
 # Quick Start
 
-Fastest way to get started with CrossPlatformPatcher on macOS.
+Fastest way to get started with CrossPlatformPatcher on Windows, Linux or macOS.
 
-Status: This repository and its SetupWizard.app have been tested and verified on macOS (Intel & Apple Silicon). Support for Linux and Windows is planned and in progress and will be re-enabled after macOS stability is confirmed.
+Status: the patcher runs on all three platforms. The patched game is certified
+on the platforms listed in the [README's Certified platforms
+section](../README.md#certified-platforms); unsupported game builds are refused
+rather than patched. macOS is the oldest path (Intel and Apple Silicon); the
+Linux paths cover plain Wine, GE-Proton and Steam Proton Experimental.
+
+> **Ignore `[LAUNCH HERE].exe` — it is a decoy that ships with the game itself,
+> not the program.** The real game is `uninstall.exe`; run it (or the patched
+> `uninstall.exe.patched.exe`) with `run.sh` on Linux, directly on Windows, or
+> with `launch.command` on macOS. Double-clicking the decoy produces a false
+> failure.
 
 ## Choose Your Path
 
@@ -85,6 +95,18 @@ cd /path/to/CrossPlatformPatcher
 ---
 
 ### Linux
+
+**Requirements:** at least 4 GB of RAM (6 GB when running under Steam with
+Proton), and a working X display — build and run with a display set, or start
+a virtual one first (`Xvfb :99 & export DISPLAY=:99`).
+
+**Steam / Proton:** use Proton 8.x or Proton Experimental. Proton 9 has been
+seen to open the menu with no Start button; PAIcom warns at startup when it
+detects that version.
+
+**Voice runtime files:** copy the patched exe *with* `PAIcom.OWW.dll`, the
+Onnx/Vosk/NAudio/System runtime DLLs and the `models` folder; an exe-only copy
+fails the audio hook. Full list: [README voice runtime files](../README.md#voice-runtime-files-required-for-microphone-commands).
 
 **First Time:**
 ```sh
