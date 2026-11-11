@@ -2511,7 +2511,7 @@ public static class OpenWakeWordHelper
         var match = FuzzyMatcher.FindClosestMatch(
             commandText,
             candidatePhrases,
-            _settings?.FuzzyMatchMinConfidence ?? 0.80f,
+            _settings?.FuzzyMatchMinConfidence ?? 0.85f,
             LogEvent);
 
         if (match == null || string.IsNullOrWhiteSpace(match.MatchedCommand))

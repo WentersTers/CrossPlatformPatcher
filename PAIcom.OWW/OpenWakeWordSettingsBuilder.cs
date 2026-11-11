@@ -20,9 +20,9 @@ public sealed class OpenWakeWordSettingsBuilder
     private int _sampleRate = 16000;
     private bool _verboseLog;
     private int _micBufferMs = 200;
-    private float _fuzzyMatchConfidence = 0.80f;
+    private float _fuzzyMatchConfidence = 0.85f;
     private int _postWakeSilenceGraceMs = 450;
-    private int _speechSilenceCutoffMs = 1000;
+    private int _speechSilenceCutoffMs = 700;
 
     /// <summary>Set confidence threshold [0.0, 1.0].</summary>
     public OpenWakeWordSettingsBuilder WithThreshold(float value)

@@ -35,7 +35,7 @@ public sealed class FuzzyMatcher
     public static FuzzyMatchResult? FindClosestMatch(
         string input,
         IEnumerable<string> knownCommands,
-        float minConfidence = 0.80f,
+        float minConfidence = 0.85f,
         Action<string>? logger = null)
     {
         if (string.IsNullOrWhiteSpace(input))
@@ -58,6 +58,7 @@ public sealed class FuzzyMatcher
         var keywordIndex = BuildKeywordIndex(knownCommands);
         logger?.Invoke($"[oww-fuzzy] Built keyword index with {keywordIndex.Count} unique keywords");
         var sharedIndex = BuildSharedKeywordIndex(knownCommands);
+        var wordFrequency = BuildWordFrequency(knownCommands);
 
         // Stage 1: Try keyword match: exact unique keywords, then partial
         // similarity for typos/misrecognitions (inside Stage 1 by design).
@@ -71,7 +72,7 @@ public sealed class FuzzyMatcher
         // Stage 1b: Shared keyword with disambiguation. Manifest growth
         // de-uniquifies working commands (discord); the shared word picks the
         // candidate set and shared-word count plus edit distance disambiguates.
-        var sharedMatch = TrySharedKeywordMatch(inputNormalized, keywordWords, sharedIndex, logger);
+        var sharedMatch = TrySharedKeywordMatch(inputNormalized, keywordWords, sharedIndex, wordFrequency, logger);
         if (sharedMatch != null)
         {
             logger?.Invoke($"[oww-fuzzy] SHARED KEYWORD MATCH: '{input}' -> '{sharedMatch.Value.command}' via keyword '{sharedMatch.Value.keyword}' ({sharedMatch.Value.sharedCount} shared words)");
@@ -110,6 +111,13 @@ public sealed class FuzzyMatcher
 
         if (best.confidence >= minConfidence)
         {
+            var coverage = CalculateCommandCoverage(inputWords, NormalizeString(best.command));
+            if (coverage < MinCommandCoverage)
+            {
+                logger?.Invoke($"[oww-fuzzy] Matched '{input}' to '{best.command}' ({best.confidence:P1}) rejected: coverage {coverage:P0} < {MinCommandCoverage:P0}");
+                return null;
+            }
+
             var bonusNote = best.hasKeywordBonus
                 ? $" [word bonus: {best.overlapScore:P0}]"
                 : "";
@@ -275,6 +283,7 @@ public sealed class FuzzyMatcher
         string inputNormalized,
         string[] keywordWords,
         Dictionary<string, List<string>> sharedIndex,
+        Dictionary<string, int> wordFrequency,
         Action<string>? logger)
     {
         var inputSet = new HashSet<string>(keywordWords, StringComparer.OrdinalIgnoreCase);
@@ -282,6 +291,7 @@ public sealed class FuzzyMatcher
         string? bestKeyword = null;
         var bestCount = -1;
         var bestDistance = int.MaxValue;
+        var bestSimilarity = -1.0f;
 
         foreach (var word in keywordWords)
         {
@@ -296,26 +306,157 @@ public sealed class FuzzyMatcher
                     .ToList();
                 var count = commandWords.Count(w => inputSet.Contains(w));
                 var distance = LevenshteinDistance(inputNormalized, NormalizeString(command));
+                var maxLen = Math.Max(inputNormalized.Length, NormalizeString(command).Length);
+                var similarity = maxLen > 0 ? 1.0f - (distance / (float)maxLen) : 1.0f;
 
+                // Prefer more shared words, then the closer command by
+                // normalized similarity. The old ordinal-only tiebreak routed
+                // "go high places near me" to "show pizza places near me"
+                // instead of the closer "show hiking places near me" on an
+                // equal edit distance.
                 if (bestCommand == null || count > bestCount ||
-                    (count == bestCount && (distance < bestDistance ||
-                        (distance == bestDistance && string.Compare(command, bestCommand, StringComparison.Ordinal) > 0))))
+                    (count == bestCount && (similarity > bestSimilarity ||
+                        (similarity == bestSimilarity && string.CompareOrdinal(command, bestCommand) > 0))))
                 {
                     bestCommand = command;
                     bestKeyword = word;
                     bestCount = count;
                     bestDistance = distance;
+                    bestSimilarity = similarity;
                 }
             }
         }
 
         if (bestCommand != null)
         {
-            logger?.Invoke($"[oww-fuzzy] Shared keyword: '{bestKeyword}' -> '{bestCommand}' ({bestCount} shared words)");
+            // A shared word alone (usually "open"/"show"/"please") is not
+            // evidence: at least one DISTINCTIVE command word (present in no
+            // more than two commands) must be near the input. This rejects
+            // "hey pow camp open the point" -> "open redit", "open the point
+            // shop" -> "open the trading app" and "please flip a coin" ->
+            // "please hide", while keeping "show discord" -> "open discord",
+            // "a i'm open hello" -> "open hulu" and "go high places near me"
+            // -> "show hiking places near me".
+            if (!HasDistinctiveNearWord(keywordWords, bestCommand, wordFrequency))
+            {
+                logger?.Invoke($"[oww-fuzzy] Shared keyword: '{bestKeyword}' -> '{bestCommand}' rejected: no distinctive command word is near");
+                return null;
+            }
+
+            var coverage = CalculateCommandCoverage(keywordWords, NormalizeString(bestCommand));
+            if (coverage < MinCommandCoverage)
+            {
+                logger?.Invoke($"[oww-fuzzy] Shared keyword: '{bestKeyword}' -> '{bestCommand}' rejected: coverage {coverage:P0} < {MinCommandCoverage:P0}");
+                return null;
+            }
+
+            logger?.Invoke($"[oww-fuzzy] Shared keyword: '{bestKeyword}' -> '{bestCommand}' ({bestCount} shared words, sim {bestSimilarity:P0})");
             return (bestCommand, bestKeyword!, 0.90f, bestCount);
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Minimum fraction of a command's content words that the input must
+    /// actually cover (exact or word-similarity >= 0.85) before a match is
+    /// accepted. Keyword stages otherwise short-circuit on a single shared
+    /// word and route unrelated speech to a command ("open the point shop"
+    /// -> "open the trading app" via "open"). 0.50 keeps the correct routes
+    /// in the recorded corpus while rejecting the hijacks.
+    /// </summary>
+    private const float MinCommandCoverage = 0.50f;
+
+    /// <summary>
+    /// Levenshtein-based word similarity [0,1]. Unlike the bigram helper this
+    /// gives credit for vowel-level confusions (hello~hulu 0.40) while keeping
+    /// unrelated words low (hide~flip 0.25). Used by the shared-stage evidence
+    /// gate, where one ubiquitous verb must not route a command.
+    /// </summary>
+    private static float CalculateWordSimilarityLevenshtein(string word1, string word2)
+    {
+        if (string.IsNullOrEmpty(word1) || string.IsNullOrEmpty(word2))
+            return 0.0f;
+
+        var max = Math.Max(word1.Length, word2.Length);
+        return max == 0 ? 0.0f : 1.0f - (LevenshteinDistance(word1, word2) / (float)max);
+    }
+
+    /// <summary>
+    /// Document frequency of each content word across the command list.
+    /// </summary>
+    private static Dictionary<string, int> BuildWordFrequency(IEnumerable<string> commands)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var command in commands)
+        {
+            var words = NormalizeString(command).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var word in new HashSet<string>(words, StringComparer.OrdinalIgnoreCase))
+            {
+                if (IsStopWord(word))
+                    continue;
+                counts[word] = counts.TryGetValue(word, out var n) ? n + 1 : 1;
+            }
+        }
+
+        return counts;
+    }
+
+    /// <summary>
+    /// True when at least one DISTINCTIVE command word (document frequency
+    /// <= 2) is near an input word (edit-similarity >= 0.33). A ubiquitous
+    /// verb like "open"/"show"/"please" never satisfies this on its own.
+    /// </summary>
+    private static bool HasDistinctiveNearWord(string[] inputWords, string command, Dictionary<string, int> wordFrequency)
+    {
+        var commandWords = NormalizeString(command)
+            .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => !IsStopWord(w));
+
+        foreach (var commandWord in commandWords)
+        {
+            var df = wordFrequency.TryGetValue(commandWord, out var n) ? n : int.MaxValue;
+            if (df > 2)
+                continue;
+
+            foreach (var inputWord in inputWords)
+            {
+                if (CalculateWordSimilarityLevenshtein(inputWord, commandWord) >= 0.33f)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Fraction of the command's non-stopword vocabulary that appears in the
+    /// input (exact or word-similarity >= 0.85).
+    /// </summary>
+    private static float CalculateCommandCoverage(string[] inputWords, string commandNormalized)
+    {
+        var commandWords = commandNormalized
+            .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => !IsStopWord(w))
+            .ToArray();
+
+        if (commandWords.Length == 0)
+            return 1.0f;
+
+        var covered = 0;
+        foreach (var commandWord in commandWords)
+        {
+            foreach (var inputWord in inputWords)
+            {
+                if (CalculateWordSimilarity(inputWord, commandWord) >= 0.85f)
+                {
+                    covered++;
+                    break;
+                }
+            }
+        }
+
+        return covered / (float)commandWords.Length;
     }
 
     /// <summary>
@@ -337,8 +478,13 @@ public sealed class FuzzyMatcher
         {
             if (keywordIndex.TryGetValue(word, out var command))
             {
-                // Found a unique keyword - return this command with high confidence
-                return (command, word, 0.95f);
+                var coverage = CalculateCommandCoverage(inputWords, NormalizeString(command));
+                if (coverage >= MinCommandCoverage)
+                {
+                    return (command, word, 0.95f);
+                }
+
+                logger?.Invoke($"[oww-fuzzy] Keyword '{word}' -> '{command}' rejected: coverage {coverage:P0} < {MinCommandCoverage:P0}");
             }
         }
 
@@ -356,6 +502,13 @@ public sealed class FuzzyMatcher
                     var similarity = CalculateWordSimilarity(word, keyword);
                     if (similarity >= 0.85f)
                     {
+                        var coverage = CalculateCommandCoverage(inputWords, NormalizeString(cmd));
+                        if (coverage < MinCommandCoverage)
+                        {
+                            logger?.Invoke($"[oww-fuzzy] Keyword similarity: '{word}' ~ '{keyword}' ({similarity:P0}) -> '{cmd}' rejected: coverage {coverage:P0}");
+                            continue;
+                        }
+
                         logger?.Invoke($"[oww-fuzzy] Keyword similarity: '{word}' ~ '{keyword}' ({similarity:P0})");
                         return (cmd, keyword, 0.90f);
                     }
@@ -575,6 +728,9 @@ public sealed class FuzzyMatcher
         "himself", "she", "her", "hers", "herself", "it", "its", "itself",
         "they", "them", "their", "theirs", "themselves", "what", "which", "who",
         "whom", "this", "that", "these", "those", "am", "about",
+        // Discourse filler: appears in "please hide"/"please show up" but is
+        // never evidence for a command.
+        "please",
         // Wake-word debris: ASR emits wake fragments ("hey pie comb") the
         // exact prefixes miss. Manifest-gated 2026-09-14: no command body
         // contains these as content vocabulary.

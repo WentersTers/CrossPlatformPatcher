@@ -50,7 +50,7 @@ public sealed class OpenWakeWordSettings
     /// <summary>Microphone buffer size in milliseconds. Default: 200 (larger chunks reduce fragmentation). Range: [20, 1000].</summary>
     public int MicrophoneBufferMilliseconds { get; }
 
-    /// <summary>Fuzzy matching minimum confidence for command matching [0.0, 1.0]. Default: 0.80 (80%).</summary>
+    /// <summary>Fuzzy matching minimum confidence for command matching [0.0, 1.0]. Default: 0.85 (85%).</summary>
     public float FuzzyMatchMinConfidence { get; }
 
     /// <summary>Silence grace after wake word before cut-off counting starts. Default: 450 ms.</summary>
@@ -71,9 +71,9 @@ public sealed class OpenWakeWordSettings
         int audioSampleRate = 16000,
         bool enableVerboseLogging = false,
         int microphoneBufferMilliseconds = 200,
-        float fuzzyMatchMinConfidence = 0.65f,
+        float fuzzyMatchMinConfidence = 0.85f,
         int postWakeSilenceGraceMilliseconds = 450,
-        int speechSilenceCutoffMilliseconds = 1000)
+        int speechSilenceCutoffMilliseconds = 700)
     {
         // Validate ranges
         if (confidenceThreshold < 0.0f || confidenceThreshold > 1.0f)
@@ -134,7 +134,7 @@ public sealed class OpenWakeWordSettings
                 audioChunkSize: 960,
                 microphoneBufferMilliseconds: 160,
                 postWakeSilenceGraceMilliseconds: 350,
-                speechSilenceCutoffMilliseconds: 850);
+                speechSilenceCutoffMilliseconds: 650);
         }
 
         return new();
