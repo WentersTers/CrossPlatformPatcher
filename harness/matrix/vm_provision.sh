@@ -44,6 +44,30 @@ declare -a PKG_LOG=()
 
 note_pkg() { PKG_LOG+=("$1|$2"); }   # name|install-path
 
+# ISS-046 guard (REV-041): refuse a VOID bundle — one produced without the two
+# 7nbx materialization resource ADDs. The repo patcher now adds them
+# (Core/MaterializationResourceFixer.cs), but provisioning must never again
+# produce a memo-gate-unfixed bundle from ANY path (patch, --chain-exe,
+# --skip-app, future regression). Primary check = ADD-name presence in the
+# metadata strings (resdump-equivalent); secondary = implausible-size warning.
+# MATERIALIZATION_GUARD=warn downgrades refusal to a warning (diagnosis only).
+materialization_guard() {
+  local exe="$1" source="${2:-unknown}"
+  local mode="${MATERIALIZATION_GUARD:-refuse}"
+  local py="$SCRIPT_DIR/check_materialization.py"
+  [ -f "$py" ] || die "ISS-046 guard: $py missing (harness deploy incomplete)"
+  if python3 "$py" "$exe" >> "$WORK/materialization-guard.log" 2>&1; then
+    log "   ISS-046 guard: OK — materialization ADDs present ($source)"
+    return 0
+  fi
+  tail -3 "$WORK/materialization-guard.log" | sed 's/^/      /'
+  if [ "$mode" = "warn" ]; then
+    log "   ISS-046 guard: WARNING — void bundle ($source); MATERIALIZATION_GUARD=warn allows continuation for diagnosis ONLY"
+    return 0
+  fi
+  die "ISS-046 guard: VOID bundle at $source — the materialization ADDs are absent, so legs would run a memo-gate-unfixed subject (REV-041). Refusing to snapshot. Fix the patcher/chain input, or set MATERIALIZATION_GUARD=warn for diagnosis only."
+}
+
 # ---------------------------------------------------------------- base image
 base_image_url() {
   case "$1" in
@@ -249,13 +273,13 @@ gssh "$GUEST_IP" 'cloud-init status --wait >/dev/null 2>&1; cloud-init status | 
 case "$OS_ID" in
   arch-latest)
     log "-- arch display/capture stack via pacman"
-    gssh "$GUEST_IP" "sudo pacman -Sy --noconfirm xorg-server-xvfb xorg-xdpyinfo xdotool openbox scrot imagemagick ttf-dejavu cabextract" \
+    gssh "$GUEST_IP" "sudo pacman -Syu --noconfirm xorg-server-xvfb xorg-xdpyinfo xdotool openbox scrot imagemagick ttf-dejavu cabextract wget curl" \
       || die "arch display stack install failed"
     note_pkg "arch-display-stack" "ssh-pacman"
     ;;
   fedora-41|fedora-42|fedora-43|fedora-44)
     log "-- fedora display/capture stack via dnf"
-    gssh "$GUEST_IP" "sudo dnf install -y xorg-x11-server-Xvfb xdpyinfo xwininfo xprop xdotool openbox scrot ImageMagick dejavu-sans-fonts" \
+    gssh "$GUEST_IP" "sudo dnf install -y xorg-x11-server-Xvfb xdpyinfo xwininfo xprop xdotool openbox scrot ImageMagick dejavu-sans-fonts wget curl" \
       || die "fedora display stack install failed"
     note_pkg "fedora-display-stack" "ssh-dnf"
     ;;
@@ -348,23 +372,45 @@ case "$RUNTIME_ID" in
       # A stale partial extraction (dir present, runtime incomplete) must not
       # satisfy the cache check: purge first, then download + extract whole.
       gssh "$GUEST_IP" "rm -rf \$HOME/.steam/steam/compatibilitytools.d/$GE_VER* && mkdir -p \$HOME/.steam/steam/compatibilitytools.d /tmp/ge && cd /tmp/ge && \
-        wget -q -O ge.tar.gz 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$GE_VER/$GE_VER-x86_64.tar.gz' && \
+        (wget -q -O ge.tar.gz 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$GE_VER/$GE_VER-x86_64.tar.gz' || \
+         curl -fSL -o ge.tar.gz 'https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$GE_VER/$GE_VER-x86_64.tar.gz') && \
         tar -xzf ge.tar.gz -C \$HOME/.steam/steam/compatibilitytools.d/ && echo extracted" \
         || die "GE-Proton download/extract failed"
       gssh "$GUEST_IP" "ls \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/files/lib/wine/x86_64-unix >/dev/null 2>&1" 2>/dev/null \
         || die "GE-Proton extracted but the x86_64 runtime is still missing"
     fi
     # GE's wow64 loader needs the host 32-bit dynamic loader even for 64-bit
-    # prefixes (/lib/ld-linux.so.2 missing = instant exit 1). Wine also needs
-    # the host FreeType library to rasterize any text — without it, dialogs
-    # never lay out (320x1 slivers) and the UI stays invisible. One-time
-    # installs per guest; harmless when already present.
-    gssh "$GUEST_IP" "ldconfig -p 2>/dev/null | grep -q 'ld-linux.so.2' || (sudo dpkg --add-architecture i386 && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libc6:i386)" \
-      || die "i386 libc install failed"
-    note_pkg "libc6-i386" "ssh-apt-i386 (GE wow64 loader)"
-    gssh "$GUEST_IP" "ldconfig -p 2>/dev/null | grep -q 'libfreetype.so' || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libfreetype6" \
-      || die "freetype install failed"
-    note_pkg "libfreetype6" "ssh-apt (GE text rendering)"
+    # prefixes (/lib/ld-linux.so.2 missing = instant exit 1). Wine's 32-bit
+    # side ALSO needs 32-bit FreeType + fontconfig to measure text: a
+    # 64-bit-only freetype leaves the 32-bit font backend dead and the app's
+    # forms lay out as 1-pixel slivers (288x1 at y=27378, unmapped) for the
+    # life of the prefix (learned 2026-11-07, L04). Both must be installed
+    # BEFORE the prefix pre-warm, which itself now needs a live display.
+    # Per-distro; harmless when already present.
+    case "$OS_ID" in
+      ubuntu*|debian*)
+        gssh "$GUEST_IP" "sudo dpkg --add-architecture i386 && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libc6:i386 libfreetype6:i386 libfontconfig1:i386" \
+          || die "i386 loader/font stack install failed (apt)"
+        note_pkg "libc6-i386+libfreetype6-i386" "ssh-apt-i386 (GE wow64 loader + 32-bit text)"
+        ;;
+      fedora*)
+        gssh "$GUEST_IP" "sudo dnf install -y -q glibc.i686 freetype.i686 fontconfig.i686" \
+          || die "i686 loader/font stack install failed (dnf)"
+        note_pkg "glibc-i686+freetype-i686" "ssh-dnf-i686 (GE wow64 loader + 32-bit text)"
+        ;;
+      arch*)
+        # Arch ships [multilib] commented out in the base image; the 32-bit
+        # loader/font packages live there.
+        gssh "$GUEST_IP" "grep -q '^\\[multilib\\]' /etc/pacman.conf || sudo sed -i '/^#\\[multilib\\]/,/^#Include/ s/^#//' /etc/pacman.conf; sudo pacman -Sy --noconfirm" \
+          || die "multilib enable/refresh failed (pacman)"
+        gssh "$GUEST_IP" "sudo pacman -S --noconfirm lib32-glibc lib32-freetype2 lib32-fontconfig" \
+          || die "lib32 loader/font stack install failed (pacman)"
+        note_pkg "lib32-glibc+lib32-freetype2" "ssh-pacman-lib32 (GE wow64 loader + 32-bit text)"
+        ;;
+      *)
+        die "GE runtime: unsupported distro for 32-bit prerequisites: $OS_ID"
+        ;;
+    esac
     # do-not-regress #3: companion-mono accounting — record the bundled mono,
     # never install anything over it (dir name carries the arch suffix)
     GE_MONO="$(gssh "$GUEST_IP" "ls \$HOME/.steam/steam/compatibilitytools.d/$GE_VER*/files/share/wine/mono/ 2>/dev/null | tr '\n' ' '")"
@@ -414,6 +460,10 @@ PY
       --migration-mode full > "$WORK/patch-run.log" 2>&1 \
     || { tail -30 "$WORK/patch-run.log"; die "patcher run failed"; }
   [ -f "$APP_BUNDLE/$PATCH_TARGET.patched.exe" ] || die "patched exe not produced"
+  # ISS-046 guard: refuse a void bundle (materialization ADDs absent). Primary
+  # check is ADD-name presence (resdump-equivalent); size is a soft warning.
+  # MATERIALIZATION_GUARD=warn downgrades to a warning for diagnosis only.
+  materialization_guard "$APP_BUNDLE/$PATCH_TARGET.patched.exe" "direct-patch"
   [ -f "$APP_BUNDLE/run.sh" ] || die "generated run.sh not produced in out dir"
   chmod +x "$APP_BUNDLE/run.sh"
   BUNDLE_SHA="$(sha256_of "$APP_BUNDLE/$PATCH_TARGET.patched.exe")"
@@ -427,6 +477,7 @@ PY
     [ -f "$CHAIN_EXE" ] || die "chain exe missing: $CHAIN_EXE"
     cp -f "$CHAIN_EXE" "$APP_BUNDLE/$PATCH_TARGET.patched.exe"
     rm -f "$APP_BUNDLE"/*.tripwire-baseline 2>/dev/null || true
+    materialization_guard "$APP_BUNDLE/$PATCH_TARGET.patched.exe" "chain-exe"
     BUNDLE_SHA="$(sha256_of "$APP_BUNDLE/$PATCH_TARGET.patched.exe")"
     CHAIN_NOTE="chain(strip>patch>nop>materialize) sha=$BUNDLE_SHA"
     log "   chain bundle: swapped chain output in; bundle sha=$BUNDLE_SHA"
@@ -434,6 +485,14 @@ PY
   fi
 else
   log "-- skipping app build (--skip-app); using existing $APP_BUNDLE"
+  # ISS-046 guard also covers reused bundles: an old/pre-fix bundle must not be
+  # silently snapshotted as the leg subject.
+  SKIP_SUBJECT="$(ls "$APP_BUNDLE"/*.patched.exe 2>/dev/null | head -1 || true)"
+  if [ -n "$SKIP_SUBJECT" ]; then
+    materialization_guard "$SKIP_SUBJECT" "skip-app existing bundle"
+  else
+    log "   ISS-046 guard: no *.patched.exe found in $APP_BUNDLE — guard not applicable"
+  fi
 fi
 
 # ---------------------------------------------------------------- push bundle to guest
@@ -453,13 +512,21 @@ case "$RUNTIME_ID" in
       ge-proton11-7|proton-steam)
         # Pre-warm: create the project-local prefix under the GE runtime NOW
         # so legs spend their window on the app instead of first-boot setup.
-        log "-- pre-warming GE prefix at $GUEST_PREFIX"
-        gssh "$GUEST_IP" "GE_BIN=\$(ls -d \$HOME/.steam/steam/compatibilitytools.d/GE-Proton*/files/bin/wine 2>/dev/null | head -1); \
+        # The display MUST be up first (learned 2026-11-07, L03): a headless
+        # `wineboot -u` bakes screen metrics that collapse the app's first
+        # forms to 1-pixel slivers (288x1 at y=27378, map state IsUnMapped)
+        # for the life of the prefix. A prefix created with DISPLAY set lays
+        # the same form out at 288x206 and viewable.
+        log "-- pre-warming GE prefix at $GUEST_PREFIX (display $DISPLAY_NUM)"
+        gssh "$GUEST_IP" "pgrep -x Xvfb >/dev/null 2>&1 || (nohup Xvfb $DISPLAY_NUM -screen 0 ${SCREEN_W}x${SCREEN_H}x24 -nolisten tcp >/tmp/xvfb-prewarm.log 2>&1 & sleep 4); \
+          pgrep -x openbox >/dev/null 2>&1 || (DISPLAY=$DISPLAY_NUM setsid nohup openbox >/tmp/openbox-prewarm.log 2>&1 < /dev/null & sleep 2); \
+          DISPLAY=$DISPLAY_NUM xdpyinfo >/dev/null 2>&1 || { echo 'pre-warm display not up'; exit 1; }; \
+          GE_BIN=\$(ls -d \$HOME/.steam/steam/compatibilitytools.d/GE-Proton*/files/bin/wine 2>/dev/null | head -1); \
           [ -x \"\$GE_BIN\" ] || exit 1; \
-          export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64; \
+          export DISPLAY=$DISPLAY_NUM WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64; \
           \"\$GE_BIN\" wineboot -u >/tmp/ge-prefix.log 2>&1; \
           \"\$(dirname \"\$GE_BIN\")/wineserver\" -w >/dev/null 2>&1; \
-          tail -3 /tmp/ge-prefix.log" || die "GE prefix pre-warm failed"
+          tail -3 /tmp/ge-prefix.log" || die "GE prefix pre-warm failed (display $DISPLAY_NUM)"
         gssh "$GUEST_IP" "grep -qi '#arch=win64' '$GUEST_PREFIX/system.reg' 2>/dev/null" \
           || die "GE prefix is not win64 after pre-warm"
         log "   GE prefix ready (win64)"

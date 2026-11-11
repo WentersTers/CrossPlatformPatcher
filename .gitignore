@@ -160,3 +160,6 @@ harness/matrix/petwalk.sh
 harness/matrix/setup-walk.sh
 harness/matrix/audio_hda.sh
 
+# Agent mission logs (carry the operator's verbatim requests)
+grants/
+
