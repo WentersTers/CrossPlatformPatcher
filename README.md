@@ -647,6 +647,15 @@ See `Core/NativeLibraries/README.md` and `Core/ManagedLibraries/README.md` for s
 Check `launcher-runtime.log` in the patched exe's directory for `[compat][speech]`
 messages and exceptions. Wine audio backend still needs configuration.
 
+### Known issue: "researcher" command can trigger on typing noise
+
+If a microphone is active while typing, the `researcher` voice command can
+fire sporadically. This is PAIcom's behaviour, not the patcher's: it has been
+observed across multiple platforms, and the root cause may sit in the speech
+recognition layer or in command matching. Investigation is ongoing.
+
+Workaround: mute the microphone while typing, or disable the voice feature.
+
 ### macOS: "wine not found"
 
 Install Whisky (free) or CrossOver. Whisky provides a `wine` command automatically.
