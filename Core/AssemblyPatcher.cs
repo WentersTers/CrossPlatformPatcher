@@ -95,6 +95,29 @@ public class AssemblyPatcher
             result.Errors.Add(ex.Message);
         }
 
+        // ── WebClient watchdog (frozen-menu mitigation) ───────────────────
+        // The menu form downloads synchronously while it is being built; a
+        // stalled DNS/TLS call freezes the form (Start never appears). Redirect
+        // every WebClient construction to a subclass that bounds the call.
+        Log("Applying WebClient watchdog shim …");
+        try
+        {
+            int redirected = _features.HasFlag(PatchFeatures.WebClientWatchdog)
+                ? WebClientTimeoutPatcher.Patch(module, Log)
+                : 0;
+            if (!_features.HasFlag(PatchFeatures.WebClientWatchdog))
+                Log("WebClient watchdog: not in this version's strategy - skipped.");
+            else if (redirected > 0)
+                Log($"WebClient watchdog: {redirected} call site(s) redirected.");
+            else
+                Log("WebClient watchdog: no WebClient construction found — skipped.");
+        }
+        catch (Exception ex)
+        {
+            Log($"WebClient watchdog FAILED ({ex.GetType().Name}): {ex.Message}");
+            result.Errors.Add($"WebClient watchdog: {ex.Message}");
+        }
+
         // ── Run patch modules ──────────────────────────────────────────────
         // Modules are discovered dynamically, so adding a new feature never
         // requires editing this engine. Failures are isolated per-module.
