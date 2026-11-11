@@ -56,8 +56,8 @@ this runtime.
   runtime — use distro Wine there or a newer distribution. Details in
   [Troubleshooting](#linux-ge-proton-11-7-needs-glibc-238).
 - Ubuntu 22.04 and Debian 12 have menu-and-pet walk records from the older
-  build-5 campaign (notes under `evidence/REV-045/legacy-petwalk/`). They are
-  not certified for the current build and are not in the table above.
+  build-5 campaign; those records are not part of this repository, and neither
+  OS is certified for the current build.
 - SteamOS / Steam Deck is **not certified**; there is no repository evidence.
   If community reports are mentioned, label them "reported working
   (community)".

@@ -59,10 +59,10 @@ Certified operating systems per entry:
 
 "Menu and pet only" is deliberately weaker than a voice certification. Ubuntu
 22.04 and Debian 12 have menu-and-pet walk records from the older build-5
-campaign (notes under `evidence/REV-045/legacy-petwalk/`), but no voice run
-against the current build, so they are not listed as certified. SteamOS and
-Steam Deck have no repository evidence; cite them only as "reported working
-(community)" if at all.
+campaign, but those records are not part of this repository and there is no
+voice run against the current build, so neither is listed as certified.
+SteamOS and Steam Deck have no repository evidence; cite them only as
+"reported working (community)" if at all.
 
 ### GE-Proton 11-7 glibc floor
 
