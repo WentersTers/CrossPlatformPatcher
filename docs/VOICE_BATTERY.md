@@ -85,6 +85,14 @@ python3 harness/voice/run_battery.py \
 
 Exit status is 0 only when set A and set B both pass.
 
+### Transports
+
+`--transport fifo` (default) writes each clip to the feeder's `/tmp/vmic.play`.
+`--transport paplay --sink NAME` plays the clip into a null sink and uses
+`NAME.monitor` as the capture source, which survives a pipe-source reload but
+was seen crashing the Wine app on Ubuntu 24.04 / Wine 11.21; prefer the FIFO
+there.
+
 ## Preconditions
 
 - Arrival is proven before judging anything: a tone or a voice clip must show a

@@ -95,7 +95,8 @@ def windows(args) -> str:
 def plumbing(args):
     src = run(args, "export XDG_RUNTIME_DIR=/run/user/$(id -u); pactl list short sources")
     out = run(args, "export XDG_RUNTIME_DIR=/run/user/$(id -u); pactl list short source-outputs")
-    return ("vmic" in src, out.strip())
+    expected = args.sink + ".monitor" if args.transport == "paplay" else "vmic"
+    return (expected in src, out.strip())
 
 
 def find_negative(args, prefix: str, voice_dir: str) -> str | None:
@@ -105,7 +106,12 @@ def find_negative(args, prefix: str, voice_dir: str) -> str | None:
 
 def play(args, path: str, wait: float, log: str):
     before = lines(args, log)
-    run(args, f"printf '%s' '{path}' > /tmp/vmic.play")
+    if args.transport == "paplay":
+        # Play into the null sink; its monitor is the capture source. No FIFO,
+        # so a pipe-source reload cannot strand the feeder mid-battery.
+        run(args, f"paplay --device={args.sink} '{path}' 2>/dev/null")
+    else:
+        run(args, f"printf '%s' '{path}' > /tmp/vmic.play")
     time.sleep(wait)
     after = lines(args, log)
     new = run(args, f"tail -n +{before + 1} {log} 2>/dev/null")
@@ -128,6 +134,10 @@ def main() -> int:
     ap.add_argument("--wait-positive", type=float, default=15.0)
     ap.add_argument("--wait-silent", type=float, default=10.0)
     ap.add_argument("--wait-wake", type=float, default=10.0)
+    ap.add_argument("--transport", choices=("fifo", "paplay"), default="fifo",
+                    help="fifo: feeder writes /tmp/vmic.play; paplay: play into a null sink")
+    ap.add_argument("--sink", default="vmicsink",
+                    help="null sink name for --transport paplay (source is <sink>.monitor)")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -135,9 +145,10 @@ def main() -> int:
     open(jsonl, "w").close()
 
     ok, outputs = plumbing(args)
-    ready = run(args, "cat /tmp/vmic.done 2>/dev/null").strip()
+    ready = "READY" if args.transport == "paplay" else run(
+        args, "cat /tmp/vmic.done 2>/dev/null").strip()
     if not ok or not outputs or ready != "READY":
-        print(f"PRECONDITION FAIL: vmic={ok} outputs={outputs!r} feeder={ready!r}")
+        print(f"PRECONDITION FAIL: source={ok} outputs={outputs!r} transport={ready!r}")
         return 3
 
     rows = []
