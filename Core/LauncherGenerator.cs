@@ -231,9 +231,9 @@ public static class LauncherGenerator
                     export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
                     export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
                     export PAICOM_OWW_MIC_BUFFER_MS="${PAICOM_OWW_MIC_BUFFER_MS:-160}"
-                    export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.80}"
+                    export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.85}"
                     export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS="${PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS:-350}"
-                    export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-850}"
+                    export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-650}"
                 else
                     export PAICOM_OWW_THRESHOLD="${PAICOM_OWW_THRESHOLD:-0.7}"
                     export PAICOM_OWW_LOCK_MS="${PAICOM_OWW_LOCK_MS:-3000}"
@@ -241,9 +241,9 @@ public static class LauncherGenerator
                     export PAICOM_OWW_INFERENCE_THREAD_SCALE="${PAICOM_OWW_INFERENCE_THREAD_SCALE:-1.0}"
                     export PAICOM_OWW_VERBOSE_LOG="${PAICOM_OWW_VERBOSE_LOG:-false}"
                     export PAICOM_OWW_MIC_BUFFER_MS="${PAICOM_OWW_MIC_BUFFER_MS:-200}"
-                    export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.80}"
+                    export PAICOM_OWW_FUZZY_MATCH_CONFIDENCE="${PAICOM_OWW_FUZZY_MATCH_CONFIDENCE:-0.85}"
                     export PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS="${PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS:-450}"
-                    export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-1000}"
+                    export PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS="${PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS:-700}"
                 fi
 
                 export PAICOM_MIGRATION_MODE="$migration_mode"
@@ -1184,9 +1184,9 @@ public static class LauncherGenerator
                      "if not defined PAICOM_OWW_INFERENCE_THREAD_SCALE set PAICOM_OWW_INFERENCE_THREAD_SCALE=1.0\r\n" +
                      "if not defined PAICOM_OWW_VERBOSE_LOG set PAICOM_OWW_VERBOSE_LOG=false\r\n" +
                      "if not defined PAICOM_OWW_MIC_BUFFER_MS set PAICOM_OWW_MIC_BUFFER_MS=200\r\n" +
-                     "if not defined PAICOM_OWW_FUZZY_MATCH_CONFIDENCE set PAICOM_OWW_FUZZY_MATCH_CONFIDENCE=0.80\r\n" +
+                     "if not defined PAICOM_OWW_FUZZY_MATCH_CONFIDENCE set PAICOM_OWW_FUZZY_MATCH_CONFIDENCE=0.85\r\n" +
                      "if not defined PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS set PAICOM_OWW_POST_WAKE_SILENCE_GRACE_MS=450\r\n" +
-                     "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=1000\r\n" +
+                     "if not defined PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS set PAICOM_OWW_SPEECH_SILENCE_CUTOFF_MS=700\r\n" +
                      "if not defined PAICOM_MIGRATION_MODE set PAICOM_MIGRATION_MODE=full\r\n" +
                      "set \"MODELS_DIR=%~dp0models\"\r\n" +
                      "if exist \"%MODELS_DIR%\\\" (\r\n" +
@@ -1273,6 +1273,46 @@ public static class LauncherGenerator
 
             PAIcom is a Windows application. Use **Wine** to run it natively on Linux.
 
+            > **Ignore `[LAUNCH HERE].exe` — it is a decoy that ships with the game
+            > itself, not the program.** The real game is `uninstall.exe`; run it
+            > (or the patched `uninstall.exe.patched.exe`) with `run.sh` on Linux,
+            > directly on Windows, or with `launch.command` on macOS.
+
+            ## Requirements
+
+            - **RAM:** at least **4 GB** of system memory for plain Wine.
+              Running through Steam with Proton needs **6 GB**; with 4 GB the
+              kernel can kill the process during startup (observed as an
+              out-of-memory kill at roughly 1.3 GB resident).
+            - **Display:** a working X display is required. PAIcom opens real
+              windows, and a Wine or Proton prefix created with no display
+              produces a broken layout (windows collapse into thin slivers).
+              On a headless machine, start a virtual display before the first
+              run, for example `Xvfb :99 & export DISPLAY=:99`, and create the
+              prefix with that display set.
+
+            ## Steam / Proton
+
+            If you run PAIcom through Steam with Proton instead of plain Wine:
+
+            1. Patch `uninstall.exe` with the patcher; it writes
+               `uninstall.exe.patched.exe`.
+            2. Rename that file to `uninstall.exe` and put it in the game folder,
+               replacing the original. This is safe: the patch keeps everything
+               the original file had and only adds its fixes.
+            3. Open the game's **Properties**, then **Launch Options**, and set
+               `WINEDLLOVERRIDES="mscoree=b" %command%`.
+            4. Under **Properties**, then **Compatibility**, force **Proton
+               Experimental** or **Proton 8.x**. Proton 9 has been seen to open
+               this menu with no Start button; if that happens, switch versions.
+               PAIcom shows a startup warning when it detects Proton 9.
+
+            Steam then builds the prefix, sets the environment and starts the
+            patched binary itself. Allow at least 6 GB of RAM for Steam plus
+            Proton (see Requirements). If Steam verifies or updates the game
+            files later it may restore the original `uninstall.exe`; reapply
+            steps 1 and 2 if that happens.
+
             ## Recommended: Smart Setup Wizard
 
             Run:
@@ -1334,6 +1374,30 @@ public static class LauncherGenerator
             Verify microphone routing in `winecfg` and review `launcher-runtime.log`
             for `[compat][speech]` diagnostics.
 
+            ## Voice Runtime Files (do not copy the exe alone)
+
+            Patching rewrites `uninstall.exe`, but the voice pipeline needs support
+            files in the game folder. Keep the patcher output together when you
+            copy the patched game into a clean install folder:
+
+            - `PAIcom.OWW.dll`
+            - `Microsoft.ML.OnnxRuntime.dll`, `onnxruntime.dll`
+            - `Vosk.dll`, `libvosk.dll`
+            - `NAudio.Core.dll`, `NAudio.WinMM.dll`
+            - `System.Buffers.dll`, `System.Memory.dll`,
+              `System.Numerics.Vectors.dll`,
+              `System.Runtime.CompilerServices.Unsafe.dll`
+            - `libgcc_s_seh-1.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll`
+
+            Also copy the `models` folder (the Vosk English model, about 68 MB).
+            Without it the app tries a first-run download and speech dispatch stays
+            empty until that finishes.
+
+            Symptoms when files are missing:
+            - an unhandled dialog "Could not load file or assembly
+              'Microsoft.ML.OnnxRuntime'" over the menu, and no voice;
+            - wake detection works but no transcript or command dispatch.
+
             ## Vosk Model Auto-Download
 
             On first launch, PAIcom downloads a ~40 MB English speech model to:
@@ -1372,6 +1436,11 @@ public static class LauncherGenerator
             # Running PAIcom on macOS
 
             PAIcom is a Windows application. Use **Wine** (or a Wine wrapper) to run it.
+
+            > **Ignore `[LAUNCH HERE].exe` — it is a decoy that ships with the game
+            > itself, not the program.** The real game is `uninstall.exe`; run it
+            > (or the patched `uninstall.exe.patched.exe`) with `launch.command` on
+            > macOS, `run.sh` on Linux, or directly on Windows.
 
             ## Recommended: Smart Setup Wizard
 
