@@ -1152,16 +1152,11 @@ public static class OpenWakeWordHelper
                 // Report architecture diagnostics at startup
                 ReportStartupDiagnostics();
 
-                // Tamper-evident tripwire: one-time, warn-and-continue,
-                // non-fatal by construction (see TripwireCheck).
-                try
-                {
-                    TripwireCheck.RunOnceForCurrentProcess(LogEvent);
-                }
-                catch (Exception tripEx)
-                {
-                    LogEvent($"[tripwire] check failed (non-fatal): {tripEx.GetType().Name}");
-                }
+                // D-INIT-NOBLOCK: the tamper-evident tripwire shows a MODAL popup.
+                // It must NOT run while _initLock is held - on Fedora the popup
+                // pinned this lock ~79 s, and the wake/handoff path
+                // (EnsureMicrophoneCaptureStarted) takes the same lock. It now
+                // runs AFTER the lock is released (see the end of this method).
 
                 // Load settings from environment or use embedded defaults
                 var embeddedSettings = OpenWakeWordSettings.CreateDefault();
@@ -1199,8 +1194,6 @@ public static class OpenWakeWordHelper
 
                 StartTestCommandQueueLoopIfEnabled();
 
-                StartPatreonFormattingFixLoop();
-                
                 LogEvent($"Initialized with settings: {_settings}");
 
                 // Create lock manager (hard lock = 3000ms)
@@ -1324,11 +1317,6 @@ public static class OpenWakeWordHelper
                 }, null);
                 }
 
-                // Initialize sequential method testing mode if enabled
-                InitializeMethodTestingMode();
-                
-                // Initialize file-based command input if enabled
-                InitializeFileCommandInput();
             }
             catch (Exception ex)
             {
@@ -1354,6 +1342,47 @@ public static class OpenWakeWordHelper
                 }
             }
         }
+
+        // ---- UI-touching work runs OUTSIDE _initLock ----------------------
+        // None of the following may run while _initLock is held: the tripwire
+        // shows a MODAL popup and StartPatreonFormattingFixLoop reflects into
+        // the app's form tree. The wake/handoff path
+        // (EnsureMicrophoneCaptureStarted) takes _initLock, so any long hold
+        // here stalls the app's menu construction.
+
+        // Proton 9 warning: detect only here. The popup is raised from a
+        // background thread after the app paints, so init is never blocked.
+        try { ProtonWarning.CheckAndWarnAtStartup(LogEvent); }
+        catch (Exception protonEx) { LogEvent($"[proton] warning check failed (non-fatal): {protonEx.GetType().Name}"); }
+
+        try { StartPatreonFormattingFixLoop(); }
+        catch (Exception patreonEx) { LogEvent($"[init] patreon-format start failed (non-fatal): {patreonEx.GetType().Name}"); }
+
+        // Tamper-evident tripwire: one-time, warn-and-continue, non-fatal by
+        // construction. It hashes the host executable and shows a modal notice
+        // when the baseline does not match, so it runs on a background thread
+        // after the lock is released - never on the init path, where the popup
+        // would stall menu construction.
+        try
+        {
+            var tripwire = new Thread(() =>
+            {
+                try { TripwireCheck.RunOnceForCurrentProcess(LogEvent); }
+                catch (Exception tripEx) { LogEvent($"[tripwire] check failed (non-fatal): {tripEx.GetType().Name}"); }
+            })
+            { IsBackground = true, Name = "PAIcomTripwire" };
+            tripwire.Start();
+        }
+        catch (Exception tripStartEx)
+        {
+            LogEvent($"[tripwire] could not start check (non-fatal): {tripStartEx.GetType().Name}");
+        }
+
+        try { InitializeMethodTestingMode(); }
+        catch (Exception mtEx) { LogEvent($"[init] method-testing init failed (non-fatal): {mtEx.GetType().Name}"); }
+
+        try { InitializeFileCommandInput(); }
+        catch (Exception fciEx) { LogEvent($"[init] file-command input init failed (non-fatal): {fciEx.GetType().Name}"); }
     }
 
     /// <summary>

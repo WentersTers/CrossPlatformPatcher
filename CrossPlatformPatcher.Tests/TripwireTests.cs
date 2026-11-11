@@ -98,6 +98,39 @@ public sealed class TripwireTests
         Assert.False(File.Exists(TripwireBaseline.BaselinePathFor(output)));
     }
 
+    [Fact]
+    public void RunOnce_Notice_Suppressed_Logs_Verdict_And_Keeps_Notice_Armed()
+    {
+        using var temp = new TempDirectory();
+        var target = System.IO.Path.Combine(temp.Path, "subject.exe");
+        var bytes = new byte[] { 0x4D, 0x5A, 0x90, 0x00, 0x03, 0x04 };
+        File.WriteAllBytes(target, bytes);
+        File.WriteAllText(
+            target + TripwireCheck.BaselineSuffix,
+            $"sha256:{Convert.ToHexString(SHA256.HashData(bytes))}\nutc:2026-09-16T00:00:00Z\n");
+
+        var log = new List<string>();
+        TripwireCheck.RunOnce(target, log.Add, showNotice: false);
+
+        Assert.Contains(log, line => line.Contains("verdict=Match"));
+        Assert.False(File.Exists(target + TripwireCheck.SeenSuffix),
+            "Suppressed notice must leave the one-time notice armed.");
+    }
+
+    [Fact]
+    public void RunOnce_Skips_When_Seen_Flag_Exists()
+    {
+        using var temp = new TempDirectory();
+        var target = System.IO.Path.Combine(temp.Path, "subject.exe");
+        File.WriteAllBytes(target, new byte[] { 0x4D, 0x5A });
+        File.WriteAllText(target + TripwireCheck.SeenSuffix, "seen-utc:test\n");
+
+        var log = new List<string>();
+        TripwireCheck.RunOnce(target, log.Add, showNotice: false);
+
+        Assert.Empty(log);
+    }
+
     private static string BuildNoOpFixture(string directory)
     {
         var source = """

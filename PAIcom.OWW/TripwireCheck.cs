@@ -86,6 +86,16 @@ public static class TripwireCheck
 
     /// <summary>Entry point for the host process: resolve exe path, run once.</summary>
     public static void RunOnceForCurrentProcess(Action<string> log)
+        => RunOnceForCurrentProcess(log, showNotice: true);
+
+    /// <summary>
+    /// Same as above, but with <paramref name="showNotice"/> false the modal
+    /// notice is NEVER shown - the verdict is still computed and logged, and
+    /// the seen-flag is NOT written (the one-time notice stays armed). Callers
+    /// that must not block a UI thread use this. The default entry point keeps
+    /// the notice, and runs off the init thread.
+    /// </summary>
+    public static void RunOnceForCurrentProcess(Action<string> log, bool showNotice)
     {
         string? exePath = null;
         try
@@ -102,14 +112,14 @@ public static class TripwireCheck
             log("[tripwire] skipped: host executable path unknown.");
             return;
         }
-        RunOnce(exePath!, log);
+        RunOnce(exePath!, log, showNotice);
     }
 
     /// <summary>
     /// One-time check for <paramref name="exePath"/>. Writes the seen-flag
     /// only after the notice was actually shown.
     /// </summary>
-    public static void RunOnce(string exePath, Action<string> log)
+    public static void RunOnce(string exePath, Action<string> log, bool showNotice = true)
     {
         var seenPath = exePath + SeenSuffix;
         try
@@ -140,13 +150,22 @@ public static class TripwireCheck
 
         try
         {
-            ShowPopup(verdict);
+            if (showNotice)
+                ShowPopup(verdict);
         }
         catch (Exception ex)
         {
             // Non-interactive start (session-0) lands here: defer, do NOT
             // consume the one-time notice.
             log($"[tripwire] notice deferred ({ex.GetType().Name}); continuing.");
+            return;
+        }
+
+        if (!showNotice)
+        {
+            // No UI from this caller, and the notice stays armed (no seen-flag
+            // write) so a later run can still show it.
+            log("[tripwire] notice suppressed for this caller (verdict logged; seen-flag NOT written).");
             return;
         }
 

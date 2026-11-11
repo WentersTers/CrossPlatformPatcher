@@ -37,6 +37,7 @@
     <Compile Include="..\PAIcom.OWW\SapiSuppression.cs" />
     <Compile Include="..\PAIcom.OWW\ProductSapiObserver.cs" />
     <Compile Include="..\PAIcom.OWW\AnimationBoxSelection.cs" />
+    <Compile Include="..\PAIcom.OWW\ProtonWarning.cs" />
   </ItemGroup>
 
   <ItemGroup>
