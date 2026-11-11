@@ -16,6 +16,7 @@ This folder is the active documentation index for developers and AI agents worki
 - [Build Outputs](BUILD_OUTPUTS.md): detailed structure of all build artifacts
 - [Installer Guide](INSTALLER_GUIDE.md): macOS native `.app` code signing and distribution
 - [Version Registry](VERSION_REGISTRY.md): supported PAIcom builds, patch strategies, refusals and manifests
+- [Voice Battery](VOICE_BATTERY.md): the voice protocol, its sets and its scoring
 - [macOS Setup](SETUP_MAC.md): user-facing macOS setup documentation
 
 Use [build-and-test.sh](../scripts/build-and-test.sh) for the standard developer validation workflow.
