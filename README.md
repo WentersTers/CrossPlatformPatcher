@@ -46,8 +46,10 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Arch | GE-Proton 11-7 | Full |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 
-† Voice engine initializes (markers verified); full voice battery not run on
-this runtime.
+† Voice battery run on this runtime (2026-11-10): 12 of 13 wake-plus-command
+combos dispatched the correct command and 10 of 10 negatives stayed silent and
+URLs opened, but one combo misrouted and single short wake takes did not
+re-trigger. Voice works here; it is not certified Full.
 
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable

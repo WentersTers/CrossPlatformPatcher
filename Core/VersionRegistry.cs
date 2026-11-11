@@ -119,7 +119,7 @@ public static class VersionRegistry
                 "so verification uses structure rather than a fixed output hash.",
             CertifiedOs: new[]
             {
-                "Ubuntu 24.04 (Wine 11 menu+pet; GE-Proton 11-7 and Steam Proton Exp full)",
+                "Ubuntu 24.04 (Wine 11 menu+pet, voice 12/13 combos; GE-Proton 11-7 and Steam Proton Exp full)",
                 "Fedora 41 (GE-Proton 11-7)",
                 "Fedora 43 (Distro Wine 11.0)",
                 "Fedora 44 (Distro Wine, menu+pet only)",

@@ -51,13 +51,17 @@ Current entries:
 
 Certified operating systems per entry:
 
-- `61942e6c`: Ubuntu 24.04 (Wine 11, menu+pet only; GE-Proton 11-7 and
-  Steam Proton Experimental full); Fedora 41 (GE-Proton 11-7); Fedora 43
-  (distro Wine 11.0); Fedora 44 (distro Wine, menu and pet only); Arch
-  (GE-Proton 11-7).
+- `61942e6c`: Ubuntu 24.04 (Wine 11, menu+pet, voice battery 12/13 combos with
+  10/10 negatives; GE-Proton 11-7 and Steam Proton Experimental full);
+  Fedora 41 (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44
+  (distro Wine, menu and pet only); Arch (GE-Proton 11-7).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
-"Menu and pet only" is deliberately weaker than a voice certification. Ubuntu
+"Menu and pet only" is deliberately weaker than a voice certification. The
+Wine 11 entry on Ubuntu 24.04 has had a voice battery run (2026-11-10): 12 of
+13 wake-plus-command combos dispatched the correct command, 10 of 10 negatives
+stayed silent and URLs opened, but one combo misrouted and single short wake
+takes did not re-trigger, so it is not Full. Ubuntu
 22.04 and Debian 12 have menu-and-pet walk records from the older build-5
 campaign, but those records are not part of this repository and there is no
 voice run against the current build, so neither is listed as certified.
