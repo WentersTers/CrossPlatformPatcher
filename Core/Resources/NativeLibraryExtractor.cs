@@ -31,6 +31,11 @@ public static class NativeLibraryExtractor
         "vosk.managed.dll",
         "naudio.core.dll",
         "naudio.winmm.dll",
+        // Fedora's distro wine-mono loads libmono, which imports a Windows
+        // iconv.dll that the Fedora package does not ship. Deploying it next
+        // to the patched exe satisfies the loader without touching the
+        // system mono (verified on Fedora 44 / wine-11.0).
+        "native.iconv.dll",
     ];
 
     /// <summary>
@@ -99,6 +104,7 @@ public static class NativeLibraryExtractor
         "vosk.native.win-pthread.dll" => "libwinpthread-1.dll",
         "naudio.core.dll" => "NAudio.Core.dll",
         "naudio.winmm.dll" => "NAudio.WinMM.dll",
+        "native.iconv.dll" => "iconv.dll",
         _ => sourceName,
     };
 

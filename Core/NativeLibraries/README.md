@@ -17,6 +17,27 @@ Do **not** replace them unless you are upgrading the Vosk version.
 | `vosk-win-pthread-x86.dll` | Windows x86 | pthread runtime (libwinpthread-1) |
 | `libvosk-linux-x64.so` | Linux x64 | |
 | `libvosk-osx-universal.dylib` | macOS (Intel + Apple Silicon) | Universal binary |
+| `iconv.dll` | Windows x64 + Wine | Windows libiconv, 64-bit PE, 39,456 bytes. Fedora's `wine-mono` package does not ship it and mono fails with "Could not load Mono"; deploying it beside the exe satisfies the loader.
+
+`iconv.dll` provenance: copied from the mingw-w64 sysroot
+(`/usr/x86_64-w64-mingw32/sys-root/mingw/bin/iconv.dll`, libiconv 1.17 as
+packaged by Fedora 44). libiconv is LGPL-2.1-or-later; the unmodified binary is
+redistributed here as a runtime dependency, which the licence permits when the
+licence text and source offer accompany it. Do not replace it with a 32-bit
+build: the patched app runs 64-bit under Wine.
+
+Populate it on a fresh checkout (the `.dll` files in this folder are not
+tracked):
+
+```sh
+# Fedora
+sudo dnf install -y mingw64-libiconv
+cp /usr/x86_64-w64-mingw32/sys-root/mingw/bin/iconv.dll \
+   Core/NativeLibraries/iconv.dll
+
+# Debian/Ubuntu (package layout varies; any 64-bit mingw libiconv works)
+find /usr/x86_64-w64-mingw32 -name iconv.dll -exec cp {} Core/NativeLibraries/iconv.dll \;
+```
 
 Linux ARM64 is not included in the Vosk 0.3.38 NuGet package. The feature
 will degrade gracefully to file-based command dispatch on that platform.

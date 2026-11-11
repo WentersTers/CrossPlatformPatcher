@@ -213,6 +213,8 @@ Required beside the game executable:
 - `System.Buffers.dll`, `System.Memory.dll`, `System.Numerics.Vectors.dll`,
   `System.Runtime.CompilerServices.Unsafe.dll`
 - `libgcc_s_seh-1.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll`
+- `iconv.dll` (required by distributions whose wine-mono does not ship it,
+  notably Fedora; harmless elsewhere)
 
 Also copy the `models` folder (the Vosk English model, about 68 MB) from the
 patcher output. If it is missing, the app tries a first-run download and

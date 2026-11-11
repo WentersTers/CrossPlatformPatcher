@@ -19,6 +19,7 @@ public sealed class NativeLibraryExtractorTests
     [InlineData("vosk.native.win-stdc-x86.dll", "libstdc++-6.dll")]
     [InlineData("vosk.native.win-pthread-x86.dll", "libwinpthread-1.dll")]
     [InlineData("naudio.core.dll", "NAudio.Core.dll")]
+    [InlineData("native.iconv.dll", "iconv.dll")]
     [InlineData("onnxruntime.dll", "onnxruntime.dll")]
     [InlineData("libonnxruntime.so", "libonnxruntime.so")]
     [InlineData("onnxruntime.dylib", "onnxruntime.dylib")]
@@ -35,6 +36,7 @@ public sealed class NativeLibraryExtractorTests
         Assert.Contains("onnxruntime.managed.dll", NativeLibraryExtractor.DefaultEmbeddedDllNames);
         Assert.Contains("vosk.managed.dll", NativeLibraryExtractor.DefaultEmbeddedDllNames);
         Assert.Contains("System.Memory.dll", NativeLibraryExtractor.DefaultEmbeddedDllNames);
+        Assert.Contains("native.iconv.dll", NativeLibraryExtractor.DefaultEmbeddedDllNames);
     }
 
     [Fact]

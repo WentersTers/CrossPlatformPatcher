@@ -63,6 +63,7 @@
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-stdc-x86.dll" LogicalName="vosk.native.win-stdc-x86.dll" Condition="Exists('Core\NativeLibraries\vosk-win-stdc-x86.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-pthread-x86.dll" LogicalName="vosk.native.win-pthread-x86.dll" Condition="Exists('Core\NativeLibraries\vosk-win-pthread-x86.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-x64.dll" LogicalName="vosk.native.win-x64.dll" Condition="Exists('Core\NativeLibraries\vosk-win-x64.dll')" />
+    <EmbeddedResource Include="Core\NativeLibraries\iconv.dll" LogicalName="native.iconv.dll" Condition="Exists('Core\NativeLibraries\iconv.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-gcc.dll" LogicalName="vosk.native.win-gcc.dll" Condition="Exists('Core\NativeLibraries\vosk-win-gcc.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-stdc.dll" LogicalName="vosk.native.win-stdc.dll" Condition="Exists('Core\NativeLibraries\vosk-win-stdc.dll')" />
     <EmbeddedResource Include="Core\NativeLibraries\vosk-win-pthread.dll" LogicalName="vosk.native.win-pthread.dll" Condition="Exists('Core\NativeLibraries\vosk-win-pthread.dll')" />
