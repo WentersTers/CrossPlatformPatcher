@@ -654,6 +654,12 @@ fire sporadically. This is PAIcom's behaviour, not the patcher's: it has been
 observed across multiple platforms, and the root cause may sit in the speech
 recognition layer or in command matching. Investigation is ongoing.
 
+One route was found and fixed: the matcher used to accept a fuzzy keyword hit
+on exactly half of a command's words, so "if i call please flip a coin" could
+dispatch "why are you calling me a researcher" on the strength of
+`call` ~ `calling` alone. That route is closed; if the command still fires on
+typing noise, the recognition layer is the remaining suspect.
+
 Workaround: mute the microphone while typing, or disable the voice feature.
 
 ### macOS: "wine not found"

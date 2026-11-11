@@ -383,6 +383,35 @@ public sealed class FuzzyMatcher
     }
 
     /// <summary>
+    /// True when <paramref name="longWord"/> is <paramref name="shortWord"/>
+    /// plus a common English inflectional suffix (call -> calling,
+    /// open -> opened, note -> notes). Such a pair is a stem and its
+    /// inflection, not a misheard truncation, so containment must not score
+    /// it as a keyword hit.
+    /// </summary>
+    private static bool IsInflectionalExtension(string shortWord, string longWord)
+    {
+        if (shortWord.Length < 3 || longWord.Length <= shortWord.Length)
+            return false;
+        if (!longWord.StartsWith(shortWord, StringComparison.Ordinal))
+            return false;
+
+        var suffix = longWord.Substring(shortWord.Length);
+        foreach (var candidate in InflectionSuffixes)
+        {
+            if (string.Equals(suffix, candidate, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static readonly string[] InflectionSuffixes =
+    {
+        "ing", "ings", "ed", "er", "ers", "est", "ly", "s", "es",
+    };
+
+    /// <summary>
     /// Document frequency of each content word across the command list.
     /// </summary>
     private static Dictionary<string, int> BuildWordFrequency(IEnumerable<string> commands)
@@ -633,9 +662,18 @@ public sealed class FuzzyMatcher
             var shortWord = s1.Length <= s2.Length ? s1 : s2;
             var longWord = s1.Length <= s2.Length ? s2 : s1;
             var ratio = (float)shortWord.Length / longWord.Length;
-            if (ratio >= 0.75f)
+
+            // An inflected form is not a truncation. "call" inside "calling"
+            // is a stem plus a suffix, and scoring it at 0.90 let
+            // "if i call please flip a coin" route to
+            // "why are you calling me a researcher". Genuine truncations
+            // ("spotif"/"spotify", "browse"/"browser") and compounds
+            // ("pony"/"ponytail") keep the containment credit.
+            var inflected = IsInflectionalExtension(shortWord, longWord);
+
+            if (!inflected && ratio >= 0.75f)
                 return 0.90f;
-            if (ratio >= 0.50f && longWord.StartsWith(shortWord, StringComparison.Ordinal))
+            if (!inflected && ratio >= 0.50f && longWord.StartsWith(shortWord, StringComparison.Ordinal))
                 return 0.90f;
         }
 

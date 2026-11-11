@@ -108,4 +108,45 @@ public class FuzzyMatcherCorpusTests
         Assert.NotNull(match);
         Assert.Equal("show hiking places near me", match!.MatchedCommand);
     }
+
+    // L01 (Ubuntu 24.04 / Wine 11), 2026-11-10. The ASR heard the "flip a
+    // coin" take as "if i call please flip a coin"; the fuzzy keyword stage
+    // scored 'call' ~ 'calling' at 90 % and accepted the match on exactly 50 %
+    // command coverage, dispatching "why are you calling me a researcher".
+    private static readonly string[] ResearcherCorpus =
+    {
+        "why are you calling me a researcher",
+        "open twitch",
+        "open spotify",
+        "open hulu",
+        "open the browser",
+        "please hide",
+        "stop listening",
+        "show hiking places near me",
+        "play some music",
+        "show me a meme",
+    };
+
+    [Fact]
+    public void GarbledFlipACoin_DoesNotRouteToResearcher()
+    {
+        var match = FuzzyMatcher.FindClosestMatch("if i call please flip a coin", ResearcherCorpus, Threshold);
+        Assert.Null(match);
+    }
+
+    [Fact]
+    public void BareCall_DoesNotRouteToResearcher()
+    {
+        Assert.Null(FuzzyMatcher.FindClosestMatch("call", ResearcherCorpus, Threshold));
+        Assert.Null(FuzzyMatcher.FindClosestMatch("i call", ResearcherCorpus, Threshold));
+    }
+
+    [Fact]
+    public void ResearcherCommand_StillMatches()
+    {
+        var match = FuzzyMatcher.FindClosestMatch(
+            "hey paicom why are you calling me a researcher", ResearcherCorpus, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("why are you calling me a researcher", match!.MatchedCommand);
+    }
 }
