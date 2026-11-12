@@ -279,9 +279,12 @@ case "$OS_ID" in
     ;;
   fedora-41|fedora-42|fedora-43|fedora-44)
     log "-- fedora display/capture stack via dnf"
-    gssh "$GUEST_IP" "sudo dnf install -y xorg-x11-server-Xvfb xdpyinfo xwininfo xprop xdotool openbox scrot ImageMagick dejavu-sans-fonts wget curl" \
+    gssh "$GUEST_IP" "sudo dnf install -y xorg-x11-server-Xvfb xdpyinfo xwininfo xprop xdotool openbox scrot ImageMagick dejavu-sans-fonts wget curl epiphany xdg-utils" \
       || die "fedora display stack install failed"
     note_pkg "fedora-display-stack" "ssh-dnf"
+    # URL commands need a handler or they log "could not find a suitable app".
+    gssh "$GUEST_IP" "xdg-settings set default-web-browser org.gnome.Epiphany.desktop 2>/dev/null; \
+      xdg-settings get default-web-browser 2>/dev/null || true"
     ;;
 esac
 
