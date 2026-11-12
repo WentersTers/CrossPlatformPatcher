@@ -190,4 +190,24 @@ public class FuzzyMatcherCorpusTests
         // must not route it.
         Assert.Null(FuzzyMatcher.FindClosestMatch("if i call please flip a coin", ResearcherCorpus, Threshold));
     }
+
+    // L09 (2026-11-12): ASR debris "like up" before "open the point shop"
+    // made the first keyword in the input ('like', unique to the chatgpt
+    // command) win on half-coverage. The exact-keyword stage must pick the
+    // best-covered hit, not the first one.
+    [Fact]
+    public void Asr_Debris_Before_PointShop_Picks_The_Better_Covered_Command()
+    {
+        string[] commands =
+        {
+            "open the point shop",
+            "do you like chat gi bi ti",
+            "open twitch",
+            "open the browser",
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("like up open the point shop", commands, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("open the point shop", match!.MatchedCommand);
+    }
 }

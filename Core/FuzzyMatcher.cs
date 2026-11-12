@@ -519,19 +519,35 @@ public sealed class FuzzyMatcher
         IEnumerable<string> commands,
         Action<string>? logger)
     {
+        // Exact keyword hits: several input words can be keywords of
+        // different commands ("like up open the point shop" hits both 'like'
+        // and 'point'). Take the hit with the most command coverage instead
+        // of the first keyword in the input, which let ASR debris route to a
+        // barely-covered command (that phrase dispatched
+        // "do you like chat gi bi ti" on 0.5 coverage).
+        (string command, string keyword, float confidence)? bestExact = null;
+        var bestCoverage = 0.0f;
         foreach (var word in inputWords)
         {
-            if (keywordIndex.TryGetValue(word, out var command))
-            {
-                var coverage = CalculateCommandCoverage(inputWords, NormalizeString(command));
-                if (coverage >= MinCommandCoverage)
-                {
-                    return (command, word, 0.95f);
-                }
+            if (!keywordIndex.TryGetValue(word, out var command))
+                continue;
 
+            var coverage = CalculateCommandCoverage(inputWords, NormalizeString(command));
+            if (coverage < MinCommandCoverage)
+            {
                 logger?.Invoke($"[oww-fuzzy] Keyword '{word}' -> '{command}' rejected: coverage {coverage:P0} < {MinCommandCoverage:P0}");
+                continue;
+            }
+
+            if (coverage > bestCoverage)
+            {
+                bestCoverage = coverage;
+                bestExact = (command, word, 0.95f);
             }
         }
+
+        if (bestExact != null)
+            return bestExact;
 
         // Partial matches: check if any keyword contains or is contained by input words
         foreach (var word in inputWords)
