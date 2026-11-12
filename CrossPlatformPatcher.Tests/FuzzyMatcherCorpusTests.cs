@@ -149,4 +149,45 @@ public class FuzzyMatcherCorpusTests
         Assert.NotNull(match);
         Assert.Equal("why are you calling me a researcher", match!.MatchedCommand);
     }
+
+    // L01/L09/L14 batteries (2026-11-11/12): the ASR drops "open" before
+    // "browser" and splits "youtube" into two words on every stack. Both
+    // must still dispatch.
+    private static readonly string[] BrowserCorpus =
+    {
+        "open the browser",
+        "show browser history",
+        "close browser tabs",
+        "open discord",
+        "open twitch",
+    };
+
+    [Fact]
+    public void DroppedOpen_Routes_Browser_Via_Head_Noun()
+    {
+        // "browser" appears in three commands, so the shared stage is the
+        // route and its distinctive-word gate is what used to refuse it.
+        var match = FuzzyMatcher.FindClosestMatch("the browser", BrowserCorpus, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("open the browser", match!.MatchedCommand);
+    }
+
+    [Fact]
+    public void SplitYoutube_Routes_To_Youtube()
+    {
+        string[] commands = { "open youtube", "open twitch", "open spotify" };
+        var match = FuzzyMatcher.FindClosestMatch(
+            "a bike i'm hoping you tube", commands, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("open youtube", match!.MatchedCommand);
+    }
+
+    [Fact]
+    public void Head_Noun_Rule_Does_Not_Revive_The_Researcher_Route()
+    {
+        // The head of "why are you calling me a researcher" is "researcher",
+        // which the garbled coin take does not contain; the head-noun rule
+        // must not route it.
+        Assert.Null(FuzzyMatcher.FindClosestMatch("if i call please flip a coin", ResearcherCorpus, Threshold));
+    }
 }

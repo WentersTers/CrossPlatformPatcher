@@ -443,14 +443,30 @@ public sealed class FuzzyMatcher
 
     /// <summary>
     /// True when at least one DISTINCTIVE command word (document frequency
-    /// <= 2) is near an input word (edit-similarity >= 0.33). A ubiquitous
-    /// verb like "open"/"show"/"please" never satisfies this on its own.
+    /// <= 2) is near an input word (edit-similarity >= 0.33), or when the
+    /// command's head noun appears verbatim in the input. A ubiquitous verb
+    /// like "open"/"show"/"please" never satisfies this on its own.
     /// </summary>
     private static bool HasDistinctiveNearWord(string[] inputWords, string command, Dictionary<string, int> wordFrequency)
     {
         var commandWords = NormalizeString(command)
             .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
-            .Where(w => !IsStopWord(w));
+            .Where(w => !IsStopWord(w))
+            .ToArray();
+
+        // The head noun verbatim is evidence even when it is not rare: with
+        // several commands sharing "browser", the ASR drop "the browser" must
+        // still reach "open the browser". Length 5+ keeps this off short
+        // generic words ("call", "hi"), so it cannot resurrect the
+        // "if i call please flip a coin" -> researcher route, whose head noun
+        // ("researcher") is absent from that input anyway.
+        if (commandWords.Length > 0)
+        {
+            var head = commandWords[commandWords.Length - 1];
+            if (head.Length >= 5 &&
+                inputWords.Contains(head, StringComparer.OrdinalIgnoreCase))
+                return true;
+        }
 
         foreach (var commandWord in commandWords)
         {
@@ -857,6 +873,9 @@ public sealed class FuzzyMatcher
         ["chat g p t"] = "chat gi bi ti",
         ["fiverr"] = "fiver",
         ["h b o"] = "hbo",
+        ["you tube"] = "youtube",
+        ["u tube"] = "youtube",
+        ["you toob"] = "youtube",
         ["holy"] = "hulu",
         ["pin terest"] = "pinterest",
         ["vin tid"] = "vinted"
