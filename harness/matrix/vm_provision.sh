@@ -552,6 +552,22 @@ case "$RUNTIME_ID" in
         wineserver -w; tail -5 /tmp/mono-install.log" || die "wine-mono msiexec failed"
       log "   wine-mono installed into $GUEST_PREFIX"
     fi
+    # Fedora's wine ships RichEdit and gdiplus stubs that crash the app's
+    # forms (2026-11-11: EM_SETLANGOPTIONS stub, then a GDI+
+    # InvalidParameter inside the WinForms exception dialog, ~13 s after
+    # launch). Install the native components into the prefix.
+    case "$OS_ID" in
+      fedora*)
+        log "-- winetricks riched20 + gdiplus (Fedora wine UI stubs)"
+        gssh "$GUEST_IP" "sudo dnf install -y winetricks cabextract p7zip >/tmp/winetricks-install.log 2>&1 || \
+          { sudo curl -fsSL -o /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks && sudo chmod +x /usr/local/bin/winetricks; }; \
+          command -v winetricks || echo no-winetricks"
+        gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64 DISPLAY=$DISPLAY_NUM WINEDLLOVERRIDES='mscoree,mshtml='; \
+          timeout 900 winetricks -q riched20 gdiplus > /tmp/winetricks-verbs.log 2>&1; echo WINETRICKS-RC=\$?; \
+          tail -4 /tmp/winetricks-verbs.log; \
+          ls -l '$GUEST_PREFIX/drive_c/windows/system32/riched20.dll' '$GUEST_PREFIX/drive_c/windows/system32/gdiplus.dll' 2>/dev/null" || true
+        ;;
+    esac
     gssh "$GUEST_IP" "find '$GUEST_PREFIX' -iname 'mscorlib.dll' 2>/dev/null | head -5"
     ;;
 esac
