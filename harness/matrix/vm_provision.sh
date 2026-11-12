@@ -549,6 +549,12 @@ case "$RUNTIME_ID" in
       || die "prefix pre-warm display failed (display $DISPLAY_NUM)"
     gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX' WINEARCH=win64 DISPLAY=$DISPLAY_NUM; \
       WINEDLLOVERRIDES='mscoree,mshtml=' wineboot -u >/dev/null 2>&1; wineserver -w" || die "prefix init failed"
+    # WINEARCH can be ignored by the distro wine wrapper (seen 2026-11-12 on
+    # Debian 12: the prefix came out 32-bit and the app refused to start with
+    # "WINEARCH set to win64 but ... is a 32-bit installation"). Fail loudly
+    # instead of snapshotting a broken prefix.
+    gssh "$GUEST_IP" "grep -m1 '#arch=' '$GUEST_PREFIX/system.reg' 2>/dev/null" \
+      | grep -q 'win64' || die "prefix is not win64 after wineboot"
     if [ -n "$GUEST_MSI_PATH" ] && [ "$MONO_MSI_ASSERT" = "PASS" ]; then
       gssh "$GUEST_IP" "export WINEPREFIX='$GUEST_PREFIX'; \
         wine msiexec /i '$GUEST_MSI_PATH' /qn >/tmp/mono-install.log 2>&1; \
