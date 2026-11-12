@@ -210,4 +210,23 @@ public class FuzzyMatcherCorpusTests
         Assert.NotNull(match);
         Assert.Equal("open the point shop", match!.MatchedCommand);
     }
+
+    // L01 (2026-11-12): the ASR dropped "show hiking" and left "by places
+    // near me". The tail "places near me" is shared by hiking, pizza and cool
+    // in the deployed manifest, so the distinguishing word is gone and any
+    // pick would be a coin flip. Silence is the correct outcome - the same
+    // principle that closed the researcher route.
+    [Fact]
+    public void Dropped_Distinguishing_Word_Does_Not_Guess_Between_Siblings()
+    {
+        string[] commands =
+        {
+            "show hiking places near me",
+            "show pizza places near me",
+            "show cool places near me",
+            "open twitch",
+        };
+
+        Assert.Null(FuzzyMatcher.FindClosestMatch("by places near me", commands, Threshold));
+    }
 }
