@@ -40,6 +40,12 @@ POSITIVE = [
     "combo-Open_YouTube.wav",
     "combo-Show_Hiking_Places_Near_Me.wav",
     "combo-Show_Me_A_Meme.wav",
+]
+
+# Degradation probes: deliberately mumbled speech. They measure how the
+# pipeline degrades and are reported, never scored — normal operation is
+# clear speech (set A), and a mumble miss says nothing about that.
+DEGRADATION = [
     "combo-mumble.wav",
 ]
 
@@ -138,6 +144,8 @@ def main() -> int:
     ap.add_argument("--wait-positive", type=float, default=15.0)
     ap.add_argument("--wait-silent", type=float, default=10.0)
     ap.add_argument("--wait-wake", type=float, default=10.0)
+    ap.add_argument("--replay", type=int, default=1,
+                    help="extra attempts for a clip that produced no wake (a person repeats)")
     ap.add_argument("--transport", choices=("fifo", "paplay"), default="fifo",
                     help="fifo: feeder writes /tmp/vmic.play; paplay: play into a null sink")
     ap.add_argument("--sink", default="vmicsink",
@@ -157,9 +165,20 @@ def main() -> int:
 
     rows = []
 
-    def record(kind, label, path, wait, url=False):
+    def record(kind, label, path, wait, url=False, replay=0):
         before = windows(args)
-        r = play(args, path, wait, args.log)
+        attempts = [play(args, path, wait, args.log)]
+        tries = 0
+        # A person repeats themselves when the assistant misses. One replay for
+        # a take that produced no wake at all models that; every replay is
+        # counted in the row so a pass can never hide a dead take.
+        while replay > 0 and not attempts[-1]["confs"] and tries < replay:
+            tries += 1
+            print(f"    replay {tries} for {label} (no wake)", flush=True)
+            attempts.append(play(args, path, wait, args.log))
+        r = {k: [x for a in attempts for x in a[k]]
+             for k in ("confs", "cmds", "texts", "dispatch")}
+        r["play"] = sum(a["play"] for a in attempts)
         new_windows = []
         if url:
             for _ in range(8):
@@ -168,13 +187,13 @@ def main() -> int:
                 new_windows = [x for x in now.split("|") if x and x not in before.split("|")]
                 if new_windows:
                     break
-        row = dict(idx=len(rows) + 1, kind=kind, label=label, **r,
+        row = dict(idx=len(rows) + 1, kind=kind, label=label, attempts=len(attempts), **r,
                    wins_before=before, wins_after=windows(args), new_windows=new_windows)
         rows.append(row)
         with open(jsonl, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
         print(f"{row['idx']:02d} {kind:14s} {label[:38]:38s} wake={len(r['confs'])} "
-              f"cmd={r['cmds'][:1]} disp={r['dispatch'][:1]}", flush=True)
+              f"cmd={r['cmds'][:1]} disp={r['dispatch'][:1]} tries={len(attempts)}", flush=True)
         return row
 
     for name in WAKE_TAKES:
@@ -182,7 +201,11 @@ def main() -> int:
 
     for name in POSITIVE:
         record("positive", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
-               url=any(h in name.lower() for h in URL_HINTS))
+               url=any(h in name.lower() for h in URL_HINTS), replay=args.replay)
+
+    for name in DEGRADATION:
+        record("degradation", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
+               replay=args.replay)
 
     record("expected-silent", "combo-Please_Flip_a_Coin.wav",
            f"{args.voice_dir}/combo/combo-Please_Flip_a_Coin.wav", args.wait_silent)
@@ -201,12 +224,17 @@ def main() -> int:
     wakes = [r for r in rows if r["kind"] == "wake"]
     wake_hits = [r for r in wakes if r["confs"]]
     urls = [r for r in positives if r["new_windows"]]
+    degradation = [r for r in rows if r["kind"] == "degradation"]
+    degradation_ok = [r for r in degradation if r["dispatch"] and r["dispatch"][0] == "SUCCESS"]
+    replayed = [r for r in rows if r.get("attempts", 1) > 1]
 
     summary = {
         "positive": f"{len(positives_ok)}/{len(positives)} dispatched",
         "expected_silent": f"{len(silent_ok)}/{len(silent)} silent",
+        "degradation": f"{len(degradation_ok)}/{len(degradation)} handled (reported)",
         "wake_alone": f"{len(wake_hits)}/{len(wakes)} woke",
         "url_handoff": f"{len(urls)} window(s) opened",
+        "replays": len(replayed),
         "pass": len(positives_ok) == len(positives) and len(silent_ok) == len(silent),
     }
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as fh:

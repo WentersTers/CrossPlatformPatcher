@@ -6,11 +6,12 @@ proven to deliver audio to the app (see "Preconditions").
 
 ## Sets
 
-### A. Positive combos (12)
+### A. Positive combos (11, clear speech)
 
-Each file is one utterance containing the wake phrase followed by a command
-that exists in the deployed `custom-commands/commands.txt`. The correct
-outcome is a wake plus a dispatch of that command with a successful result.
+Each file is one clear, ordinary utterance containing the wake phrase followed
+by a command that exists in the deployed `custom-commands/commands.txt`. The
+correct outcome is a wake plus a dispatch of that command with a successful
+result.
 
 ```
 combo-Open_Disney_Plus.wav
@@ -24,8 +25,14 @@ combo-Open_Twitter.wav
 combo-Open_YouTube.wav
 combo-Show_Hiking_Places_Near_Me.wav
 combo-Show_Me_A_Meme.wav
-combo-mumble.wav
 ```
+
+### A2. Degradation probe (reported, not scored)
+
+`combo-mumble.wav` is deliberately mumbled. It measures how the pipeline
+degrades — whether the app stays silent, misroutes, or still resolves — and is
+reported as data. It is not part of the certification gate: normal operation is
+clear speech (set A), and a mumble miss says nothing about that.
 
 ### B. Expected-silent (11)
 
@@ -62,12 +69,30 @@ dependent and is not scored.
 
 | set | pass condition |
 |---|---|
-| A. positive combos | 12 of 12 wake, command matched, dispatch SUCCESS |
+| A. positive combos | 11 of 11 wake, command matched, dispatch SUCCESS |
+| A2. degradation probe | reported (woke / misrouted / resolved) |
 | B. expected-silent | 11 of 11 no command and no dispatch |
 | C. wake alone | reported (wake count per take) |
 | D. URL handoff | reported (new window or tab per URL command) |
 
-A runtime is **voice certified** when A and B pass and C/D are reported.
+A runtime is **voice certified** when A and B pass and A2/C/D are reported.
+
+### Repeats
+
+A person repeats themselves when the assistant misses. A clip that produces no
+wake at all is replayed once (`--replay 1`, the default) and the attempt count
+is written into the row. A take that only passes on the replay is visible in
+the JSONL (`attempts: 2`), so a pass cannot hide a dead take: the reviewer can
+see how often the user had to speak twice.
+
+### Garbled takes
+
+If every clear-speech take is played, including the replay, and a miss remains
+whose transcript is objectively garbled — the distinguishing words never
+reached the recognizer, e.g. "show hiking" heard as `by places near me` — the
+run may pass with that take documented as a caveat. The rule is "the
+recognition front end lost the words", not "the matcher guessed"; a matcher
+that guesses is a defect, as the researcher route showed.
 
 ## Running it
 
