@@ -99,9 +99,13 @@ def plumbing(args):
     return (expected in src, out.strip())
 
 
-def find_negative(args, prefix: str, voice_dir: str) -> str | None:
-    out = run(args, f"ls -1 {voice_dir} | grep -F '{prefix}' | head -1").strip()
-    return out or None
+def find_negatives(args, voice_dir: str) -> list[str]:
+    """All Negative takes, in name order. Listing once avoids the per-prefix
+    grep that silently missed five takes on L09 (the battery scored 6/6)."""
+    out = run(args, f"ls -1 {voice_dir} 2>/dev/null")
+    names = [n.strip() for n in out.splitlines()
+             if n.strip().startswith("Negative ") and n.strip().endswith(".wav")]
+    return sorted(names, key=lambda n: int(re.sub(r"[^0-9].*", "", n.split("#")[-1]) or 0))
 
 
 def play(args, path: str, wait: float, log: str):
@@ -182,12 +186,13 @@ def main() -> int:
 
     record("expected-silent", "combo-Please_Flip_a_Coin.wav",
            f"{args.voice_dir}/combo/combo-Please_Flip_a_Coin.wav", args.wait_silent)
-    for i in range(1, 11):
-        prefix = f"Negative #{i} "
-        path = find_negative(args, prefix, args.voice_dir)
-        if path:
-            record("expected-silent", os.path.basename(path), f"{args.voice_dir}/{path}",
-                   args.wait_silent)
+    negatives = find_negatives(args, args.voice_dir)
+    if len(negatives) < 10:
+        print(f"PRECONDITION FAIL: found {len(negatives)} Negative takes, expected 10 "
+              f"in {args.voice_dir}")
+        return 3
+    for name in negatives:
+        record("expected-silent", name, f"{args.voice_dir}/{name}", args.wait_silent)
 
     positives = [r for r in rows if r["kind"] == "positive"]
     positives_ok = [r for r in positives if r["dispatch"] and r["dispatch"][0] == "SUCCESS"]
