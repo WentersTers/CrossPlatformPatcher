@@ -65,6 +65,22 @@ WAKE_TAKES = [
 
 URL_HINTS = ("browser", "disney", "youtube", "twitch", "twitter", "spotify")
 
+# The command each positive take names. A dispatch to anything else is a
+# misroute, not a pass - the runner used to score any SUCCESS as correct.
+EXPECTED_COMMAND = {
+    "combo-Open_Disney_Plus.wav": "open disney plus",
+    "combo-Open_HBO.wav": "open hbo",
+    "combo-Open_Hulu.wav": "open hulu",
+    "combo-Open_Spotify.wav": "open spotify",
+    "combo-Open_The_Browser.wav": "open the browser",
+    "combo-Open_The_Points_Shop.wav": "open the point shop",
+    "combo-Open_Twitch.wav": "open twitch",
+    "combo-Open_Twitter.wav": "open twiter",
+    "combo-Open_YouTube.wav": "open youtube",
+    "combo-Show_Hiking_Places_Near_Me.wav": "show hiking places near me",
+    "combo-Show_Me_A_Meme.wav": "show me a meme",
+}
+
 WAKE_RE = re.compile(r"Wake word detected! Confidence: ([0-9.]+)")
 CMD_RE = re.compile(r"\[oww-command\] command='([^']*)'")
 TEXT_RE = re.compile(r"\[vosk-speech\] Transcript: ([^\n]*)")
@@ -165,7 +181,7 @@ def main() -> int:
 
     rows = []
 
-    def record(kind, label, path, wait, url=False, replay=0):
+    def record(kind, label, path, wait, url=False, replay=0, expected=None):
         before = windows(args)
         attempts = [play(args, path, wait, args.log)]
         tries = 0
@@ -189,6 +205,10 @@ def main() -> int:
                     break
         row = dict(idx=len(rows) + 1, kind=kind, label=label, attempts=len(attempts), **r,
                    wins_before=before, wins_after=windows(args), new_windows=new_windows)
+        if expected is not None:
+            row["expected"] = expected
+            row["correct"] = bool(r["dispatch"] and r["dispatch"][0] == "SUCCESS"
+                                  and r["cmds"] and r["cmds"][0] == expected)
         rows.append(row)
         with open(jsonl, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
@@ -201,7 +221,8 @@ def main() -> int:
 
     for name in POSITIVE:
         record("positive", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
-               url=any(h in name.lower() for h in URL_HINTS), replay=args.replay)
+               url=any(h in name.lower() for h in URL_HINTS), replay=args.replay,
+               expected=EXPECTED_COMMAND.get(name))
 
     for name in DEGRADATION:
         record("degradation", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
@@ -218,7 +239,8 @@ def main() -> int:
         record("expected-silent", name, f"{args.voice_dir}/{name}", args.wait_silent)
 
     positives = [r for r in rows if r["kind"] == "positive"]
-    positives_ok = [r for r in positives if r["dispatch"] and r["dispatch"][0] == "SUCCESS"]
+    positives_ok = [r for r in positives if r.get("correct")]
+    misrouted = [r for r in positives if r.get("dispatch") and not r.get("correct")]
     silent = [r for r in rows if r["kind"] == "expected-silent"]
     silent_ok = [r for r in silent if not r["cmds"] and not r["dispatch"]]
     wakes = [r for r in rows if r["kind"] == "wake"]
@@ -229,7 +251,8 @@ def main() -> int:
     replayed = [r for r in rows if r.get("attempts", 1) > 1]
 
     summary = {
-        "positive": f"{len(positives_ok)}/{len(positives)} dispatched",
+        "positive": f"{len(positives_ok)}/{len(positives)} correct",
+        "misroutes": len(misrouted),
         "expected_silent": f"{len(silent_ok)}/{len(silent)} silent",
         "degradation": f"{len(degradation_ok)}/{len(degradation)} handled (reported)",
         "wake_alone": f"{len(wake_hits)}/{len(wakes)} woke",
