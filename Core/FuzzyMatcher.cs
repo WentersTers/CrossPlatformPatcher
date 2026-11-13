@@ -546,8 +546,12 @@ public sealed class FuzzyMatcher
             }
         }
 
-        if (bestExact != null)
-            return bestExact;
+        // A partial hit can be better evidence than an exact one: in
+        // "like i'm open spot a fight" the exact keyword 'like' covers 50% of
+        // the chatgpt command, while 'spot' ~ 'spotify' covers all of
+        // "open spotify". So do not return the exact hit early; compare both.
+        (string command, string keyword, float confidence)? bestPartial = null;
+        var bestPartialCoverage = 0.0f;
 
         // Partial matches: check if any keyword contains or is contained by input words
         foreach (var word in inputWords)
@@ -570,14 +574,26 @@ public sealed class FuzzyMatcher
                             continue;
                         }
 
-                        logger?.Invoke($"[oww-fuzzy] Keyword similarity: '{word}' ~ '{keyword}' ({similarity:P0})");
-                        return (cmd, keyword, 0.90f);
+                        if (coverage > bestPartialCoverage)
+                        {
+                            bestPartialCoverage = coverage;
+                            bestPartial = (cmd, keyword, 0.90f);
+                        }
                     }
                 }
             }
         }
 
-        return null;
+        if (bestPartial != null && bestPartialCoverage > bestCoverage)
+        {
+            logger?.Invoke($"[oww-fuzzy] Keyword similarity beats exact keyword on coverage ({bestPartialCoverage:P0})");
+            return bestPartial;
+        }
+
+        if (bestExact != null)
+            return bestExact;
+
+        return bestPartial;
     }
 
     private static bool TryMatchPhoneticAlias(string[] words, int startIndex, out string canonical, out int consumed)

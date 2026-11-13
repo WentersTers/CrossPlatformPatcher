@@ -229,4 +229,22 @@ public class FuzzyMatcherCorpusTests
 
         Assert.Null(FuzzyMatcher.FindClosestMatch("by places near me", commands, Threshold));
     }
+
+    [Fact]
+    public void Exact_Chat_Keyword_Does_Not_Beat_A_Better_Covered_Partial()
+    {
+        // L09 2026-11-12: "like i'm open spot a fight" hit the exact keyword
+        // 'like' (chatgpt, 50% coverage) before 'spot' ~ 'spotify' could win
+        // on full coverage. The better-covered candidate must win.
+        string[] commands =
+        {
+            "open spotify",
+            "do you like chat gi bi ti",
+            "open twitch",
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("like i'm open spot a fight", commands, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("open spotify", match!.MatchedCommand);
+    }
 }
