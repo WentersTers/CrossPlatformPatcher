@@ -37,7 +37,7 @@ pet were verified but the voice battery was not run there.
 
 | game build | OS | runtime | certification |
 |---|---|---|---|
-| `61942e6c` | Ubuntu 24.04 | Wine 11 | Menu + pet † |
+| `61942e6c` | Ubuntu 24.04 | Wine 11 | Full |
 | `61942e6c` | Ubuntu 24.04 | GE-Proton 11-7 | Full |
 | `61942e6c` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 | `61942e6c` | Fedora 41 | GE-Proton 11-7 | Full |
@@ -46,12 +46,12 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Arch | GE-Proton 11-7 | Full |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 
-† Voice battery run on this runtime (2026-11-10), scored under
-[docs/VOICE_BATTERY.md](docs/VOICE_BATTERY.md): 12 of 12 positive combos
-dispatched the correct command, all 11 expected-silent cases (10 speech
-negatives plus one command that does not exist in the manifest) stayed silent,
-and URLs opened. Single short wake takes did not re-trigger in that session;
-Full certification is pending a confirming live run.
+Voice battery on Ubuntu 24.04 / Wine 11 (2026-11-12), scored under
+[docs/VOICE_BATTERY.md](docs/VOICE_BATTERY.md): 11 of 11 clear-speech
+positives dispatched the correct command, all 11 expected-silent cases (10
+speech negatives plus one command that does not exist in the manifest) stayed
+silent, URLs opened, and no take needed a repeat. The mumbled take is a
+degradation probe: it woke and resolved nothing, reported rather than scored.
 
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable

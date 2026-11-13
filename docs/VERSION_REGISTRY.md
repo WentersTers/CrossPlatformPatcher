@@ -51,20 +51,21 @@ Current entries:
 
 Certified operating systems per entry:
 
-- `61942e6c`: Ubuntu 24.04 (Wine 11, menu+pet; voice battery 12/12 positive
-  combos with 11/11 expected-silent cases, pending a confirming run; GE-Proton
-  11-7 and Steam Proton Experimental full); Fedora 41 (GE-Proton 11-7);
-  Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine, menu and pet only);
-  Arch (GE-Proton 11-7).
+- `61942e6c`: Ubuntu 24.04 (Wine 11, full: 11/11 clear-speech positives with
+  11/11 expected-silent cases and no repeats needed, mumble reported as
+  degradation; GE-Proton 11-7 and Steam Proton Experimental full); Fedora 41
+  (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine, menu
+  and pet only); Arch (GE-Proton 11-7).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
 "Menu and pet only" is deliberately weaker than a voice certification. The
-Wine 11 entry on Ubuntu 24.04 has had a voice battery run (2026-11-10), scored
-under [VOICE_BATTERY.md](VOICE_BATTERY.md): 12 of 12 positive combos dispatched
-the correct command, all 11 expected-silent cases (10 speech negatives plus a
-command that does not exist in the manifest) stayed silent, and URLs opened.
-Single short wake takes did not re-trigger in that session, so the entry stays
-Menu + pet until a confirming live run. Ubuntu
+Wine 11 entry on Ubuntu 24.04 passed the voice battery on 2026-11-12, scored
+under [VOICE_BATTERY.md](VOICE_BATTERY.md): 11 of 11 clear-speech positives
+dispatched the correct command, all 11 expected-silent cases (10 speech
+negatives plus a command that does not exist in the manifest) stayed silent,
+URLs opened, and no take needed the replay allowance. The mumbled take is a
+degradation probe and is reported, not scored.
+Ubuntu
 22.04 and Debian 12 have menu-and-pet walk records from the older build-5
 campaign, but those records are not part of this repository and there is no
 voice run against the current build, so neither is listed as certified.
