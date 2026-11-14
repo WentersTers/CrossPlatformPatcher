@@ -178,6 +178,10 @@ def main() -> int:
     ap.add_argument("--half", type=int, choices=(0, 1, 2), default=0,
                     help="run one half of the battery (1: wake + first 6 positives + mumble; "
                          "2: remaining positives + expected-silent); 0 runs everything")
+    ap.add_argument("--silent-only", action="store_true",
+                    help="run only the expected-silent set (for a short negative replay)")
+    ap.add_argument("--neg-from", type=int, default=1)
+    ap.add_argument("--neg-to", type=int, default=10)
     ap.add_argument("--recover", default="",
                     help="shell command run on the runner host when the capture stream is lost")
     ap.add_argument("--recover-wait", type=float, default=180.0,
@@ -257,19 +261,20 @@ def main() -> int:
               f"cmd={r['cmds'][:1]} disp={r['dispatch'][:1]} tries={len(attempts)}", flush=True)
         return row
 
-    for name in (WAKE_TAKES if args.half in (0, 1) else []):
-        record("wake", name, f"{args.voice_dir}/{name}", args.wait_wake)
+    if not args.silent_only:
+        for name in (WAKE_TAKES if args.half in (0, 1) else []):
+            record("wake", name, f"{args.voice_dir}/{name}", args.wait_wake)
 
-    positives = POSITIVE if args.half == 0 else (POSITIVE[:6] if args.half == 1 else POSITIVE[6:])
-    for name in positives:
-        record("positive", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
-               url=any(h in name.lower() for h in URL_HINTS), replay=args.replay,
-               expected=EXPECTED_COMMAND.get(name))
+        positives = POSITIVE if args.half == 0 else (POSITIVE[:6] if args.half == 1 else POSITIVE[6:])
+        for name in positives:
+            record("positive", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
+                   url=any(h in name.lower() for h in URL_HINTS), replay=args.replay,
+                   expected=EXPECTED_COMMAND.get(name))
 
-    if args.half in (0, 1):
-        for name in DEGRADATION:
-            record("degradation", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
-                   replay=args.replay)
+        if args.half in (0, 1):
+            for name in DEGRADATION:
+                record("degradation", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
+                       replay=args.replay)
 
     if args.half in (0, 2):
         record("expected-silent", "combo-Please_Flip_a_Coin.wav",
@@ -279,7 +284,7 @@ def main() -> int:
             print(f"PRECONDITION FAIL: found {len(negatives)} Negative takes, expected 10 "
                   f"in {args.voice_dir}")
             return 3
-        for name in negatives:
+        for name in negatives[args.neg_from - 1:args.neg_to]:
             record("expected-silent", name, f"{args.voice_dir}/{name}", args.wait_silent)
 
     positives = [r for r in rows if r["kind"] == "positive"]

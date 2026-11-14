@@ -85,6 +85,14 @@ is written into the row. A take that only passes on the replay is visible in
 the JSONL (`attempts: 2`), so a pass cannot hide a dead take: the reviewer can
 see how often the user had to speak twice.
 
+### Split sessions
+
+A guest whose audio or sshd cannot survive a full-length battery may be run in
+short sessions on fresh boots, as long as they use the same bundle and takes.
+Each session records the sets it covered; the union must be complete (11
+positives, 11 expected-silent), and the report must say which sets came from
+which session. A split that omits a set is not a pass.
+
 ### Garbled takes
 
 If every clear-speech take is played, including the replay, and a miss remains

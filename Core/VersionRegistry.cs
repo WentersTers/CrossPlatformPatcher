@@ -123,6 +123,7 @@ public static class VersionRegistry
                 "Fedora 41 (GE-Proton 11-7)",
                 "Fedora 43 (Distro Wine 11.0)",
                 "Fedora 44 (Distro Wine 11.20 full, voice 11/11 + 11 silent)",
+                "Debian 12 (Distro Wine 11.10 full, voice 11/11 + 11 silent, run in short sessions)",
                 "Arch (GE-Proton 11-7)",
             }),
 

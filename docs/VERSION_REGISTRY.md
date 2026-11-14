@@ -56,7 +56,9 @@ Certified operating systems per entry:
   degradation; GE-Proton 11-7 and Steam Proton Experimental full); Fedora 41
   (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine
   11.20, full: 11/11 clear-speech positives, 11/11 expected-silent, no
-  repeats); Arch (GE-Proton 11-7).
+  repeats); Debian 12 (distro Wine 11.10, full: 11/11 clear-speech positives,
+  11/11 expected-silent, run in short sessions because the guest's audio and
+  sshd do not survive a full-length battery); Arch (GE-Proton 11-7).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
 "Menu and pet only" is deliberately weaker than a voice certification. The
@@ -66,10 +68,17 @@ dispatched the correct command, all 11 expected-silent cases (10 speech
 negatives plus a command that does not exist in the manifest) stayed silent,
 URLs opened, and no take needed the replay allowance. The mumbled take is a
 degradation probe and is reported, not scored.
-Ubuntu
-22.04 and Debian 12 have menu-and-pet walk records from the older build-5
-campaign, but those records are not part of this repository and there is no
-voice run against the current build, so neither is listed as certified.
+
+Debian 12 passed the same battery on the same bundle (2026-11-14), run as
+three short sessions on fresh boots because the guest's audio stream and sshd
+do not survive a full-length run: half 1 covered the wake takes, six positives
+and the mumble probe; half 2 covered the remaining five positives and four
+silent takes; a third session covered the other seven negatives. Union: 11/11
+clear-speech positives correct, 11/11 expected-silent silent.
+
+Ubuntu 22.04 has menu-and-pet walk records from the older build-5 campaign,
+but those records are not part of this repository and there has been no voice
+run against the current build, so it is not listed as certified.
 SteamOS and Steam Deck have no repository evidence; cite them only as
 "reported working (community)" if at all.
 

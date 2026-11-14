@@ -43,6 +43,7 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Fedora 41 | GE-Proton 11-7 | Full |
 | `61942e6c` | Fedora 43 | distro Wine 11.0 | Full |
 | `61942e6c` | Fedora 44 | distro Wine 11.20 | Full |
+| `61942e6c` | Debian 12 | distro Wine 11.10 | Full |
 | `61942e6c` | Arch | GE-Proton 11-7 | Full |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 
