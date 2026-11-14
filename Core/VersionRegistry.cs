@@ -120,6 +120,7 @@ public static class VersionRegistry
             CertifiedOs: new[]
             {
                 "Ubuntu 24.04 (Wine 11 full, voice 11/11 + 11 silent; GE-Proton 11-7 and Steam Proton Exp full)",
+                "Ubuntu 22.04 (Wine 11.21 full, voice 10/11 + 11 silent, Twitch take borderline)",
                 "Fedora 41 (GE-Proton 11-7)",
                 "Fedora 43 (Distro Wine 11.0)",
                 "Fedora 44 (Distro Wine 11.20 full, voice 11/11 + 11 silent)",

@@ -53,7 +53,10 @@ Certified operating systems per entry:
 
 - `61942e6c`: Ubuntu 24.04 (Wine 11, full: 11/11 clear-speech positives with
   11/11 expected-silent cases and no repeats needed, mumble reported as
-  degradation; GE-Proton 11-7 and Steam Proton Experimental full); Fedora 41
+  degradation; GE-Proton 11-7 and Steam Proton Experimental full); Ubuntu
+  22.04 (Wine 11.21, full with a caveat: 10/11 clear-speech positives, 11/11
+  expected-silent, no repeats or recoveries; the Twitch take is a borderline
+  recording that transcribes as `hi come` and needs a re-record); Fedora 41
   (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine
   11.20, full: 11/11 clear-speech positives, 11/11 expected-silent, no
   repeats); Debian 12 (distro Wine 11.10, full: 11/11 clear-speech positives,

@@ -38,6 +38,7 @@ pet were verified but the voice battery was not run there.
 | game build | OS | runtime | certification |
 |---|---|---|---|
 | `61942e6c` | Ubuntu 24.04 | Wine 11 | Full |
+| `61942e6c` | Ubuntu 22.04 | Wine 11.21 | Full † |
 | `61942e6c` | Ubuntu 24.04 | GE-Proton 11-7 | Full |
 | `61942e6c` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 | `61942e6c` | Fedora 41 | GE-Proton 11-7 | Full |
@@ -53,6 +54,12 @@ positives dispatched the correct command, all 11 expected-silent cases (10
 speech negatives plus one command that does not exist in the manifest) stayed
 silent, URLs opened, and no take needed a repeat. The mumbled take is a
 degradation probe: it woke and resolved nothing, reported rather than scored.
+
+† Ubuntu 22.04 / Wine 11.21 passed the same battery (10/11 correct, 11/11
+silent, no repeats, no recoveries). The one miss is the Twitch take, which
+transcribes as `hi come` (and `a pow camp` / `he a cop` on retries, with one
+retry dispatching `open twitch`). It is a borderline recording, not a matcher
+defect; a re-record will close it.
 
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable
