@@ -195,6 +195,14 @@ def main() -> int:
     rows = []
 
     def record(kind, label, path, wait, url=False, replay=0, expected=None):
+        # A vanished capture stream is a harness failure, not a recognition
+        # miss: abort instead of recording zeros (seen on Debian when the
+        # pipe-source died mid-battery).
+        ok_src, outputs_now = plumbing(args)
+        if not ok_src or not outputs_now:
+            print(f"STREAM LOST before {label} (source={ok_src}, outputs={outputs_now!r}); "
+                  f"run invalid, not a recognition result", flush=True)
+            raise SystemExit(5)
         before = windows(args)
         attempts = [play(args, path, wait, args.log)]
         tries = 0
