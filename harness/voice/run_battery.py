@@ -121,6 +121,19 @@ def plumbing(args):
     return (expected in src, out.strip())
 
 
+def same_command(actual: str | None, expected: str | None) -> bool:
+    """Compare command phrases ignoring the article: the deployed manifest and
+    the app's normalized phrase differ on 'open the browser' / 'open browser'."""
+    if not actual or not expected:
+        return False
+
+    def norm(text: str) -> str:
+        words = re.sub(r"[^a-z0-9 ]+", " ", text.lower()).split()
+        return " ".join(w for w in words if w != "the")
+
+    return norm(actual) == norm(expected)
+
+
 def find_negatives(args, voice_dir: str) -> list[str]:
     """All Negative takes, in name order. Listing once avoids the per-prefix
     grep that silently missed five takes on L09 (the battery scored 6/6)."""
@@ -208,7 +221,7 @@ def main() -> int:
         if expected is not None:
             row["expected"] = expected
             row["correct"] = bool(r["dispatch"] and r["dispatch"][0] == "SUCCESS"
-                                  and r["cmds"] and r["cmds"][0] == expected)
+                                  and same_command(r["cmds"][0] if r["cmds"] else None, expected))
         rows.append(row)
         with open(jsonl, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
