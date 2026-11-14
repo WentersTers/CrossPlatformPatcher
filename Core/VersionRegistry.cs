@@ -126,6 +126,7 @@ public static class VersionRegistry
                 "Fedora 44 (Distro Wine 11.20 full, voice 11/11 + 11 silent)",
                 "Debian 12 (Distro Wine 11.10 full, voice 11/11 + 11 silent, run in short sessions)",
                 "Arch (GE-Proton 11-7)",
+                "Arch (Distro Wine 11.21 full, voice 11/11 + 11 silent, null-sink transport)",
             }),
 
         new(

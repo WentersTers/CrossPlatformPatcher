@@ -61,7 +61,10 @@ Certified operating systems per entry:
   11.20, full: 11/11 clear-speech positives, 11/11 expected-silent, no
   repeats); Debian 12 (distro Wine 11.10, full: 11/11 clear-speech positives,
   11/11 expected-silent, run in short sessions because the guest's audio and
-  sshd do not survive a full-length battery); Arch (GE-Proton 11-7).
+  sshd do not survive a full-length battery); Arch (GE-Proton 11-7); Arch
+  (distro Wine 11.21, full: 11/11 clear-speech positives, 11/11
+  expected-silent, run over the null-sink transport because the FIFO path is
+  silent on Arch's PipeWire).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
 "Menu and pet only" is deliberately weaker than a voice certification. The
