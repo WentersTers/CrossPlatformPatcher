@@ -122,7 +122,7 @@ public static class VersionRegistry
                 "Ubuntu 24.04 (Wine 11 full, voice 11/11 + 11 silent; GE-Proton 11-7 and Steam Proton Exp full)",
                 "Fedora 41 (GE-Proton 11-7)",
                 "Fedora 43 (Distro Wine 11.0)",
-                "Fedora 44 (Distro Wine, menu+pet only)",
+                "Fedora 44 (Distro Wine 11.20 full, voice 11/11 + 11 silent)",
                 "Arch (GE-Proton 11-7)",
             }),
 

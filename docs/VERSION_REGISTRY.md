@@ -54,8 +54,9 @@ Certified operating systems per entry:
 - `61942e6c`: Ubuntu 24.04 (Wine 11, full: 11/11 clear-speech positives with
   11/11 expected-silent cases and no repeats needed, mumble reported as
   degradation; GE-Proton 11-7 and Steam Proton Experimental full); Fedora 41
-  (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine, menu
-  and pet only); Arch (GE-Proton 11-7).
+  (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine
+  11.20, full: 11/11 clear-speech positives, 11/11 expected-silent, no
+  repeats); Arch (GE-Proton 11-7).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
 "Menu and pet only" is deliberately weaker than a voice certification. The
