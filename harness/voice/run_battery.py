@@ -175,6 +175,9 @@ def main() -> int:
     ap.add_argument("--wait-wake", type=float, default=10.0)
     ap.add_argument("--replay", type=int, default=1,
                     help="extra attempts for a clip that produced no wake (a person repeats)")
+    ap.add_argument("--half", type=int, choices=(0, 1, 2), default=0,
+                    help="run one half of the battery (1: wake + first 6 positives + mumble; "
+                         "2: remaining positives + expected-silent); 0 runs everything")
     ap.add_argument("--recover", default="",
                     help="shell command run on the runner host when the capture stream is lost")
     ap.add_argument("--recover-wait", type=float, default=180.0,
@@ -254,27 +257,30 @@ def main() -> int:
               f"cmd={r['cmds'][:1]} disp={r['dispatch'][:1]} tries={len(attempts)}", flush=True)
         return row
 
-    for name in WAKE_TAKES:
+    for name in (WAKE_TAKES if args.half in (0, 1) else []):
         record("wake", name, f"{args.voice_dir}/{name}", args.wait_wake)
 
-    for name in POSITIVE:
+    positives = POSITIVE if args.half == 0 else (POSITIVE[:6] if args.half == 1 else POSITIVE[6:])
+    for name in positives:
         record("positive", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
                url=any(h in name.lower() for h in URL_HINTS), replay=args.replay,
                expected=EXPECTED_COMMAND.get(name))
 
-    for name in DEGRADATION:
-        record("degradation", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
-               replay=args.replay)
+    if args.half in (0, 1):
+        for name in DEGRADATION:
+            record("degradation", name, f"{args.voice_dir}/combo/{name}", args.wait_positive,
+                   replay=args.replay)
 
-    record("expected-silent", "combo-Please_Flip_a_Coin.wav",
-           f"{args.voice_dir}/combo/combo-Please_Flip_a_Coin.wav", args.wait_silent)
-    negatives = find_negatives(args, args.voice_dir)
-    if len(negatives) < 10:
-        print(f"PRECONDITION FAIL: found {len(negatives)} Negative takes, expected 10 "
-              f"in {args.voice_dir}")
-        return 3
-    for name in negatives:
-        record("expected-silent", name, f"{args.voice_dir}/{name}", args.wait_silent)
+    if args.half in (0, 2):
+        record("expected-silent", "combo-Please_Flip_a_Coin.wav",
+               f"{args.voice_dir}/combo/combo-Please_Flip_a_Coin.wav", args.wait_silent)
+        negatives = find_negatives(args, args.voice_dir)
+        if len(negatives) < 10:
+            print(f"PRECONDITION FAIL: found {len(negatives)} Negative takes, expected 10 "
+                  f"in {args.voice_dir}")
+            return 3
+        for name in negatives:
+            record("expected-silent", name, f"{args.voice_dir}/{name}", args.wait_silent)
 
     positives = [r for r in rows if r["kind"] == "positive"]
     positives_ok = [r for r in positives if r.get("correct")]
@@ -288,7 +294,11 @@ def main() -> int:
     degradation_ok = [r for r in degradation if r["dispatch"] and r["dispatch"][0] == "SUCCESS"]
     replayed = [r for r in rows if r.get("attempts", 1) > 1]
 
+    # A half run only sees part of the sets; a pass is only meaningful when the
+    # whole battery ran (half 0). Half runs print their counts for combining.
+    full_run = args.half == 0
     summary = {
+        "half": args.half,
         "positive": f"{len(positives_ok)}/{len(positives)} correct",
         "misroutes": len(misrouted),
         "expected_silent": f"{len(silent_ok)}/{len(silent)} silent",
@@ -297,7 +307,8 @@ def main() -> int:
         "url_handoff": f"{len(urls)} window(s) opened",
         "replays": len(replayed),
         "recoveries": len(recoveries),
-        "pass": len(positives_ok) == len(positives) and len(silent_ok) == len(silent),
+        "pass": (len(positives_ok) == len(positives) and len(silent_ok) == len(silent))
+                if full_run else None,
     }
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2)
