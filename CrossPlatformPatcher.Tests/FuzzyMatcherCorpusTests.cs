@@ -247,4 +247,24 @@ public class FuzzyMatcherCorpusTests
         Assert.NotNull(match);
         Assert.Equal("open spotify", match!.MatchedCommand);
     }
+
+    [Fact]
+    public void Weak_Exact_Hit_Does_Not_Beat_A_Better_Covered_Shared_Match()
+    {
+        // L09 2026-11-14: "like up open the browser" hit the exact keyword
+        // 'like' (chatgpt, 50% coverage) before the shared stage could route
+        // "open the browser" on full coverage.
+        string[] commands =
+        {
+            "open the browser",
+            "do you like chat gi bi ti",
+            "open twitch",
+            "show browser history",
+            "close browser tabs",
+        };
+
+        var match = FuzzyMatcher.FindClosestMatch("like up open the browser", commands, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("open the browser", match!.MatchedCommand);
+    }
 }

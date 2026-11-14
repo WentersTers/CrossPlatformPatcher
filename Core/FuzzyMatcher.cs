@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -63,16 +63,31 @@ public sealed class FuzzyMatcher
         // Stage 1: Try keyword match: exact unique keywords, then partial
         // similarity for typos/misrecognitions (inside Stage 1 by design).
         var keywordMatch = TryKeywordMatch(inputNormalized, keywordWords, keywordIndex, knownCommands, logger);
+
+        // A weak exact hit (exactly the coverage floor) must not pre-empt a
+        // better-covered shared candidate: "like ... open the browser" hits
+        // the exact keyword 'like' (chatgpt) at 50 %, while the shared stage
+        // covers "open the browser" fully.
+        var sharedMatch = (keywordMatch is null || keywordMatch.Value.coverage <= MinCommandCoverage)
+            ? TrySharedKeywordMatch(inputNormalized, keywordWords, sharedIndex, wordFrequency, logger)
+            : null;
+
+        if (sharedMatch != null &&
+            (keywordMatch is null || sharedMatch.Value.coverage > keywordMatch.Value.coverage))
+        {
+            logger?.Invoke($"[oww-fuzzy] SHARED KEYWORD MATCH: '{input}' -> '{sharedMatch.Value.command}' via keyword '{sharedMatch.Value.keyword}' ({sharedMatch.Value.sharedCount} shared words, coverage {sharedMatch.Value.coverage:P0})");
+            return new FuzzyMatchResult(sharedMatch.Value.command, sharedMatch.Value.confidence);
+        }
+
         if (keywordMatch != null)
         {
-            logger?.Invoke($"[oww-fuzzy] KEYWORD MATCH: '{input}' -> '{keywordMatch.Value.command}' via keyword '{keywordMatch.Value.keyword}'");
+            logger?.Invoke($"[oww-fuzzy] KEYWORD MATCH: '{input}' -> '{keywordMatch.Value.command}' via keyword '{keywordMatch.Value.keyword}' (coverage {keywordMatch.Value.coverage:P0})");
             return new FuzzyMatchResult(keywordMatch.Value.command, keywordMatch.Value.confidence);
         }
 
         // Stage 1b: Shared keyword with disambiguation. Manifest growth
         // de-uniquifies working commands (discord); the shared word picks the
         // candidate set and shared-word count plus edit distance disambiguates.
-        var sharedMatch = TrySharedKeywordMatch(inputNormalized, keywordWords, sharedIndex, wordFrequency, logger);
         if (sharedMatch != null)
         {
             logger?.Invoke($"[oww-fuzzy] SHARED KEYWORD MATCH: '{input}' -> '{sharedMatch.Value.command}' via keyword '{sharedMatch.Value.keyword}' ({sharedMatch.Value.sharedCount} shared words)");
@@ -279,7 +294,7 @@ public sealed class FuzzyMatcher
     /// Only fires on words literally present in the input, so it cannot
     /// invent routes the input does not name.
     /// </summary>
-    private static (string command, string keyword, float confidence, int sharedCount)? TrySharedKeywordMatch(
+    private static (string command, string keyword, float confidence, int sharedCount, float coverage)? TrySharedKeywordMatch(
         string inputNormalized,
         string[] keywordWords,
         Dictionary<string, List<string>> sharedIndex,
@@ -351,7 +366,7 @@ public sealed class FuzzyMatcher
             }
 
             logger?.Invoke($"[oww-fuzzy] Shared keyword: '{bestKeyword}' -> '{bestCommand}' ({bestCount} shared words, sim {bestSimilarity:P0})");
-            return (bestCommand, bestKeyword!, 0.90f, bestCount);
+            return (bestCommand, bestKeyword!, 0.90f, bestCount, coverage);
         }
 
         return null;
@@ -512,7 +527,7 @@ public sealed class FuzzyMatcher
     /// singular/plural normalization, which must beat shared-stage lev
     /// tiebreaks on sibling rivalries.
     /// </summary>
-    private static (string command, string keyword, float confidence)? TryKeywordMatch(
+    private static (string command, string keyword, float confidence, float coverage)? TryKeywordMatch(
         string input,
         string[] inputWords,
         Dictionary<string, string> keywordIndex,
@@ -525,7 +540,7 @@ public sealed class FuzzyMatcher
         // of the first keyword in the input, which let ASR debris route to a
         // barely-covered command (that phrase dispatched
         // "do you like chat gi bi ti" on 0.5 coverage).
-        (string command, string keyword, float confidence)? bestExact = null;
+        (string command, string keyword, float confidence, float coverage)? bestExact = null;
         var bestCoverage = 0.0f;
         foreach (var word in inputWords)
         {
@@ -542,7 +557,7 @@ public sealed class FuzzyMatcher
             if (coverage > bestCoverage)
             {
                 bestCoverage = coverage;
-                bestExact = (command, word, 0.95f);
+                bestExact = (command, word, 0.95f, bestCoverage);
             }
         }
 
@@ -550,7 +565,7 @@ public sealed class FuzzyMatcher
         // "like i'm open spot a fight" the exact keyword 'like' covers 50% of
         // the chatgpt command, while 'spot' ~ 'spotify' covers all of
         // "open spotify". So do not return the exact hit early; compare both.
-        (string command, string keyword, float confidence)? bestPartial = null;
+        (string command, string keyword, float confidence, float coverage)? bestPartial = null;
         var bestPartialCoverage = 0.0f;
 
         // Partial matches: check if any keyword contains or is contained by input words
@@ -577,7 +592,7 @@ public sealed class FuzzyMatcher
                         if (coverage > bestPartialCoverage)
                         {
                             bestPartialCoverage = coverage;
-                            bestPartial = (cmd, keyword, 0.90f);
+                            bestPartial = (cmd, keyword, 0.90f, bestPartialCoverage);
                         }
                     }
                 }
