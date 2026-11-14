@@ -175,6 +175,10 @@ def main() -> int:
     ap.add_argument("--wait-wake", type=float, default=10.0)
     ap.add_argument("--replay", type=int, default=1,
                     help="extra attempts for a clip that produced no wake (a person repeats)")
+    ap.add_argument("--recover", default="",
+                    help="shell command run on the runner host when the capture stream is lost")
+    ap.add_argument("--recover-wait", type=float, default=180.0,
+                    help="seconds to wait for the stream to come back after --recover")
     ap.add_argument("--transport", choices=("fifo", "paplay"), default="fifo",
                     help="fifo: feeder writes /tmp/vmic.play; paplay: play into a null sink")
     ap.add_argument("--sink", default="vmicsink",
@@ -193,16 +197,29 @@ def main() -> int:
         return 3
 
     rows = []
+    recoveries: list[str] = []
 
     def record(kind, label, path, wait, url=False, replay=0, expected=None):
         # A vanished capture stream is a harness failure, not a recognition
-        # miss: abort instead of recording zeros (seen on Debian when the
-        # pipe-source died mid-battery).
+        # miss: recover once if a recovery command was given, otherwise abort
+        # instead of recording zeros (seen on Debian when the pipe-source died).
         ok_src, outputs_now = plumbing(args)
         if not ok_src or not outputs_now:
-            print(f"STREAM LOST before {label} (source={ok_src}, outputs={outputs_now!r}); "
-                  f"run invalid, not a recognition result", flush=True)
-            raise SystemExit(5)
+            if args.recover:
+                print(f"STREAM LOST before {label}; running recovery", flush=True)
+                subprocess.run(args.recover, shell=True, timeout=args.recover_wait or None)
+                deadline = time.time() + (args.recover_wait or 0)
+                while time.time() < deadline:
+                    ok_src, outputs_now = plumbing(args)
+                    if ok_src and outputs_now:
+                        break
+                    time.sleep(5)
+                recoveries.append(label)
+            if not ok_src or not outputs_now:
+                print(f"STREAM LOST before {label} (source={ok_src}, outputs={outputs_now!r}); "
+                      f"run invalid, not a recognition result", flush=True)
+                raise SystemExit(5)
+            print(f"recovered before {label}", flush=True)
         before = windows(args)
         attempts = [play(args, path, wait, args.log)]
         tries = 0
@@ -279,6 +296,7 @@ def main() -> int:
         "wake_alone": f"{len(wake_hits)}/{len(wakes)} woke",
         "url_handoff": f"{len(urls)} window(s) opened",
         "replays": len(replayed),
+        "recoveries": len(recoveries),
         "pass": len(positives_ok) == len(positives) and len(silent_ok) == len(silent),
     }
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as fh:
