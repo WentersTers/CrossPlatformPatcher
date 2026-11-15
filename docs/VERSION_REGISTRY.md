@@ -64,7 +64,11 @@ Certified operating systems per entry:
   sshd do not survive a full-length battery); Arch (GE-Proton 11-7); Arch
   (distro Wine 11.21, full: 11/11 clear-speech positives, 11/11
   expected-silent, run over the null-sink transport because the FIFO path is
-  silent on Arch's PipeWire).
+  silent on Arch's PipeWire); Arch (Lutris 0.5.22 launching distro Wine 11.22,
+  full with a caveat: 10/11 clear-speech positives, 11/11 expected-silent, no
+  recoveries; menu, Start, Commands and pet verified, and the single miss is
+  the YouTube take transcribed as `a new tab`, which resolved on three
+  immediate replays).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
 "Menu and pet only" is deliberately weaker than a voice certification. The

@@ -124,7 +124,10 @@ Exit status is 0 only when set A and set B both pass.
 `--transport paplay --sink NAME` plays the clip into a null sink and uses
 `NAME.monitor` as the capture source, which survives a pipe-source reload but
 was seen crashing the Wine app on Ubuntu 24.04 / Wine 11.21; prefer the FIFO
-there.
+there. On Arch's PipeWire the FIFO path is silent — the app holds the stream
+and scores `max=0.001` — while the null sink delivers every take, so use
+`--transport paplay` there. Debian 12 and Arch / distro Wine both certified
+over the null sink.
 
 ## Preconditions
 
@@ -136,3 +139,8 @@ there.
   source outputs and the capture counter before re-running.
 - Each clip is played through the virtual microphone and the app log is read
   between clips; verdicts come from the log, not from the absence of sound.
+- The app must be at the menu before the first clip. On the credits screen the
+  UI-simulation dispatcher does not exist yet, and every successfully recognized
+  command returns `FAILED - No dispatcher could execute the command`; at the
+  menu the same clip returns `SUCCESS - ... [ui-simulation] ...`. A battery
+  started on credits looks like a total dispatch failure and is not a result.

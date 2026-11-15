@@ -47,6 +47,7 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Debian 12 | distro Wine 11.10 | Full |
 | `61942e6c` | Arch | GE-Proton 11-7 | Full |
 | `61942e6c` | Arch | distro Wine 11.21 | Full |
+| `61942e6c` | Arch | Lutris 0.5.22 → Wine 11.22 | Full ‡ |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 
 Voice battery on Ubuntu 24.04 / Wine 11 (2026-11-12), scored under
@@ -62,15 +63,27 @@ transcribes as `hi come` (and `a pow camp` / `he a cop` on retries, with one
 retry dispatching `open twitch`). It is a borderline recording, not a matcher
 defect; a re-record will close it.
 
+‡ Arch / Lutris 0.5.22 launching distro Wine 11.22 is the fourth launch path
+checked end to end: the menu appears, Start opens Commands, the pet is drawn,
+and a menu-level voice clip dispatched `open disney plus` through the
+UI-simulation path. The full battery through Lutris scored 10/11 correct and
+11/11 silent, with no repeats and no recoveries. The one miss is the YouTube
+take transcribed as `a new tab`; three immediate replays all resolved
+`open youtube` and dispatched, so it is a one-off transcription event on one
+take, not a defect of the launch path — the same guest scored 11/11 through
+`run.sh` earlier the same day. Installing Lutris also moved distro Wine from
+11.21 to 11.22. The walk frames, battery artifacts and dispatch log are filed
+with the REV-045 records for this run.
+
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable
   list, including the certified OS strings.
 - GE-Proton 11-7 needs glibc **2.38**. Ubuntu 22.04 (2.35) cannot use that
   runtime — use distro Wine there or a newer distribution. Details in
   [Troubleshooting](#linux-ge-proton-11-7-needs-glibc-238).
-- Ubuntu 22.04 and Debian 12 have menu-and-pet walk records from the older
-  build-5 campaign; those records are not part of this repository, and neither
-  OS is certified for the current build.
+- Ubuntu 22.04 and Debian 12 also have menu-and-pet walk records from the older
+  build-5 campaign; those records are not part of this repository. Both OSes
+  are certified for the current build above, on distro Wine.
 - SteamOS / Steam Deck is **not certified**; there is no repository evidence.
   If community reports are mentioned, label them "reported working
   (community)".
@@ -200,6 +213,29 @@ Use the generated launchers when you are not launching through Steam:
 
 The generated launchers set the OWW environment themselves and pick Wine or
 Mono, so the Steam launch option is not needed on this path.
+
+#### Lutris (non-Steam launcher)
+
+Certified on Arch with Lutris 0.5.22 and distro Wine 11.22. Lutris builds the
+same environment `run.sh` does, so the game works without patching Lutris
+itself:
+
+1. **Add locally installed game** → runner **Wine**, executable
+   `uninstall.exe.patched.exe` in the game folder, working directory the game
+   folder.
+2. Set the Wine prefix to the prefix the setup wizard/`run.sh` used. `run.sh`
+   defaults to `.wine-prefix` inside the game folder unless `WINEPREFIX` is
+   set, and the Steam path uses the Steam-managed prefix.
+3. Add `WINEDLLOVERRIDES` = `mscoree=b` under **Configure → System options →
+   Environment variables**.
+4. Launch from Lutris.
+
+Menu, Start, Commands, pet and voice dispatch are verified on that path (walk
+frames and battery artifacts are filed with the REV-045 records for the Arch /
+Lutris run).
+On Arch the app still needs a real input device: route the null sink's monitor
+as default source (or use PipeWire's loopback) rather than a `module-pipe-source`
+FIFO, which the recognizer reads as silence there.
 
 > **Ignore `[LAUNCH HERE].exe` — it is a decoy that ships with the game itself,
 > not the program.** The real game is `uninstall.exe`; run it (or the patched
