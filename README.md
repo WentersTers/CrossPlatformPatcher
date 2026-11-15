@@ -46,7 +46,7 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Fedora 44 | distro Wine 11.20 | Full |
 | `61942e6c` | Debian 12 | distro Wine 11.10 | Full |
 | `61942e6c` | Arch | GE-Proton 11-7 | Full |
-| `61942e6c` | Arch | distro Wine 11.21 | Full |
+| `61942e6c` | Arch | distro Wine 11.21 / 11.22 | Full |
 | `61942e6c` | Arch | Lutris 0.5.22 → Wine 11.22 | Full ‡ |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 
@@ -74,6 +74,12 @@ take, not a defect of the launch path — the same guest scored 11/11 through
 `run.sh` earlier the same day. Installing Lutris also moved distro Wine from
 11.21 to 11.22. The walk frames, battery artifacts and dispatch log are filed
 with the REV-045 records for this run.
+
+Arch Wine is certified twice at different versions: 11.21 (L16) and 11.22, the
+latter on a freshly re-provisioned L10 guest whose snapshot was still the
+build-5 one (`wine-latest-mono`, same `pacman -Sy wine wine-mono` path). Both
+runs scored 11/11 clear-speech positives and 11/11 expected-silent over the
+null sink, with no replays and no recoveries.
 
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable
