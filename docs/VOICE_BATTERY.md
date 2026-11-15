@@ -4,6 +4,24 @@ The voice battery is what "voice certified" means in this repository. It is
 run against a patched bundle on a live runtime, after the audio path has been
 proven to deliver audio to the app (see "Preconditions").
 
+## Revisions
+
+Takes are versioned by name. A replacement keeps the file name
+(`combo/combo-<Name>.wav`), the previous take stays beside it as `.old.wav`, and
+both are kept in the REV-045 voice-clip archive. A battery always uses whatever
+take is installed at the moment it runs, so a run made before a revision cannot
+be back-filled by a later one.
+
+Revision: YouTube takes replaced on 2026-11-13. Original takes were borderline
+(failed 4/10 sessions across all stacks per the failure matrix). New takes
+recorded louder/closer. Old takes archived in the REV-045 voice-clip archive.
+All subsequent runs use the new takes.
+
+Revision: Twitch takes replaced on 2026-11-14. Original takes were borderline
+(garbled transcripts across multiple sessions per the failure matrix). New takes
+recorded louder/closer. Old takes archived in the REV-045 voice-clip archive.
+All subsequent runs use the new takes.
+
 ## Sets
 
 ### A. Positive combos (11, clear speech)
