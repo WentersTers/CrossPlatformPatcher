@@ -38,7 +38,7 @@ pet were verified but the voice battery was not run there.
 | game build | OS | runtime | certification |
 |---|---|---|---|
 | `61942e6c` | Ubuntu 24.04 | Wine 11 | Full |
-| `61942e6c` | Ubuntu 22.04 | Wine 11.21 | Full † |
+| `61942e6c` | Ubuntu 22.04 | Wine 11.21 | Full |
 | `61942e6c` | Ubuntu 24.04 | GE-Proton 11-7 | Full |
 | `61942e6c` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 | `61942e6c` | Fedora 41 | GE-Proton 11-7 | Full |
@@ -57,12 +57,13 @@ speech negatives plus one command that does not exist in the manifest) stayed
 silent, URLs opened, and no take needed a repeat. The mumbled take is a
 degradation probe: it woke and resolved nothing, reported rather than scored.
 
-† Ubuntu 22.04 / Wine 11.21 passed the same battery (10/11 correct, 11/11
-silent, no repeats, no recoveries). The one miss is the Twitch take, which
-transcribes as `hi come` (and `a pow camp` / `he a cop` on retries, with one
-retry dispatching `open twitch`). It is a borderline recording, not a matcher
-defect; the take was replaced on 2026-11-14 (see the revisions in
-[docs/VOICE_BATTERY.md](docs/VOICE_BATTERY.md)).
+Ubuntu 22.04 / Wine 11.21 first passed with a caveat: 10/11 correct, 11/11
+silent, the one miss being the Twitch take, heard as `hi come`. The take is a
+recording, not a matcher problem, and it was replaced on 2026-11-14 (see the
+revisions in [docs/VOICE_BATTERY.md](docs/VOICE_BATTERY.md)). Re-run on the
+same guest, bundle and environment with the new take: 11/11 clear-speech,
+11/11 expected-silent, no repeats, no recoveries, Twitch resolving on the first
+attempt with 100 % keyword coverage. The row's caveat is closed.
 
 ‡ Arch / Lutris 0.5.22 launching distro Wine 11.22 is the fourth launch path
 checked end to end: the menu appears, Start opens Commands, the pet is drawn,

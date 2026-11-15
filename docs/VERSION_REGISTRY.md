@@ -54,9 +54,9 @@ Certified operating systems per entry:
 - `61942e6c`: Ubuntu 24.04 (Wine 11, full: 11/11 clear-speech positives with
   11/11 expected-silent cases and no repeats needed, mumble reported as
   degradation; GE-Proton 11-7 and Steam Proton Experimental full); Ubuntu
-  22.04 (Wine 11.21, full with a caveat: 10/11 clear-speech positives, 11/11
-  expected-silent, no repeats or recoveries; the Twitch take is a borderline
-  recording that transcribes as `hi come` and needs a re-record); Fedora 41
+  22.04 (Wine 11.21, full: 11/11 clear-speech positives, 11/11 expected-silent,
+  no repeats or recoveries; the first pass missed the Twitch take, which was
+  then replaced and re-verified at 11/11 on the same guest); Fedora 41
   (GE-Proton 11-7); Fedora 43 (distro Wine 11.0); Fedora 44 (distro Wine
   11.20, full: 11/11 clear-speech positives, 11/11 expected-silent, no
   repeats); Debian 12 (distro Wine 11.10, full: 11/11 clear-speech positives,
@@ -88,9 +88,9 @@ and the mumble probe; half 2 covered the remaining five positives and four
 silent takes; a third session covered the other seven negatives. Union: 11/11
 clear-speech positives correct, 11/11 expected-silent silent.
 
-Ubuntu 22.04 has menu-and-pet walk records from the older build-5 campaign,
-but those records are not part of this repository and there has been no voice
-run against the current build, so it is not listed as certified.
+Ubuntu 22.04 and Debian 12 also have menu-and-pet walk records from the older
+build-5 campaign; those records are not part of this repository. Both are
+certified for the current build on distro Wine, per the entries above.
 SteamOS and Steam Deck have no repository evidence; cite them only as
 "reported working (community)" if at all.
 
