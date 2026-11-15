@@ -61,7 +61,8 @@ degradation probe: it woke and resolved nothing, reported rather than scored.
 silent, no repeats, no recoveries). The one miss is the Twitch take, which
 transcribes as `hi come` (and `a pow camp` / `he a cop` on retries, with one
 retry dispatching `open twitch`). It is a borderline recording, not a matcher
-defect; a re-record will close it.
+defect; the take was replaced on 2026-11-14 (see the revisions in
+[docs/VOICE_BATTERY.md](docs/VOICE_BATTERY.md)).
 
 ‡ Arch / Lutris 0.5.22 launching distro Wine 11.22 is the fourth launch path
 checked end to end: the menu appears, Start opens Commands, the pet is drawn,
