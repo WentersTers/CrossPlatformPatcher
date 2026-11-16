@@ -48,6 +48,7 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Arch | GE-Proton 11-7 | Full |
 | `61942e6c` | Arch | distro Wine 11.21 / 11.22 | Full |
 | `61942e6c` | Arch | Lutris 0.5.22 → Wine 11.22 | Full ‡ |
+| `61942e6c` | Bazzite 45 (atomic/KDE) | Steam Proton Experimental | Full |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
 
 Voice battery on Ubuntu 24.04 / Wine 11 (2026-11-12), scored under
@@ -82,6 +83,16 @@ latter on a freshly re-provisioned L10 guest whose snapshot was still the
 build-5 one (`wine-latest-mono`, same `pacman -Sy wine wine-mono` path). Both
 runs scored 11/11 clear-speech positives and 11/11 expected-silent over the
 null sink, with no replays and no recoveries.
+
+Bazzite 45 (Kinoite, KDE Plasma on Wayland, immutable Fedora atomic) passed a
+full battery through Steam's Proton Experimental: 11/11 clear-speech positives,
+11/11 expected-silent, 5/5 wake takes, no replays, no recoveries. The launch
+path is the volunteer's own — Steam plus Proton Experimental — and the run
+included the Start guard, so the menu showed Start even on a blackholed
+network. The image was installed from the current stable OCI image rather than
+the ISO (the published ISO is the legacy installer), which is documented in
+`docs/coder/harness-driving.md` together with the KDE/Wayland and install
+traps.
 
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable
@@ -214,11 +225,11 @@ Wayland on Bazzite. Check the connection, then click once in the window and
 press Tab and Enter a few times: the app continues into PAIcom and works, but
 the menu will stay Start-less until a launch where the check succeeds.
 
-An experimental patcher option, `start.forceVisible`, adds a one-shot guard that
-asserts the Start button visible after the menu constructs and once more four
-seconds later; it is off by default until the blackholed-menu acceptance test
-passes on a live guest.
-
+The patcher now includes a one-shot **Start guard**: after the menu form
+constructs it asserts the Start button visible, then repeats once four seconds
+later and stops. It was verified against a blackholed launch (four buttons
+where the unguarded build showed three). Set `start.forceVisible=false` (or
+`PAICOM_START_FORCE_VISIBLE=0` at patch time) to opt out.
 Then launch PAIcom from Steam as usual. If Steam verifies or updates the game
 files later it may restore the original `uninstall.exe` and remove added files;
 reapply steps 1 to 3 if that happens.

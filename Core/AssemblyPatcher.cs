@@ -96,11 +96,19 @@ public class AssemblyPatcher
         }
 
         // ── Start visibility guard (frozen-menu user-facing fix) ───────────
-        // Runs BEFORE the WebClient watchdog: the watchdog rewrites every
-        // DownloadString call, and the guard uses those calls to find the menu
-        // form. Opt-in until the blackhole probe has passed: the menu's Start
-        // button is hidden by the game's own online check, and no supported way
-        // to start the app should depend on "tab and press Enter".
+        // ORDER IS LOAD-BEARING: this must run BEFORE the WebClient watchdog.
+        // The guard finds the menu form by counting the startup
+        // DownloadString calls its methods contain; the watchdog immediately
+        // rewrites every one of those calls to SafeDownloadString, so if the
+        // two are swapped the count drops to zero, the guard logs "no menu
+        // constructor to hook" and silently does nothing. That is an
+        // integration-only failure: the build still looks fine and only the
+        // blackholed launch shows three buttons. Detection also accepts
+        // SafeDownloadString so a future reorder degrades to the same hook
+        // rather than a silent skip.
+        // Opt-in until the blackhole probe has passed: the menu's Start button
+        // is hidden by the game's own online check, and no supported way to
+        // start the app should depend on "tab and press Enter".
         if (StartButtonGuardPatcher.IsEnabled(_strategyOptions))
         {
             Log("Applying Start visibility guard …");

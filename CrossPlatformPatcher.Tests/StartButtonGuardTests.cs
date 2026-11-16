@@ -134,10 +134,12 @@ public class StartButtonGuardTests
     }
 
     [Fact]
-    public void FlagDefaultsOff()
+    public void GuardIsOnUnlessOptedOut()
     {
-        Assert.False(StartButtonGuardPatcher.IsEnabled(null));
-        Assert.False(StartButtonGuardPatcher.IsEnabled(new Dictionary<string, string>()));
+        Assert.True(StartButtonGuardPatcher.IsEnabled(null));
+        Assert.True(StartButtonGuardPatcher.IsEnabled(new Dictionary<string, string>()));
+        Assert.False(StartButtonGuardPatcher.IsEnabled(
+            new Dictionary<string, string> { [StartButtonGuardPatcher.OptionKey] = "false" }));
         Assert.True(StartButtonGuardPatcher.IsEnabled(
             new Dictionary<string, string> { [StartButtonGuardPatcher.OptionKey] = "true" }));
     }

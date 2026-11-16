@@ -70,7 +70,11 @@ Certified operating systems per entry:
   full with a caveat: 10/11 clear-speech positives, 11/11 expected-silent, no
   recoveries; menu, Start, Commands and pet verified, and the single miss is
   the YouTube take transcribed as `a new tab`, which resolved on three
-  immediate replays).
+  immediate replays); Bazzite 45.20261112 (Kinoite, KDE Plasma Wayland,
+  immutable Fedora atomic; Steam + Proton Experimental, full: 11/11
+  clear-speech positives, 11/11 expected-silent, no replays or recoveries,
+  run with the Start guard enabled; installed from the current stable OCI
+  image, see docs/coder/harness-driving.md).
 - `88c9daec`: Ubuntu 24.04 (Steam Proton Experimental).
 
 "Menu and pet only" is deliberately weaker than a voice certification. The

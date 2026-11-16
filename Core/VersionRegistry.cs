@@ -128,6 +128,7 @@ public static class VersionRegistry
                 "Arch (GE-Proton 11-7)",
                 "Arch (Distro Wine 11.21 and 11.22 full, voice 11/11 + 11 silent on both, null-sink transport)",
                 "Arch (Lutris 0.5.22 launching distro Wine 11.22 full, voice 10/11 + 11 silent, YouTube take one-off)",
+                "Bazzite 45.20261112 (Kinoite/KDE Wayland, Steam Proton Experimental full, voice 11/11 + 11 silent, Start guard)",
             }),
 
         new(

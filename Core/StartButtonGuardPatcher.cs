@@ -35,14 +35,26 @@ public static class StartButtonGuardPatcher
 
     private const string WindowsFormsNamespace = "System.Windows.Forms";
 
+    /// <summary>
+    /// Enabled by default once the blackholed-menu probe passed (2026-11-16);
+    /// <c>start.forceVisible=false</c> (or <c>PAICOM_START_FORCE_VISIBLE=0</c>)
+    /// opts out. The guard only ever sets <c>Visible</c> on a control whose
+    /// text is "Start", so the opt-out exists for diagnosis, not for risk.
+    /// </summary>
     public static bool IsEnabled(IReadOnlyDictionary<string, string>? options)
     {
-        var optionOn = options is not null &&
-                       options.TryGetValue(OptionKey, out var value) &&
-                       string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
-        var envOn = string.Equals(
-            Environment.GetEnvironmentVariable(EnvironmentVariable), "1", StringComparison.Ordinal);
-        return optionOn || envOn;
+        var env = Environment.GetEnvironmentVariable(EnvironmentVariable);
+        if (string.Equals(env, "0", StringComparison.Ordinal)) return false;
+        if (string.Equals(env, "1", StringComparison.Ordinal)) return true;
+
+        if (options is not null &&
+            options.TryGetValue(OptionKey, out var value) &&
+            string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -108,13 +120,14 @@ public static class StartButtonGuardPatcher
         return module.GetTypeRefs().FirstOrDefault(t => t.Namespace == ns && t.Name == name);
     }
 
-    /// <summary>
-    /// The menu form is <c>GForm1</c> in the shipped build; when the type name
-    /// is obfuscated differently, fall back to the form type that contains the
-    /// most startup <c>DownloadString</c> calls (the menu is where the gist
-    /// check lives) and hook its constructor.
-    /// </summary>
-    private static MethodDef? FindMenuConstructor(ModuleDefMD module, Action<string>? log = null)
+/// <summary>
+/// The menu form is found by counting the startup download calls its methods
+/// contain. ORDER DEPENDENCY: <see cref="WebClientTimeoutPatcher"/> rewrites
+/// every <c>DownloadString</c> call to <c>SafeDownloadString</c>, so this
+/// patch must run first (see AssemblyPatcher). Both callee names are accepted
+/// so a future reorder still finds the form instead of silently skipping.
+/// </summary>
+private static MethodDef? FindMenuConstructor(ModuleDefMD module, Action<string>? log = null)
     {
         MethodDef? namedCtor = null;
         (int calls, MethodDef? ctor, string typeName) busiest = (0, null, "<none>");
