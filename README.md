@@ -256,6 +256,15 @@ Use the generated launchers when you are not launching through Steam:
 The generated launchers set the OWW environment themselves and pick Wine or
 Mono, so the Steam launch option is not needed on this path.
 
+`run.sh` needs a Wine runtime on the system. On **immutable / atomic images**
+(Bazzite, Silverblue, Kinoite, SteamOS) `/usr` is read-only, the setup wizard
+cannot package-install Wine, and `run.sh` stops with *"No Wine runtime found"* —
+that is the image, not a broken install. On those systems launch the **Steam
+path** above (Proton is the Wine build the image ships), or add the patched exe
+as a non-Steam shortcut with Proton forced, or layer Wine with
+`rpm-ostree install wine` and reboot, or use a Flatpak Wine manager such as
+Bottles or Lutris.
+
 #### Lutris (non-Steam launcher)
 
 Certified on Arch with Lutris 0.5.22 and distro Wine 11.22. Lutris builds the

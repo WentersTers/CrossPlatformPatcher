@@ -424,8 +424,14 @@ public static class LauncherGenerator
                     export PAICOM_RUNTIME_VERIFIED_64BIT=0
                     launch_runtime_capture "mono" mono "$EXE" "$@"
                 else
-                    log "ERROR: Neither Wine nor Mono is available."
-                    log "Run the guided setup wizard: sh setup-wizard.sh"
+                    log "ERROR: No Wine runtime found (neither wine/wine64 nor mono)."
+                    log "If this is your Steam copy: launch it through Steam with Proton instead -"
+                    log "rename the patched file to uninstall.exe, set the launch option"
+                    log 'WINEDLLOVERRIDES="mscoree=b" %command% and force Proton Experimental.'
+                    log "Otherwise install Wine, then re-run this script."
+                    log "Immutable distros (Bazzite, Silverblue, SteamOS): system Wine is not"
+                    log "installed and cannot be apt/dnf-installed - use the Steam + Proton path,"
+                    log "or layer Wine with rpm-ostree (reboot required), or use Bottles/Lutris."
                     exit 1
                 fi
             }
@@ -1337,6 +1343,22 @@ public static class LauncherGenerator
             ```sh
             sh run.sh
             ```
+
+            ### Immutable / atomic distros (Bazzite, Silverblue, Kinoite, SteamOS)
+
+            `run.sh` needs a Wine runtime on the system, and these images have a
+            read-only `/usr`: the wizard cannot apt/dnf-install Wine there and
+            `run.sh` will stop with "No Wine runtime found". Use one of:
+
+            - **Steam copy (recommended):** the Steam section above - rename the
+              patched file to `uninstall.exe`, set the launch option, force
+              Proton Experimental. Proton is the Wine build the image ships.
+            - **Steam + non-Steam shortcut:** add the patched exe as a non-Steam
+              game and force Proton Experimental for it.
+            - **Layer Wine:** `rpm-ostree install wine` (Bazzite/Fedora atomic),
+              reboot, then `sh run.sh` works.
+            - **Bottles / Lutris / other Flatpak Wine manager:** create a bottle
+              or a Wine game pointing at the patched exe.
 
             ## Installing Wine
 
