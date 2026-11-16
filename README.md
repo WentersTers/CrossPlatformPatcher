@@ -214,6 +214,11 @@ Wayland on Bazzite. Check the connection, then click once in the window and
 press Tab and Enter a few times: the app continues into PAIcom and works, but
 the menu will stay Start-less until a launch where the check succeeds.
 
+An experimental patcher option, `start.forceVisible`, adds a one-shot guard that
+asserts the Start button visible after the menu constructs and once more four
+seconds later; it is off by default until the blackholed-menu acceptance test
+passes on a live guest.
+
 Then launch PAIcom from Steam as usual. If Steam verifies or updates the game
 files later it may restore the original `uninstall.exe` and remove added files;
 reapply steps 1 to 3 if that happens.

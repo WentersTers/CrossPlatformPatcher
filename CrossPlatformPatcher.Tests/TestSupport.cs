@@ -97,11 +97,18 @@ internal static class ProgramInvoker
 internal static class FixtureAssemblyBuilder
 {
     public static string Build(string source, string assemblyName, string outputDirectory)
+        => Build(source, assemblyName, outputDirectory, Array.Empty<string>());
+
+    public static string Build(string source, string assemblyName, string outputDirectory, params string[] extraReferencePaths)
     {
         Directory.CreateDirectory(outputDirectory);
 
         var syntaxTree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Preview));
-        var references = GetMetadataReferences();
+        var references = GetMetadataReferences().ToList();
+        foreach (var path in extraReferencePaths)
+        {
+            references.Add(MetadataReference.CreateFromFile(path));
+        }
         var compilation = CSharpCompilation.Create(
             assemblyName,
             new[] { syntaxTree },

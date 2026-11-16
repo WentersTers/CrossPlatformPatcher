@@ -118,6 +118,31 @@ public class AssemblyPatcher
             result.Errors.Add($"WebClient watchdog: {ex.Message}");
         }
 
+        // ── Start visibility guard (frozen-menu user-facing fix) ───────────
+        // Opt-in until the blackhole probe has passed: the menu's Start button
+        // is hidden by the game's own online check, and no supported way to
+        // start the app should depend on "tab and press Enter".
+        if (StartButtonGuardPatcher.IsEnabled(_strategyOptions))
+        {
+            Log("Applying Start visibility guard …");
+            try
+            {
+                int guarded = StartButtonGuardPatcher.Patch(module, Log);
+                Log(guarded > 0
+                    ? "Start guard: menu constructor asserts Start visible, plus one re-check."
+                    : "Start guard: no menu constructor to hook - skipped.");
+            }
+            catch (Exception ex)
+            {
+                Log($"Start guard FAILED ({ex.GetType().Name}): {ex.Message}");
+                result.Errors.Add($"Start guard: {ex.Message}");
+            }
+        }
+        else
+        {
+            Log("Start guard: disabled (strategy option start.forceVisible).");
+        }
+
         // ── Run patch modules ──────────────────────────────────────────────
         // Modules are discovered dynamically, so adding a new feature never
         // requires editing this engine. Failures are isolated per-module.
