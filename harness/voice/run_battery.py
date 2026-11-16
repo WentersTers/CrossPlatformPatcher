@@ -151,7 +151,26 @@ def play(args, path: str, wait: float, log: str):
         run(args, f"paplay --device={args.sink} '{path}' 2>/dev/null")
     else:
         run(args, f"printf '%s' '{path}' > /tmp/vmic.play")
-    time.sleep(wait)
+
+    # Wait for this take's own log evidence instead of a blind sleep. A fixed
+    # window shifts every transcript by one take when the app finalises slowly
+    # (seen on a fresh Ubuntu guest with --wait-positive 15, and again at 24):
+    # the transcript lands after the read, so take N's row holds take N+1's
+    # text. Poll until the transcript and dispatch are both present and have
+    # been stable for a moment, or until the window expires. Expected-silent
+    # takes keep the full window: absence of evidence is the result there.
+    deadline = time.time() + wait
+    evidence_at = None
+    while time.time() < deadline:
+        after = lines(args, log)
+        if after > before:
+            new = run(args, f"tail -n +{before + 1} {log} 2>/dev/null")
+            if TEXT_RE.search(new):
+                evidence_at = evidence_at or time.time()
+                if DISPATCH_RE.search(new) and time.time() - evidence_at >= 1.5:
+                    break
+        time.sleep(0.5)
+
     after = lines(args, log)
     new = run(args, f"tail -n +{before + 1} {log} 2>/dev/null")
     return {
