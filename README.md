@@ -207,6 +207,13 @@ Steam builds the Wine prefix, sets the environment and picks the binary, so the 
    or **Proton 8.x**. Proton 9 has been seen to open this menu with no Start
    button; if that happens, switch versions.
 
+If the menu appears with Help, Discord and Patreon but **no Start**, the app's
+startup online check did not complete (it hides Start when that check fails).
+That has now been seen on Proton 9, and also on Proton Experimental under KDE
+Wayland on Bazzite. Check the connection, then click once in the window and
+press Tab and Enter a few times: the app continues into PAIcom and works, but
+the menu will stay Start-less until a launch where the check succeeds.
+
 Then launch PAIcom from Steam as usual. If Steam verifies or updates the game
 files later it may restore the original `uninstall.exe` and remove added files;
 reapply steps 1 to 3 if that happens.

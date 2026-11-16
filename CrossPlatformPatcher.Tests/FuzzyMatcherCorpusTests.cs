@@ -101,6 +101,35 @@ public class FuzzyMatcherCorpusTests
         Assert.Equal("open disney plus", match!.MatchedCommand);
     }
 
+    // Bazzite (Proton Experimental / KDE Wayland), 2026-11-16. The ASR heard
+    // "open hulu" as "like i'm open hello"; the keyword stage matched the
+    // chatgpt command on the single discourse word 'like' at the 50 % coverage
+    // floor and dispatched it, beating "open hulu". 'like' is now discourse
+    // filler, so the shared stage's "open" evidence wins.
+    private static readonly string[] ChatGptCorpus =
+    {
+        "do you like chat gi bi ti",
+        "open hulu",
+        "open twitch",
+        "open the browser",
+    };
+
+    [Fact]
+    public void DiscourseLike_OpenHello_DoesNotHijackChatGpt()
+    {
+        var match = FuzzyMatcher.FindClosestMatch("like i'm open hello", ChatGptCorpus, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("open hulu", match!.MatchedCommand);
+    }
+
+    [Fact]
+    public void SpokenChatGptCommand_StillRoutesToChatGpt()
+    {
+        var match = FuzzyMatcher.FindClosestMatch("hey paicom do you like chat gi bi ti", ChatGptCorpus, Threshold);
+        Assert.NotNull(match);
+        Assert.Equal("do you like chat gi bi ti", match!.MatchedCommand);
+    }
+
     [Fact]
     public void MumbledHiking_StillRoutesToHiking()
     {

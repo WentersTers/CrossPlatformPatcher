@@ -840,8 +840,12 @@ public sealed class FuzzyMatcher
         "whom", "this", "that", "these", "those", "am", "about",
         // Discourse filler: appears in "please hide"/"please show up" but is
         // never evidence for a command (a flip-a-coin transcript routed to
-        // "please show up" on this word alone).
-        "please",
+        // "please show up" on this word alone). "like" joins 2026-11-16: a
+        // Bazzite transcript "like i'm open hello" matched the chatgpt command
+        // on that single word at the 50 % coverage floor and dispatched it,
+        // beating the correct "open hulu"; the chatgpt phrase keeps its
+        // distinctive "chat gi bi ti" vocabulary as evidence.
+        "please", "like", "just", "really", "actually", "well", "okay", "yeah",
         // Wake-word debris: ASR emits wake fragments ("hey pie comb") the
         // exact prefixes miss. Manifest-gated 2026-09-14: no command body
         // contains these as content vocabulary.
