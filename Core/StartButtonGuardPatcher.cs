@@ -61,7 +61,7 @@ public static class StartButtonGuardPatcher
             return 0;
         }
 
-        var ctor = FindMenuConstructor(module);
+        var ctor = FindMenuConstructor(module, log);
         if (ctor is null)
         {
             log?.Invoke("[startguard] no menu form constructor found - skipped.");
@@ -109,33 +109,72 @@ public static class StartButtonGuardPatcher
     }
 
     /// <summary>
-    /// The menu form is <c>GForm1</c> in the shipped build; fall back to the
-    /// type whose constructor performs the startup gist download.
+    /// The menu form is <c>GForm1</c> in the shipped build; when the type name
+    /// is obfuscated differently, fall back to the form type that contains the
+    /// most startup <c>DownloadString</c> calls (the menu is where the gist
+    /// check lives) and hook its constructor.
     /// </summary>
-    private static MethodDef? FindMenuConstructor(ModuleDefMD module)
+    private static MethodDef? FindMenuConstructor(ModuleDefMD module, Action<string>? log = null)
     {
-        MethodDef? byName = null;
-        MethodDef? byDownload = null;
+        MethodDef? namedCtor = null;
+        (int calls, MethodDef? ctor, string typeName) busiest = (0, null, "<none>");
 
         foreach (var type in module.GetTypes())
         {
             if (type.Name == HelperTypeName) continue;
+            if (type.Name.String.StartsWith("CrossPlatformPatcher", StringComparison.Ordinal)) continue;
+            if (!type.Methods.Any(m => m.IsConstructor && m.HasBody && !m.IsStatic)) continue;
+
+            var downloadCalls = 0;
             foreach (var method in type.Methods)
             {
-                if (method.Name != ".ctor" || !method.HasBody || method.IsStatic) continue;
-
-                var callsDownload = method.Body.Instructions.Any(i =>
-                    (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt) &&
-                    i.Operand is IMethod im &&
-                    im.DeclaringType?.FullName == "System.Net.WebClient" &&
-                    im.Name == "DownloadString");
-
-                if (callsDownload) byDownload ??= method;
-                if (type.Name == "GForm1") byName = method;
+                if (!method.HasBody) continue;
+                foreach (var ins in method.Body.Instructions)
+                {
+                    if ((ins.OpCode == OpCodes.Call || ins.OpCode == OpCodes.Callvirt) &&
+                        ins.Operand is IMethod im &&
+                        (im.Name == "DownloadString" || im.Name == "SafeDownloadString"))
+                    {
+                        downloadCalls++;
+                    }
+                }
             }
+
+            var ctor = type.Methods
+                .Where(m => m.IsConstructor && m.HasBody && !m.IsStatic)
+                .OrderByDescending(m => m.Body.Instructions.Count)
+                .FirstOrDefault();
+
+            if (type.Name == "GForm1" && ctor != null) namedCtor = ctor;
+            if (downloadCalls > busiest.calls) busiest = (downloadCalls, ctor, type.FullName);
         }
 
-        return byName ?? byDownload;
+        if (namedCtor == null)
+            log?.Invoke($"[startguard] busiest form candidate: {busiest.typeName} ({busiest.calls} download call(s)).");
+
+        return namedCtor ?? busiest.ctor;
+    }
+
+    /// <summary>True when the type is a WinForms control (menu form or a page).</summary>
+    private static bool DerivesFromControl(TypeDef type)
+    {
+        var current = type.BaseType;
+        for (var depth = 0; current != null && depth < 12; depth++)
+        {
+            var name = current.Name.String;
+            if (name is "Form" or "Control" or "UserControl" or "ContainerControl")
+                return true;
+            if (current is TypeDef td) { current = td.BaseType; continue; }
+            if (current is TypeRef tr)
+            {
+                var resolved = tr.Resolve();
+                if (resolved != null) { current = resolved.BaseType; continue; }
+                break; // unresolvable external base: name check above is all we have
+            }
+            break;
+        }
+
+        return false;
     }
 
     private static bool HasAttachCall(MethodDef ctor, IMethod attachRef)

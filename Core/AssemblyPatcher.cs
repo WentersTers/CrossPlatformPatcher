@@ -95,6 +95,33 @@ public class AssemblyPatcher
             result.Errors.Add(ex.Message);
         }
 
+        // ── Start visibility guard (frozen-menu user-facing fix) ───────────
+        // Runs BEFORE the WebClient watchdog: the watchdog rewrites every
+        // DownloadString call, and the guard uses those calls to find the menu
+        // form. Opt-in until the blackhole probe has passed: the menu's Start
+        // button is hidden by the game's own online check, and no supported way
+        // to start the app should depend on "tab and press Enter".
+        if (StartButtonGuardPatcher.IsEnabled(_strategyOptions))
+        {
+            Log("Applying Start visibility guard …");
+            try
+            {
+                int guarded = StartButtonGuardPatcher.Patch(module, Log);
+                Log(guarded > 0
+                    ? "Start guard: menu constructor asserts Start visible, plus one re-check."
+                    : "Start guard: no menu constructor to hook - skipped.");
+            }
+            catch (Exception ex)
+            {
+                Log($"Start guard FAILED ({ex.GetType().Name}): {ex.Message}");
+                result.Errors.Add($"Start guard: {ex.Message}");
+            }
+        }
+        else
+        {
+            Log("Start guard: disabled (strategy option start.forceVisible).");
+        }
+
         // ── WebClient watchdog (frozen-menu mitigation) ───────────────────
         // The menu form downloads synchronously while it is being built; a
         // stalled DNS/TLS call freezes the form (Start never appears). Redirect
@@ -116,31 +143,6 @@ public class AssemblyPatcher
         {
             Log($"WebClient watchdog FAILED ({ex.GetType().Name}): {ex.Message}");
             result.Errors.Add($"WebClient watchdog: {ex.Message}");
-        }
-
-        // ── Start visibility guard (frozen-menu user-facing fix) ───────────
-        // Opt-in until the blackhole probe has passed: the menu's Start button
-        // is hidden by the game's own online check, and no supported way to
-        // start the app should depend on "tab and press Enter".
-        if (StartButtonGuardPatcher.IsEnabled(_strategyOptions))
-        {
-            Log("Applying Start visibility guard …");
-            try
-            {
-                int guarded = StartButtonGuardPatcher.Patch(module, Log);
-                Log(guarded > 0
-                    ? "Start guard: menu constructor asserts Start visible, plus one re-check."
-                    : "Start guard: no menu constructor to hook - skipped.");
-            }
-            catch (Exception ex)
-            {
-                Log($"Start guard FAILED ({ex.GetType().Name}): {ex.Message}");
-                result.Errors.Add($"Start guard: {ex.Message}");
-            }
-        }
-        else
-        {
-            Log("Start guard: disabled (strategy option start.forceVisible).");
         }
 
         // ── Run patch modules ──────────────────────────────────────────────
