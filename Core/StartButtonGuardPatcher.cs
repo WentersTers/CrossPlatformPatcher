@@ -36,25 +36,21 @@ public static class StartButtonGuardPatcher
     private const string WindowsFormsNamespace = "System.Windows.Forms";
 
     /// <summary>
-    /// Enabled by default once the blackholed-menu probe passed (2026-11-16);
-    /// <c>start.forceVisible=false</c> (or <c>PAICOM_START_FORCE_VISIBLE=0</c>)
-    /// opts out. The guard only ever sets <c>Visible</c> on a control whose
-    /// text is "Start", so the opt-out exists for diagnosis, not for risk.
+    /// Opt-in: <c>start.forceVisible=true</c> (or <c>PAICOM_START_FORCE_VISIBLE=1</c>).
+    /// The guard passed a full battery on Bazzite under Proton Experimental, but
+    /// the non-Bazzite confirmation on L01 (Wine 11 + mono) did not complete —
+    /// the guest lost the app and the A/B was inconclusive — so the default
+    /// stays off until a clean run on a stable leg.
     /// </summary>
     public static bool IsEnabled(IReadOnlyDictionary<string, string>? options)
     {
         var env = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        if (string.Equals(env, "0", StringComparison.Ordinal)) return false;
         if (string.Equals(env, "1", StringComparison.Ordinal)) return true;
+        if (string.Equals(env, "0", StringComparison.Ordinal)) return false;
 
-        if (options is not null &&
-            options.TryGetValue(OptionKey, out var value) &&
-            string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return true;
+        return options is not null &&
+               options.TryGetValue(OptionKey, out var value) &&
+               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
