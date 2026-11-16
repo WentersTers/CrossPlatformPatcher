@@ -87,12 +87,20 @@ null sink, with no replays and no recoveries.
 Bazzite 45 (Kinoite, KDE Plasma on Wayland, immutable Fedora atomic) passed a
 full battery through Steam's Proton Experimental: 11/11 clear-speech positives,
 11/11 expected-silent, 5/5 wake takes, no replays, no recoveries. The launch
-path is the volunteer's own — Steam plus Proton Experimental — and the run had
-the opt-in Start guard enabled, so the menu showed Start even on a blackholed
-network. The image was installed from the current stable OCI image rather than
-the ISO (the published ISO is the legacy installer), which is documented in
+path is the volunteer's own — Steam plus Proton Experimental — and the run used
+the Start guard, so the menu showed Start even on a blackholed network. The
+image was installed from the current stable OCI image rather than the ISO (the
+published ISO is the legacy installer), which is documented in
 `docs/coder/harness-driving.md` together with the KDE/Wayland and install
 traps.
+
+The Start guard's non-Bazzite confirmation is Fedora 44 / distro Wine 11.20:
+guard and pre-guard builds both stayed alive through a five-minute idle A/B,
+and a split battery with the guard gave 10/11 clear-speech positives and 11/11
+expected-silent with no misroutes. The one miss is the **Hulu** take, heard as
+`though i serve god he's be out of` / `with a pi call open her` — the same take
+that failed on Bazzite, so it is now the one recording flagged for a re-record.
+The guard is therefore on by default; `start.forceVisible=false` opts out.
 
 - Both `61942e6c` (baseline) and `88c9daec` (current Steam build) are
   supported. `CrossPlatformPatcher --versions` prints the machine-readable
@@ -227,12 +235,12 @@ the menu will stay Start-less until a launch where the check succeeds.
 
 The patcher includes a one-shot **Start guard**: after the menu form
 constructs it asserts the Start button visible, then repeats once four seconds
-later and stops. It is **opt-in** — `start.forceVisible=true` (or
-`PAICOM_START_FORCE_VISIBLE=1` at patch time) — because its full-battery proof
-is Bazzite-only so far: it passed 11/11 there, but the non-Bazzite confirmation
-on Ubuntu (Wine 11 + mono) did not complete, so it is not on by default. It was
-verified against a blackholed launch: four buttons where the unguarded build
-showed three.
+later and stops. It is on by default — `start.forceVisible=false` (or
+`PAICOM_START_FORCE_VISIBLE=0` at patch time) opts out. Proven on Bazzite 45 /
+Proton Experimental (11/11 + 11 silent with it enabled, plus blackholed and
+normal four-button probes) and on Fedora 44 / distro Wine 11.20 (A/B: guard and
+pre-guard builds both alive after five minutes idle; halves gave 10/11 positives
+and 11/11 silent with no misroutes).
 Then launch PAIcom from Steam as usual. If Steam verifies or updates the game
 files later it may restore the original `uninstall.exe` and remove added files;
 reapply steps 1 to 3 if that happens.

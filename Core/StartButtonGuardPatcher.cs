@@ -36,11 +36,16 @@ public static class StartButtonGuardPatcher
     private const string WindowsFormsNamespace = "System.Windows.Forms";
 
     /// <summary>
-    /// Opt-in: <c>start.forceVisible=true</c> (or <c>PAICOM_START_FORCE_VISIBLE=1</c>).
-    /// The guard passed a full battery on Bazzite under Proton Experimental, but
-    /// the non-Bazzite confirmation on L01 (Wine 11 + mono) did not complete —
-    /// the guest lost the app and the A/B was inconclusive — so the default
-    /// stays off until a clean run on a stable leg.
+    /// On by default. Opt out with <c>start.forceVisible=false</c> or
+    /// <c>PAICOM_START_FORCE_VISIBLE=0</c>.
+    ///
+    /// Proven on two runtimes: Bazzite 45 / Steam Proton Experimental (full
+    /// battery 11/11 + 11 silent on the guard build, plus blackholed and normal
+    /// four-button probes) and Fedora 44 / distro Wine 11.20 (A/B: guard and
+    /// pre-guard builds both alive after five minutes idle; halves with the
+    /// guard gave 10/11 positives - one garbled Hulu take - and 11/11 silent,
+    /// 0 misroutes). The guard only sets Visible on a control whose text is
+    /// "Start", so the opt-out exists for diagnosis, not for risk.
     /// </summary>
     public static bool IsEnabled(IReadOnlyDictionary<string, string>? options)
     {
@@ -48,9 +53,14 @@ public static class StartButtonGuardPatcher
         if (string.Equals(env, "1", StringComparison.Ordinal)) return true;
         if (string.Equals(env, "0", StringComparison.Ordinal)) return false;
 
-        return options is not null &&
-               options.TryGetValue(OptionKey, out var value) &&
-               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+        if (options is not null &&
+            options.TryGetValue(OptionKey, out var value) &&
+            string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
