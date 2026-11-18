@@ -337,8 +337,10 @@ are listed under [Certified platforms](#certified-platforms).
 - Unknown builds are refused with a message naming your short hash, and the
   game files are left untouched, so a game update cannot produce a broken
   install.
-- Two builds are supported today: `61942e6c` (certified baseline) and
-  `88c9daec` (current Steam build).
+- Three builds are supported today: `61942e6c` (certified baseline), `88c9daec`
+  (previous Steam build, certified) and `1a8ddbed` (the 2026-11-17 Steam update,
+  **experimental**: it patches with the same full strategy and passed a
+  start/wake/dispatch smoke test, but its voice battery has not run yet).
 - Run `CrossPlatformPatcher --versions` to print the supported hashes,
   strategies and certified OS strings.
 - If your build is newer than these, wait for a patcher update.

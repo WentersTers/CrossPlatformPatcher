@@ -47,7 +47,14 @@ Current entries:
 | input | status | strategy |
 |---|---|---|
 | `61942e6c...` certified baseline | Certified | materialization + watchdog + speech + oww |
-| `88c9daec...` current Steam build | Certified | full strategy, `oww.skipModuleHooks=true` (18 of 20 hook sites) |
+| `88c9daec...` previous Steam build (2026-11-09) | Certified | full strategy, `oww.skipModuleHooks=true` (18 of 20 hook sites) |
+| `1a8ddbed...` 2026-11-17 Steam update | Experimental | materialization + watchdog + speech + oww (same as the baseline; obfuscation unchanged, 183/183 patch points) |
+
+The `1a8ddbed` entry was diagnosed on 2026-11-17: `--analyze` reports the same
+759 methods with bodies and an identical instruction histogram to `61942e6c`,
+so the update is a small code fix and not a re-obfuscation. It patches 183/183
+points with the baseline strategy and passed a start/wake/dispatch smoke test
+under GE-Proton 11-7; it is Experimental until a full voice battery runs on it.
 
 Certified operating systems per entry:
 

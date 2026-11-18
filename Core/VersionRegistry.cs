@@ -156,6 +156,34 @@ public static class VersionRegistry
             {
                 "Ubuntu 24.04 (Steam Proton Experimental)",
             }),
+
+        // 2026-11-17 Steam update, buildid 25851853. Diagnosed as a small
+        // upstream fix, not a re-wrap: --analyze reports the same 759 methods
+        // with bodies and an identical IL instruction histogram to the
+        // 61942e6c baseline, so the obfuscation pass was not re-run and the
+        // hook sites are expected to match. Strategy: Full, no module-hook
+        // skip. Experimental until a menu + voice battery has run on it.
+        new(
+            InputSha256: "1a8ddbed32b840dc6f1ebf12a522a06e5cc175c24d9c2a017459bfc4a9244ccd",
+            DisplayName: "PAIcom 2026-11-17 Steam update",
+            Support: VersionSupport.Experimental,
+            Features: PatchFeatures.Full,
+            RequiredOutputResources: new[]
+            {
+                MaterializationResourceFixer.DialogPinnedName,
+                MaterializationResourceFixer.TypeBasedName,
+            },
+            ExpectedOutputSha256: null,
+            Certification:
+                "Diagnosed 2026-11-17: 759 methods with bodies and an instruction histogram " +
+                "identical to the certified baseline, so the obfuscation was not re-run. " +
+                "Patches 183/183 patch points with the Full strategy (no oww.skipModuleHooks), " +
+                "the same count as 61942e6c. Smoke test on GE-Proton 11-7: app starts, wake " +
+                "fires, transcript resolves and dispatch reports SUCCESS. Not yet certified: " +
+                "the full voice battery still has to run on this build.",
+            Note:
+                "Upstream fix for an unhandled exception. If the menu or voice misbehaves, the " +
+                "first thing to test is the 88c9daec option oww.skipModuleHooks=true."),
     };
 
     /// <summary>All known versions, in registry order.</summary>
