@@ -720,6 +720,18 @@ To update Vosk or NAudio versions:
 
 ## Troubleshooting
 
+### "PAIcom - file changed" dialog
+
+The game shows its own **PAIcom - file changed** notice when the executable in
+the game folder differs from the copy Steam installed — which is exactly what a
+patched build is. The dialog is expected on a freshly patched game, or after you
+swap builds (for example from an older patched build to a newer one).
+
+Press **Return** (or click OK) once and the game continues normally: menu,
+voice and dispatch all work. It is not a patch failure and it does not need a
+reinstall. If you patch the file in place, keep a backup of Steam's original
+`uninstall.exe` so a Steam file verification can be undone without redownloading.
+
 ### Build Error: "Could not find Vosk"
 
 The `Core/NativeLibraries/` and `Core/ManagedLibraries/` folders are expected to contain the binaries. 
