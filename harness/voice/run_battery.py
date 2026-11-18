@@ -146,18 +146,16 @@ def find_negatives(args, voice_dir: str) -> list[str]:
 def play(args, path: str, wait: float, log: str):
     # Settle first: wait until the log has been quiet for a moment, so a late
     # transcript from the previous take cannot land inside this take's window.
-    # Without this, a slow guest shifts every row by one take even when the
-    # per-take poll is present.
-    settle_deadline = time.time() + 10
+    settle_max = time.time() + 30
     prev = lines(args, log)
     last_change = time.time()
-    while time.time() < settle_deadline:
+    while time.time() < settle_max:
         time.sleep(0.5)
         cur = lines(args, log)
         if cur != prev:
             prev = cur
             last_change = time.time()
-        elif time.time() - last_change >= 1.5:
+        elif time.time() - last_change >= 5.0:
             break
 
     before = prev
@@ -168,19 +166,22 @@ def play(args, path: str, wait: float, log: str):
     else:
         run(args, f"printf '%s' '{path}' > /tmp/vmic.play")
 
-    # Wait for this take's own log evidence instead of a blind sleep. A fixed
-    # window shifts every transcript by one take when the app finalises slowly
-    # (seen on a fresh Ubuntu guest with --wait-positive 15, and again at 24):
-    # the transcript lands after the read, so take N's row holds take N+1's
-    # text. Poll until the transcript and dispatch are both present and have
-    # been stable for a moment, or until the window expires. Expected-silent
-    # takes keep the full window: absence of evidence is the result there.
+    # Anchor the take at its OWN wake marker. A slow guest can deliver the
+    # previous take's transcript after the settle window, so any line offset
+    # captured at play time still mis-attributes it to this take (L03 did
+    # exactly that twice). The wake line is unique to the take in flight, so
+    # the take's evidence starts there and everything before it is dropped.
     deadline = time.time() + wait
+    anchor = None
     evidence_at = None
     while time.time() < deadline:
         after = lines(args, log)
         if after > before:
             new = run(args, f"tail -n +{before + 1} {log} 2>/dev/null")
+            if anchor is None:
+                m = WAKE_RE.search(new)
+                if m:
+                    anchor = before + new[: m.start()].count("\n") + 1
             if TEXT_RE.search(new):
                 evidence_at = evidence_at or time.time()
                 if DISPATCH_RE.search(new) and time.time() - evidence_at >= 1.5:
@@ -188,7 +189,8 @@ def play(args, path: str, wait: float, log: str):
         time.sleep(0.5)
 
     after = lines(args, log)
-    new = run(args, f"tail -n +{before + 1} {log} 2>/dev/null")
+    start = anchor if anchor is not None else before + 1
+    new = run(args, f"tail -n +{start} {log} 2>/dev/null")
     return {
         "play": after - before,
         "confs": WAKE_RE.findall(new),
