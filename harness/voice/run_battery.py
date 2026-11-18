@@ -144,7 +144,23 @@ def find_negatives(args, voice_dir: str) -> list[str]:
 
 
 def play(args, path: str, wait: float, log: str):
-    before = lines(args, log)
+    # Settle first: wait until the log has been quiet for a moment, so a late
+    # transcript from the previous take cannot land inside this take's window.
+    # Without this, a slow guest shifts every row by one take even when the
+    # per-take poll is present.
+    settle_deadline = time.time() + 10
+    prev = lines(args, log)
+    last_change = time.time()
+    while time.time() < settle_deadline:
+        time.sleep(0.5)
+        cur = lines(args, log)
+        if cur != prev:
+            prev = cur
+            last_change = time.time()
+        elif time.time() - last_change >= 1.5:
+            break
+
+    before = prev
     if args.transport == "paplay":
         # Play into the null sink; its monitor is the capture source. No FIFO,
         # so a pipe-source reload cannot strand the feeder mid-battery.
