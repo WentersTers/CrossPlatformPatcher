@@ -50,6 +50,7 @@ pet were verified but the voice battery was not run there.
 | `61942e6c` | Arch | Lutris 0.5.22 → Wine 11.22 | Full ‡ |
 | `61942e6c` | Bazzite 45 (atomic/KDE) | Steam Proton Experimental | Full |
 | `88c9daec` | Ubuntu 24.04 | Steam Proton Experimental | Full |
+| `1a8ddbed` | Fedora 44 | distro Wine 11.20 | Full |
 
 Voice battery on Ubuntu 24.04 / Wine 11 (2026-11-12), scored under
 [docs/VOICE_BATTERY.md](docs/VOICE_BATTERY.md): 11 of 11 clear-speech
@@ -339,8 +340,10 @@ are listed under [Certified platforms](#certified-platforms).
   install.
 - Three builds are supported today: `61942e6c` (certified baseline), `88c9daec`
   (previous Steam build, certified) and `1a8ddbed` (the 2026-11-17 Steam update,
-  **experimental**: it patches with the same full strategy and passed a
-  start/wake/dispatch smoke test, but its voice battery has not run yet).
+  certified on Fedora 44 / distro Wine 11.20: 11/11 clear-speech, 11/11 silent,
+  no misroutes, no replays). `1a8ddbed`'s executable code is byte-identical to
+  the baseline — the update re-stamped the product/company/version strings and
+  renamed one joke audio clip — so it patches with the same full strategy.
 - Run `CrossPlatformPatcher --versions` to print the supported hashes,
   strategies and certified OS strings.
 - If your build is newer than these, wait for a patcher update.

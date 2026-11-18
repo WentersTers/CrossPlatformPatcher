@@ -166,7 +166,7 @@ public static class VersionRegistry
         new(
             InputSha256: "1a8ddbed32b840dc6f1ebf12a522a06e5cc175c24d9c2a017459bfc4a9244ccd",
             DisplayName: "PAIcom 2026-11-17 Steam update",
-            Support: VersionSupport.Experimental,
+            Support: VersionSupport.Certified,
             Features: PatchFeatures.Full,
             RequiredOutputResources: new[]
             {
@@ -175,15 +175,23 @@ public static class VersionRegistry
             },
             ExpectedOutputSha256: null,
             Certification:
-                "Diagnosed 2026-11-17: 759 methods with bodies and an instruction histogram " +
-                "identical to the certified baseline, so the obfuscation was not re-run. " +
-                "Patches 183/183 patch points with the Full strategy (no oww.skipModuleHooks), " +
-                "the same count as 61942e6c. Smoke test on GE-Proton 11-7: app starts, wake " +
-                "fires, transcript resolves and dispatch reports SUCCESS. Not yet certified: " +
-                "the full voice battery still has to run on this build.",
+                "Certified 2026-11-18 on Fedora 44 / distro Wine 11.20 (split sessions, null-sink " +
+                "transport): 11/11 clear-speech positives, 11/11 expected-silent, 0 misroutes, " +
+                "5/5 wake takes, no replays, no recoveries. The executable's IL is byte-identical " +
+                "to the 61942e6c baseline (759 methods, zero opcode/operand differences); the only " +
+                "changes are Win32 VERSIONINFO strings, so it patches 183/183 with the Full " +
+                "strategy and needs no oww.skipModuleHooks.",
             Note:
-                "Upstream fix for an unhandled exception. If the menu or voice misbehaves, the " +
-                "first thing to test is the 88c9daec option oww.skipModuleHooks=true."),
+                "Metadata re-stamp of the same code: Steam's 2026-11-17 update changed ProductName " +
+                "to 'PAIcom (Steam)', CompanyName to 'Ovidiu Dendrino / Soniko Studios' and dropped " +
+                "FileVersion '1.0.0.0f'. The only data changes in the game folder were a joke clip " +
+                "renamed to 'Removed content/14 - Valve said no to this joke.wav' and the " +
+                "intro-number.txt counter. If the menu or voice misbehaves, the first thing to " +
+                "test is the 88c9daec option oww.skipModuleHooks=true.",
+            CertifiedOs: new[]
+            {
+                "Fedora 44 (Distro Wine 11.20 full, voice 11/11 + 11 silent, split sessions, null-sink transport)",
+            }),
     };
 
     /// <summary>All known versions, in registry order.</summary>
